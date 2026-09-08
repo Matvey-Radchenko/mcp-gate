@@ -1,13 +1,13 @@
 {
   "version": "0.1.0",
   "checks": [
-    {"id":"native-matrix","status":"pending","evidence":[]},
+    {"id":"native-matrix","status":"pending","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: both macOS jobs passed; Windows client acceptance incomplete"],"remaining":"Recheck Claude Windows, then Codex, wrappers and npm archives; latest run blocked by GitHub account billing"},
     {"id":"clean-service-login","status":"pending","evidence":[]},
-    {"id":"safe-update-downgrade","status":"pending","evidence":[]},
-    {"id":"failure-recovery-and-concurrent-edits","status":"pending","evidence":[]},
-    {"id":"multi-client-remove","status":"pending","evidence":[]},
-    {"id":"browser-isolation-artifacts-cleanup","status":"pending","evidence":[]},
-    {"id":"windows-cmd-npx-uvx-docker","status":"pending","evidence":[]},
-    {"id":"source-history-and-archive-inspection","status":"pending","evidence":[]}
+    {"id":"safe-update-downgrade","status":"pending","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: busy update deferred and idle update retains credentials on three native platforms"],"remaining":"Compatible downgrade using two separately versioned release binaries"},
+    {"id":"failure-recovery-and-concurrent-edits","status":"passed","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: native management tests reject later edits and future formats; installer_recovery covers five installation and three update faults, plus unavailable previous backend"]},
+    {"id":"multi-client-remove","status":"passed","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: removing_one_client_keeps_other_connection_and_service passed on all three platforms"]},
+    {"id":"browser-isolation-artifacts-cleanup","status":"pending","evidence":["Local macOS ARM64: Chrome DevTools 1.8.0 and Playwright 0.0.80 with real Codex passed; recipes restricted to reviewed macOS ARM64 conditions"],"remaining":"Acceptance on other release platforms"},
+    {"id":"windows-cmd-npx-uvx-docker","status":"pending","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: Windows command and Job Object ordinary tests passed; macOS offline npx/uvx passed"],"remaining":"Windows real npx/uvx and actual Docker ownership/cleanup; local Docker daemon unavailable"},
+    {"id":"source-history-and-archive-inspection","status":"pending","evidence":["Local audit through bd358b7: 9 public commits, 196 unique blobs, no known token/private-key/private-home signatures; current macOS ARM64 npm archives each contain four expected files and pass the same scan"],"remaining":"Inspect final native archives on all platforms and the final reviewed history; signature scanning is not an exhaustive secret audit"}
   ]
 }

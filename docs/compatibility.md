@@ -10,13 +10,13 @@ that all combinations have been tested. Update it only from completed checks.
 | Recovery at five installation and three update stages | Passed locally and in CI | Passed in CI | Passed in CI |
 | Remove one client while retaining another | Passed locally and in CI | Passed in CI | Passed in CI |
 | Codex 0.153.4 shared/session tool calls | Passed locally and in CI | Passed in CI | Pending |
-| OpenCode 1.14.23 private header and lazy discovery | Passed locally and in CI | Passed in CI | Pending |
-| OpenCode 1.14.23 tool call with a local model | Passed locally and in CI | Passed in CI | Pending |
+| OpenCode 1.14.23 private header and lazy discovery | Passed locally and in CI | Passed in CI | Passed in CI |
+| OpenCode 1.14.23 tool call with a local model | Passed locally and in CI | Passed in CI | Passed in CI |
 | Claude Code 2.1.160 local model tool call and headers helper | Passed locally and in CI | Passed in CI | Pending |
 | Claude local MCP precedence and physical project key | Passed with real CLI; shared file unchanged | Passed in CI | Pending |
 | Clean npm archive install | Passed locally and in CI | Passed in CI | Pending |
 | Busy update deferred; idle update retains credentials | Passed locally and in CI | Passed in CI | Passed in CI |
-| Unavailable old backend permits later repair | Passed locally | Passed in CI | Readiness deadline fix awaiting CI |
+| Unavailable old backend permits later repair | Passed locally and in CI | Passed in CI | Passed in CI |
 | Autostart after an actual new login; compatible version downgrade | Pending | Pending | Pending |
 | Background access to macOS protected folders | Separate OS permission needed; acceptance pending | Pending | N/A |
 | Chrome DevTools 1.8.0 browser independence and owned cleanup | Passed locally with Codex | Pending | Pending |
@@ -25,16 +25,22 @@ that all combinations have been tested. Update it only from completed checks.
 | Windows Job Objects and native private-file ACLs | N/A | N/A | Passed in native ordinary tests |
 | Docker container ownership and cleanup | Blocked: local daemon unavailable | Pending | Pending |
 
-Complete macOS CI and all-platform ordinary harness evidence:
-[run 34272113309](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34272113309),
-commit `0acfb4d`. That run failed Windows service registration. The isolated
-[schema check](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34274204145)
-identified an XML encoding mismatch. The UTF-16 fix passed service setup, repeat,
-busy/idle update, remove, and fault recovery in
-[run 34274431317](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34274431317).
-Both macOS jobs completed successfully. Windows was cancelled after the missing
-backend recovery scenario stalled: a retry count multiplied connection timeouts.
-The replacement uses a total elapsed-time deadline and requires another CI run.
+Latest completed native evidence is
+[run 34276867311](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311),
+commit `4116641`: both macOS jobs passed through clean npm archive installation.
+Windows passed the ordinary harness, temporary-service lifecycle and recovery,
+including unavailable-backend repair, and both real OpenCode checks. Claude's
+local project-key check and model tool call failed; the later Codex, wrapper and
+archive checks were not reached. Windows Task Scheduler uses UTF-16 XML, and
+readiness polling now has a total elapsed-time deadline.
+
+Commit `bd358b7` uses Claude's forward-slash spelling for Windows project keys
+and adds filtered diagnostics to the failing tool-call test. Its local harness,
+Windows cross-compilation/Clippy and local macOS client checks passed. Native
+verification remains blocked: GitHub rejected
+[run 34280223450](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34280223450)
+before starting any runner, reporting an account payment or spending-limit issue.
+This does not verify the Windows fix or resolve its remaining headers-helper check.
 
 macOS client tool approvals and operating-system privacy grants are separate.
 A locally observed LaunchAgent stalled opening a test backend under Documents;
