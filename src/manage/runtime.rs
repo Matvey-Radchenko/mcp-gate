@@ -149,6 +149,9 @@ fn quote(path: &Path) -> String {
         format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
     }
 }
+pub fn headers_helper(binary: &Path, config: &Path) -> String {
+    format!("{} headers --config {}", quote(binary), quote(config))
+}
 fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Result<Value> {
     let mut value = binding.direct.clone();
     let object = value
@@ -158,7 +161,7 @@ fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Res
         object.remove(key);
     }
     object.insert("url".into(), json!(format!("http://{}/mcp", config.listen)));
-    let helper = format!("{} headers --config {}", quote(binary), quote(path));
+    let helper = headers_helper(binary, path);
     match binding.client {
         Client::Codex => {
             object.insert("http_headers_helper".into(), json!(helper));

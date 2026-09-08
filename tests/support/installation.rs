@@ -29,7 +29,7 @@ impl Installation {
         });
         fs::copy(env!("CARGO_BIN_EXE_mock-backend"), &backend).unwrap();
         mcp_gate::platform::executable(&backend).unwrap();
-        let original = serde_json::to_vec(&json!({"projects":{project.to_str().unwrap():{
+        let original = serde_json::to_vec(&json!({"projects":{mcp_gate::clients::claude_project_key(&project).unwrap():{
             "mcpServers":{"fixture":{"type":"stdio","command":backend,"args":[],"env":{"FIXTURE_SECRET":"never-print-fixture-secret"}}},
             "allowedTools":[],"deniedTools":["mcp__fixture__danger"]}}})).unwrap();
         let settings = personal.join(".claude.json");

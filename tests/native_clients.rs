@@ -62,27 +62,23 @@ async fn claude_calls_mock_tool_via_gateway_using_private_headers_helper() {
     h.replace_backend(backend).await;
     let config = dir.path().join("mcp.json");
     let binary = Path::new(env!("CARGO_BIN_EXE_mcp-gate"));
-    let quote = |p: &Path| {
-        if cfg!(windows) {
-            format!("\"{}\"", p.display())
-        } else {
-            format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"))
-        }
-    };
     fs::write(
         &config,
         json!({"mcpServers":{"gateway-probe":{"type":"http","url":format!("{}/mcp",h.base),
-        "headersHelper":format!("{} headers --config {}",quote(binary),quote(&h.config))}}})
+        "headersHelper":mcp_gate::manage::runtime::headers_helper(binary, &h.config)}}})
         .to_string(),
     )
     .unwrap();
     let (base, model) = offline_model::start().await;
+    let debug = dir.path().join("claude-debug.log");
     let result = tokio::time::timeout(
         Duration::from_secs(90),
         isolated("CLAUDE_BINARY", dir.path())
             .env("ANTHROPIC_BASE_URL", base)
             .env("ANTHROPIC_API_KEY", "offline-fixture-only")
             .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+            .arg("--debug-file")
+            .arg(&debug)
             .args(["--bare", "--strict-mcp-config", "--mcp-config"])
             .arg(&config)
             .args([
@@ -108,8 +104,9 @@ async fn claude_calls_mock_tool_via_gateway_using_private_headers_helper() {
     );
     assert!(
         marker.is_file(),
-        "Real Claude did not execute the fixture tool: {}",
-        String::from_utf8_lossy(&result.stdout)
+        "Real Claude did not execute the fixture tool: {}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        fixture_mcp_diagnostics(&debug)
     );
     assert_eq!(fs::read_to_string(marker).unwrap(), "offline-model-fixture");
     h.stop();
@@ -246,8 +243,13 @@ async fn claude_local_scope_uses_the_installer_project_key_and_overrides_shared_
     let settings: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("claude/.claude.json")).unwrap()).unwrap();
     assert_eq!(
-        settings["projects"][root.to_str().unwrap()]["mcpServers"]["fixture"]["url"],
-        "http://127.0.0.1:1/local"
+        settings["projects"][mcp_gate::clients::claude_project_key(&root).unwrap()]["mcpServers"]["fixture"]
+            ["url"],
+        "http://127.0.0.1:1/local",
+        "Actual fixture project keys: {:?}",
+        settings["projects"]
+            .as_object()
+            .map(|entries| entries.keys().collect::<Vec<_>>())
     );
     let get = tokio::time::timeout(
         Duration::from_secs(30),
@@ -265,4 +267,16 @@ async fn claude_local_scope_uses_the_installer_project_key_and_overrides_shared_
     );
     assert!(String::from_utf8_lossy(&get.stdout).contains("http://127.0.0.1:1/local"));
     assert_eq!(fs::read_to_string(shared).unwrap(), bytes);
+}
+
+fn fixture_mcp_diagnostics(path: &Path) -> String {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.contains("MCP server") || line.contains("headersHelper"))
+        .take(30)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(support::TOKEN, "<hidden>")
+        .replace("offline-fixture-only", "<hidden>")
 }

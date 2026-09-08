@@ -27,17 +27,9 @@ impl NativeCodex {
         let cwd = home.path().join("work");
         std::fs::create_dir(&cwd).unwrap();
         let config = mcp_gate::config::Config::load(config_path).unwrap();
-        let quote = |value: &str| {
-            if cfg!(windows) {
-                format!("\"{value}\"")
-            } else {
-                format!("'{}'", value.replace('\'', "'\\''"))
-            }
-        };
-        let helper = format!(
-            "{} headers --config {}",
-            quote(env!("CARGO_BIN_EXE_mcp-gate")),
-            quote(&config_path.to_string_lossy())
+        let helper = mcp_gate::manage::runtime::headers_helper(
+            std::path::Path::new(env!("CARGO_BIN_EXE_mcp-gate")),
+            config_path,
         );
         let text = format!(
             r#"

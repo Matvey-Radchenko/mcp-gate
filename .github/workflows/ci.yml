@@ -36,6 +36,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Release script checks
+        run: |
+          for file in packaging/*.mjs npm/mcp-gate/bin/*.cjs; do node --check "$file"; done
+          node --test packaging/*.test.mjs
       - name: Verify production Task Scheduler XML before compilation
         if: runner.os == 'Windows'
         shell: pwsh
@@ -67,7 +71,7 @@ jobs:
             echo "$key=$binary" >> "$GITHUB_ENV"
           done
       - name: Real clients with local MCP and model fixtures
-        run: cargo test --locked --all-features --test native_codex --test native_clients -- --ignored
+        run: cargo test --locked --all-features --no-fail-fast --test native_codex --test native_clients -- --ignored
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'

@@ -3,6 +3,7 @@ pub mod document;
 pub mod expand;
 pub mod recipes;
 mod scan;
+pub use claude::project_key as claude_project_key;
 pub use scan::{discover, discover_current};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

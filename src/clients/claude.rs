@@ -3,16 +3,26 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use std::path::Path;
 
+/// Claude stores physical project keys with forward slashes on Windows too.
+/// Keep this client-specific spelling separate from backend filesystem paths.
+pub fn project_key(project: &Path) -> Result<String> {
+    let key = project.to_str().context("Project path must be Unicode")?;
+    #[cfg(windows)]
+    return Ok(key.replace('\\', "/"));
+    #[cfg(not(windows))]
+    Ok(key.to_owned())
+}
+
 pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> Result<()> {
     if !target.is_file() {
         return Ok(());
     }
     let source = std::fs::read_to_string(target)?;
-    let project_key = project
-        .to_str()
-        .context("Project path must be Unicode")?
-        .to_owned();
-    let base = vec!["projects".to_owned(), project_key, "mcpServers".to_owned()];
+    let base = vec![
+        "projects".to_owned(),
+        project_key(project)?,
+        "mcpServers".to_owned(),
+    ];
     let local = document::entry(&source, false, &base)?;
     // Local scope wins over the shared project file and user scope for this name.
     let names: Vec<_> = out
@@ -102,7 +112,7 @@ pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> 
 
 fn approved(personal: &Path, project: &Path, name: &str) -> Result<bool> {
     let document = super::document::parse(&std::fs::read_to_string(personal)?, false)?;
-    let scope = &document["projects"][project.to_str().context("Project path must be Unicode")?];
+    let scope = &document["projects"][project_key(project)?];
     let contains = |value: &Value| {
         value
             .as_array()

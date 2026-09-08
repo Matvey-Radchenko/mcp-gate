@@ -89,7 +89,7 @@ fn discovery_uses_local_claude_override_and_skips_other_shared_files() {
     fs::create_dir(&home).unwrap();
     fs::create_dir(&project).unwrap();
     let personal = home.join(".claude.json");
-    fs::write(&personal,json!({"permissions":{"allow":[]},"projects":{project.to_str().unwrap():{"enabledMcpjsonServers":["fixture"]}}}).to_string()).unwrap();
+    fs::write(&personal,json!({"permissions":{"allow":[]},"projects":{mcp_gate::clients::claude_project_key(&project).unwrap():{"enabledMcpjsonServers":["fixture"]}}}).to_string()).unwrap();
     let shared = project.join(".mcp.json");
     let original = b"{\"mcpServers\":{\"fixture\":{\"command\":\"npx\",\"args\":[\"fixture\"]}}}";
     fs::write(&shared, original).unwrap();
@@ -249,7 +249,7 @@ fn unapproved_or_disabled_project_servers_are_never_promoted_to_local_scope() {
     );
     fs::write(
         &personal,
-        json!({"projects":{project.to_str().unwrap():{"enabledMcpjsonServers":["fixture"]}}})
+        json!({"projects":{mcp_gate::clients::claude_project_key(&project).unwrap():{"enabledMcpjsonServers":["fixture"]}}})
             .to_string(),
     )
     .unwrap();

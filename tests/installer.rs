@@ -48,7 +48,7 @@ fn actual_service_setup_repeat_remove_without_changing_project_files() {
     });
     fs::copy(env!("CARGO_BIN_EXE_mock-backend"), &backend).unwrap();
     mcp_gate::platform::executable(&backend).unwrap();
-    let source = json!({"projects":{project.to_str().unwrap():{"mcpServers":{"fixture":{
+    let source = json!({"projects":{mcp_gate::clients::claude_project_key(&project).unwrap():{"mcpServers":{"fixture":{
         "type":"stdio","command":backend,"args":[],"env":{"FIXTURE_SECRET":"do-not-print-this"}
     }},"allowedTools":[],"deniedTools":["mcp__fixture__danger"]}}});
     let settings = personal.join(".claude.json");
