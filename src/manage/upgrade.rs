@@ -39,99 +39,155 @@ pub async fn apply(
     let mut results = Vec::new();
     for index in 0..registry.gateways.len() {
         let old = registry.gateways[index].clone();
-        if old.removing {
-            results.push(format!(
-                "{}: removal pending; finish remove before setting it up again",
-                old.id
-            ));
-            continue;
-        }
         if !old
             .bindings
             .iter()
-            .any(|b| super::matches(options, b.client, &b.name))
+            .any(|b| super::matches_binding(options, b))
         {
             continue;
         }
-        let config = crate::config::Config::load(&old.config())?;
-        if crate::catalog::Catalog::load(&config.catalog_file, &config.backend).is_err() {
+        if old.removing {
             results.push(format!(
-                "{}: backend/catalog changed; remove and setup with discovery required",
+                "{}: removal pending; finish remove before setup",
                 old.id
             ));
             continue;
         }
-        if old.binary_hash == hash {
+        let config = crate::config::Config::load(&old.config())?;
+        let changed = crate::catalog::Catalog::load(&config.catalog_file, &config.backend).is_err();
+        if old.binary_hash == hash && !changed && service::installed(&old)? {
             results.push(format!(
                 "{}: already current; no token, service or backend restarted",
                 old.id
             ));
             continue;
         }
-        if !runtime::maintenance(&old, true).await.unwrap_or(false) {
+        let path = root
+            .join("operations")
+            .join(format!("upgrade-{}.json", uuid::Uuid::new_v4()));
+        let mut new = old.clone();
+        new.binary = binary(root)?;
+        new.binary_hash = hash.clone();
+        let mut journal = store::Journal {
+            format_version: 1,
+            phase: "upgrading".into(),
+            services: vec![new.clone()],
+            restart: vec![old.clone()],
+            changes: vec![],
+        };
+        journal.save(&path)?;
+        if !runtime::stop_idle(&old).await.unwrap_or(false) {
+            journal.phase = "complete".into();
+            journal.save(&path)?;
             results.push(format!(
-                "{}: update pending; gateway busy or unreachable",
+                "{}: update pending; gateway busy or health unknown",
                 old.id
             ));
             continue;
         }
-        let mut new = old.clone();
-        new.binary = binary(root)?;
-        new.binary_hash = hash.clone();
-        let pending = root
-            .join("operations")
-            .join(format!("upgrade-{}.json", old.id));
-        store::atomic(
-            &pending,
-            &serde_json::to_vec(&Upgrade {
-                format_version: 1,
-                old: old.clone(),
-                new: new.clone(),
-            })?,
-        )?;
-        if let Err(error) = replace(&old, &new).await {
-            let _ = runtime::maintenance(&old, false).await;
+        let result: Result<()> = async {
+            if changed {
+                refresh(&new, config, &mut journal, &path).await?;
+            }
+            service::register(&new)?;
+            runtime::ready(&new).await?;
+            registry.gateways[index] = new;
+            let target = root.join("registry.json");
+            journal.write(
+                &path,
+                &target,
+                store::read_optional(&target)?,
+                serde_json::to_vec_pretty(registry)?,
+            )?;
+            journal.phase = "complete".into();
+            journal.save(&path)
+        }
+        .await;
+        if let Err(error) = result {
+            let issues = super::recovery::restore(&mut journal, &path).await?;
             anyhow::bail!(
-                "Upgrade failed; private recovery record {}: {error}",
-                pending.display()
+                "Upgrade failed: {error}. Recovery: {}. Private journal: {}",
+                if issues.is_empty() {
+                    "previous settings/service restored".into()
+                } else {
+                    issues.join("; ")
+                },
+                path.display()
             );
         }
-        registry.gateways[index] = new;
-        store::save(root, registry)
-            .context("New gateway retained; registry commit needs recovery")?;
-        std::fs::remove_file(pending)?;
         results.push(format!(
-            "{}: background binary updated; endpoint and credentials preserved",
-            old.id
+            "{}: gateway updated{}; endpoint and credentials preserved",
+            old.id,
+            if changed {
+                " and backend catalog refreshed"
+            } else {
+                ""
+            }
         ));
     }
     Ok(results)
 }
-#[derive(serde::Deserialize, serde::Serialize)]
-struct Upgrade {
-    format_version: u32,
-    old: Record,
-    new: Record,
-}
-async fn replace(old: &Record, new: &Record) -> Result<()> {
-    service::unregister(old)?;
-    let result: Result<()> = async {
-        service::register(new)?;
-        runtime::ready(new).await
+async fn refresh(
+    record: &Record,
+    mut config: crate::config::Config,
+    journal: &mut store::Journal,
+    path: &Path,
+) -> Result<()> {
+    // Shared ownership remains eligible only while the reviewed launch recipe matches.
+    let mut command = vec![config.backend.command.to_string_lossy().into_owned()];
+    command.extend(config.backend.command_args.clone());
+    if let Some(entry) = &config.backend.entrypoint {
+        command.push(entry.to_string_lossy().into_owned());
     }
-    .await;
-    if result.is_ok() {
-        return Ok(());
-    }
-    // A client may have connected while readiness was being checked. Do not interrupt it.
-    if service::installed(new).unwrap_or(true) {
+    command.extend(config.backend.args.clone());
+    let candidate = crate::clients::Candidate {
+        binding: record
+            .bindings
+            .first()
+            .context("Managed gateway has no bindings")?
+            .clone(),
+        command,
+        cwd: config
+            .backend
+            .working_directory
+            .clone()
+            .context("Managed backend has no cwd")?,
+        env: config.backend.env.clone(),
+        env_files: config.backend.env_files.clone(),
+        inherit_env: config.backend.inherit_env.clone(),
+        issue: None,
+        recipe: None,
+    };
+    let recipe = crate::clients::recipes::matching(&candidate);
+    ensure!(
+        config.ownership != crate::config::Ownership::Shared
+            || recipe.as_ref().is_some_and(|r| r.mode == "shared"),
+        "Changed shared backend no longer matches a reviewed recipe; keep it stopped until a compatible backend is restored or reviewed"
+    );
+    eprintln!(
+        "Refreshing catalog with the original command; npx, uvx or Docker may download dependencies. No tools are called."
+    );
+    let catalog = crate::install::discover_and_pin(&mut config)
+        .await
+        .map_err(|_| anyhow::anyhow!("Backend discovery failed; values hidden"))?;
+    if let Some(recipe) = recipe {
         ensure!(
-            runtime::maintenance(new, true).await.unwrap_or(false),
-            "Replacement gateway retained: active sessions or unknown health; recovery is unsafe"
+            recipe.server_version == config.backend.version,
+            "Discovered backend version is outside the reviewed recipe"
         );
-        service::unregister(new)?;
     }
-    service::register(old)?;
-    runtime::ready(old).await?;
-    result.context("Previous service restored")
+    let target = &config.catalog_file;
+    journal.write(
+        path,
+        target,
+        store::read_optional(target)?,
+        serde_json::to_vec_pretty(&catalog)?,
+    )?;
+    let target = record.config();
+    journal.write(
+        path,
+        &target,
+        store::read_optional(&target)?,
+        toml::to_string_pretty(&config)?.into_bytes(),
+    )
 }

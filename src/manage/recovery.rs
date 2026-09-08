@@ -9,17 +9,21 @@ pub async fn restore(journal: &mut Journal, journal_path: &std::path::Path) -> R
     let mut recovery = journal.restore();
     if recovery.is_empty() {
         for record in journal.services.iter().rev() {
-            if service::installed(record).unwrap_or(true) {
-                if runtime::maintenance(record, true).await.unwrap_or(false) {
-                    if service::unregister(record).is_err() {
-                        recovery.push(format!("Service {} needs attention", record.id));
-                    }
-                } else {
-                    recovery.push(format!(
-                        "Service {} retained: busy or health unknown",
-                        record.id
-                    ));
-                }
+            if !runtime::stop_idle(record).await.unwrap_or(false) {
+                recovery.push(format!(
+                    "Service {} retained: busy or health unknown",
+                    record.id
+                ));
+            }
+        }
+    }
+    if recovery.is_empty() {
+        for record in &journal.restart {
+            if service::register(record).is_err() || runtime::ready(record).await.is_err() {
+                recovery.push(format!(
+                    "Previous service {} could not be restored; its backend may have changed",
+                    record.id
+                ));
             }
         }
     }
@@ -40,12 +44,6 @@ pub async fn pending(root: &Path) -> Result<()> {
             continue;
         }
         crate::platform::validate_private(&path)?;
-        ensure!(
-            !path
-                .file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("upgrade-")),
-            "An interrupted upgrade needs recovery; inspect status before changing this installation"
-        );
         let mut journal: Journal = serde_json::from_slice(&store::read_optional(&path)?)?;
         ensure!(
             journal.format_version == 1,

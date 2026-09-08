@@ -96,7 +96,7 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     let config = json!({"format_version":2,"ownership":mode,"max_workers":if mode == "shared" { 1 } else { 4 },"shared_client_roots":if mode == "shared" { "ignore" } else { "reject" },"listen":format!("127.0.0.1:{port}"),
         "token_file":release.join("client-token"),"catalog_file":release.join("catalog.json"),"state_dir":release.join("state"),
         "backend":{"profile":"stdio","command":command,"docker": command.file_stem().is_some_and(|s|s == "docker"),"args":&candidate.command[1..],"version":"discovery-pending",
-        "working_directory":candidate.cwd,"env":environment,"inherit_env":candidate.inherit_env}});
+        "working_directory":candidate.cwd,"env":environment,"env_files":candidate.env_files,"inherit_env":candidate.inherit_env}});
     let mut config: Config = serde_json::from_value(config)?;
     if let Some(entry) = crate::clients::recipes::entrypoint(&candidate.command, &candidate.cwd)
         && entry != config.backend.command
@@ -118,7 +118,7 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     }
     config.validate()?;
     crate::install::init_token(&config.token_file)?;
-    let catalog = crate::install::discover_and_pin(&mut config).await?;
+    let catalog = crate::install::discover_and_pin(&mut config).await.map_err(|_| anyhow::anyhow!("Backend discovery failed; check the command, dependencies, context and exclusive resource ownership. Values hidden."))?;
     if let Some(recipe) = &candidate.recipe {
         ensure!(
             config.backend.version == recipe.server_version,
@@ -212,6 +212,7 @@ pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result
         if config.ownership != crate::config::Ownership::Shared
             || config.backend.env != launch_environment(candidate)?
             || config.backend.working_directory.as_ref() != Some(&candidate.cwd)
+            || config.backend.env_files != candidate.env_files
             || config.backend.inherit_env != candidate.inherit_env
         {
             continue;
@@ -254,5 +255,38 @@ fn launch_environment(candidate: &Candidate) -> Result<std::collections::BTreeMa
         values.insert(name.clone(), value);
     }
     values.extend(candidate.env.clone());
+    for key in candidate.env_files.keys() {
+        values.remove(key);
+    }
     Ok(values)
+}
+
+/// A live maintenance barrier or the daemon's exclusive state lock prevents a
+/// new owner from accepting work while its service registration is removed.
+pub async fn stop_idle(record: &Record) -> Result<bool> {
+    use fs2::FileExt;
+    let config = Config::load(&record.config())?;
+    let mut offline = None;
+    match maintenance(record, true).await {
+        Ok(true) => {}
+        Ok(false) => return Ok(false),
+        Err(_) => {
+            let lock = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(config.state_dir.join("gateway.lock"))?;
+            if lock.try_lock_exclusive().is_err() {
+                return Ok(false);
+            }
+            offline = Some(lock);
+        }
+    }
+    let result = super::service::unregister(record);
+    if result.is_err() {
+        let _ = maintenance(record, false).await;
+    }
+    drop(offline);
+    result?;
+    Ok(true)
 }

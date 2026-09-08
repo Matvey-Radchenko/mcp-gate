@@ -137,6 +137,9 @@ fn collect(
         }
     }
     for c in &mut out {
+        if let Err(error) = super::expand::apply(c, home) {
+            c.issue = Some(error.to_string());
+        }
         c.recipe = super::recipes::matching(c);
     }
     Ok(out)
@@ -178,7 +181,7 @@ pub(super) fn candidate(
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
     )
-    .context("MCP environment must contain strings")?;
+    .map_err(|_| anyhow::anyhow!("MCP environment must contain strings; values hidden"))?;
     let cwd = config
         .get("cwd")
         .and_then(Value::as_str)
@@ -188,24 +191,10 @@ pub(super) fn candidate(
     if command.is_empty() {
         issue = Some("Existing HTTP, managed or non-stdio entry: left unchanged".into());
     }
-    if config.get("enabled") == Some(&Value::Bool(false))
-        || config.get("disabled") == Some(&Value::Bool(true))
-    {
-        issue = Some("Disabled MCP: left unchanged".into());
-    }
     if !command.is_empty() && project_scoped {
         issue=Some("Project file is read-only to setup. A verified machine-local override is required; use a client local-scope definition, then rerun setup".into());
     } else if !command.is_empty() && config.get("cwd").is_none() {
         issue=Some("Global command has a project-dependent working directory. Set an explicit cwd in your personal client configuration before migration".into());
-    }
-    if env
-        .values()
-        .any(|v| v.contains("{env:") || v.contains("{file:") || v.contains("${"))
-    {
-        issue = Some(
-            "Dynamic environment reference requires a client-specific resolver; left unchanged"
-                .into(),
-        );
     }
     if let Some(executable) = command
         .first()
@@ -220,8 +209,14 @@ pub(super) fn candidate(
             issue = Some("Legacy gateway is recognized but is not owned by this installer".into());
         }
     }
+    if config.get("enabled") == Some(&Value::Bool(false))
+        || config.get("disabled") == Some(&Value::Bool(true))
+    {
+        issue = Some("Disabled MCP: left unchanged".into());
+    }
     Ok(Candidate {
         recipe: None,
+        env_files: BTreeMap::new(),
         binding: Binding {
             client,
             name: name.into(),
@@ -243,7 +238,10 @@ pub(super) fn candidate(
                 .get("env_vars")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
-        )?,
+        )
+        .map_err(|_| {
+            anyhow::anyhow!("Inherited environment names must be strings; values hidden")
+        })?,
         issue,
     })
 }

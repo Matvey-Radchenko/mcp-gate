@@ -119,8 +119,8 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         };
         let a: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
         let b: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        // SAFETY: both paths are nul-terminated, owned UTF-16 buffers.
         ensure!(
+            // SAFETY: both paths are nul-terminated, owned UTF-16 buffers.
             unsafe {
                 MoveFileExW(
                     a.as_ptr(),
@@ -148,6 +148,8 @@ pub struct Journal {
     pub format_version: u32,
     pub phase: String,
     pub services: Vec<Record>,
+    #[serde(default)]
+    pub restart: Vec<Record>,
     pub changes: Vec<FileChange>,
 }
 impl Journal {

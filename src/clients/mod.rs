@@ -1,5 +1,6 @@
 mod claude;
 pub mod document;
+pub mod expand;
 pub mod recipes;
 mod scan;
 pub use scan::{discover, discover_current};
@@ -46,6 +47,7 @@ pub struct Candidate {
     pub command: Vec<String>,
     pub cwd: PathBuf,
     pub env: BTreeMap<String, String>,
+    pub env_files: BTreeMap<String, PathBuf>,
     pub inherit_env: Vec<String>,
     pub issue: Option<String>,
     pub recipe: Option<recipes::Recipe>,

@@ -111,6 +111,56 @@ fn actual_service_setup_repeat_remove_without_changing_project_files() {
         token
     );
     assert_eq!(fs::read(&shared).unwrap(), untouched);
+    // An active MCP connection blocks replacement even before its first tool call.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (session,pid)=rt.block_on(async {
+        let http=reqwest::Client::new();
+        let response=http.post(format!("http://{}/mcp",config.listen)).bearer_auth(&token)
+            .header("Accept","application/json, text/event-stream")
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}})).send().await.unwrap();
+        assert!(response.status().is_success());
+        let id=response.headers()["mcp-session-id"].to_str().unwrap().to_owned();
+        response.bytes().await.unwrap();
+        let health=mcp_gate::manage::runtime::health(record).await.unwrap();
+        (id,health["pid"].clone())
+    });
+    let mut old = store::load(&root).unwrap();
+    old.gateways[0].binary_hash = "previous-build-fixture".into();
+    store::save(&root, &old).unwrap();
+    let pending: serde_json::Value = serde_json::from_slice(&run("setup", false)).unwrap();
+    assert!(pending["updates"][0].as_str().unwrap().contains("pending"));
+    rt.block_on(async {
+        assert_eq!(
+            mcp_gate::manage::runtime::health(record).await.unwrap()["pid"],
+            pid
+        );
+        let response = reqwest::Client::new()
+            .delete(format!("http://{}/mcp", config.listen))
+            .bearer_auth(&token)
+            .header("mcp-session-id", session)
+            .header("mcp-protocol-version", "2025-11-25")
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        response.bytes().await.unwrap();
+    });
+    run("setup", false);
+    assert_ne!(
+        rt.block_on(mcp_gate::manage::runtime::health(record))
+            .unwrap()["pid"],
+        pid
+    );
+    assert_eq!(
+        mcp_gate::config::Config::load(&record.config())
+            .unwrap()
+            .token()
+            .unwrap(),
+        token
+    );
     run("remove", true);
     assert!(service::installed(record).unwrap());
     run("remove", false);

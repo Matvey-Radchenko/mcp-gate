@@ -41,7 +41,7 @@ pub async fn run(options: Selection) -> Result<()> {
         .filter(|r| {
             r.bindings
                 .iter()
-                .any(|b| super::matches(&options, b.client, &b.name))
+                .any(|b| super::matches_binding(&options, b))
         })
         .flat_map(|r| r.bindings.iter().map(preview::target))
         .collect();
@@ -110,8 +110,10 @@ fn choose(candidates: Vec<Candidate>, options: &Selection) -> Result<Vec<Candida
             && (options.server.contains(&c.binding.name)
                 || super::confirm(
                     &format!(
-                        "Migrate {} / {} in session mode?",
-                        c.binding.client, c.binding.name
+                        "Migrate {} / {} in {} mode?",
+                        c.binding.client,
+                        c.binding.name,
+                        c.recipe.as_ref().map_or("session", |r| r.mode.as_str())
                     ),
                     false,
                 )?)
@@ -133,6 +135,7 @@ async fn install(
         format_version: 1,
         phase: "preparing".into(),
         services: vec![],
+        restart: vec![],
         changes: vec![],
     };
     journal.save(&path)?;

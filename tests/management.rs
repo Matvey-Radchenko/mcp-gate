@@ -89,7 +89,7 @@ fn discovery_uses_local_claude_override_and_skips_other_shared_files() {
     fs::create_dir(&home).unwrap();
     fs::create_dir(&project).unwrap();
     let personal = home.join(".claude.json");
-    fs::write(&personal, "{\"permissions\":{\"allow\":[]}}").unwrap();
+    fs::write(&personal,json!({"permissions":{"allow":[]},"projects":{project.to_str().unwrap():{"enabledMcpjsonServers":["fixture"]}}}).to_string()).unwrap();
     let shared = project.join(".mcp.json");
     let original = b"{\"mcpServers\":{\"fixture\":{\"command\":\"npx\",\"args\":[\"fixture\"]}}}";
     fs::write(&shared, original).unwrap();
@@ -121,6 +121,7 @@ fn journals_recover_only_owned_writes_and_reject_future_formats() {
         format_version: 1,
         phase: "preparing".into(),
         services: vec![],
+        restart: vec![],
         changes: vec![],
     };
     journal
@@ -137,6 +138,7 @@ fn journals_recover_only_owned_writes_and_reject_future_formats() {
         format_version: 1,
         phase: "preparing".into(),
         services: vec![],
+        restart: vec![],
         changes: vec![],
     };
     new.write(&journal_file, &created, vec![], b"new".to_vec())
@@ -158,4 +160,104 @@ fn parse_errors_do_not_echo_private_values() {
     ] {
         assert!(!format!("{:#}", document::parse(source, toml).unwrap_err()).contains("SECRET"));
     }
+}
+
+#[test]
+fn expansion_preserves_arguments_unicode_and_relative_file_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("opencode.json");
+    fs::write(dir.path().join("credential"), "test only\n").unwrap();
+    let resolve = |key: &str| (key == "FIXTURE").then(|| "a b Юникод".into());
+    assert_eq!(
+        clients::expand::value(
+            "prefix-${FIXTURE}",
+            Client::ClaudeCode,
+            &source,
+            dir.path(),
+            resolve
+        )
+        .unwrap(),
+        "prefix-a b Юникод"
+    );
+    assert_eq!(
+        clients::expand::value(
+            "${MISSING:-fallback}",
+            Client::ClaudeCode,
+            &source,
+            dir.path(),
+            resolve
+        )
+        .unwrap(),
+        "fallback"
+    );
+    assert!(
+        clients::expand::value(
+            "${MISSING}",
+            Client::ClaudeCode,
+            &source,
+            dir.path(),
+            resolve
+        )
+        .is_err()
+    );
+    assert_eq!(
+        clients::expand::value(
+            "Bearer {file:credential}",
+            Client::Opencode,
+            &source,
+            dir.path(),
+            resolve
+        )
+        .unwrap(),
+        "Bearer test only"
+    );
+    assert_eq!(
+        clients::expand::value(
+            "{env:FIXTURE}",
+            Client::Opencode,
+            &source,
+            dir.path(),
+            resolve
+        )
+        .unwrap(),
+        "a b Юникод"
+    );
+}
+
+#[test]
+fn unapproved_or_disabled_project_servers_are_never_promoted_to_local_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let project = dir.path().join("project");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&project).unwrap();
+    let personal = home.join(".claude.json");
+    fs::write(&personal, "{}").unwrap();
+    let shared = project.join(".mcp.json");
+    fs::write(
+        &shared,
+        json!({"mcpServers":{"fixture":{"command":"fixture"}}}).to_string(),
+    )
+    .unwrap();
+    let found = clients::discover(&home, &project, &[Client::ClaudeCode], true).unwrap();
+    assert!(
+        found[0]
+            .issue
+            .as_ref()
+            .unwrap()
+            .contains("not explicitly approved")
+    );
+    fs::write(
+        &personal,
+        json!({"projects":{project.to_str().unwrap():{"enabledMcpjsonServers":["fixture"]}}})
+            .to_string(),
+    )
+    .unwrap();
+    fs::write(
+        &shared,
+        json!({"mcpServers":{"fixture":{"command":"fixture","disabled":true}}}).to_string(),
+    )
+    .unwrap();
+    let found = clients::discover(&home, &project, &[Client::ClaudeCode], true).unwrap();
+    assert!(found[0].issue.as_ref().unwrap().contains("Disabled"));
 }

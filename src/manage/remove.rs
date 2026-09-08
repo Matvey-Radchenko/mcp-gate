@@ -63,10 +63,7 @@ pub async fn run(options: Selection) -> Result<()> {
             continue;
         }
         let absent = !service::installed(&record).unwrap_or(true);
-        if absent
-            || (runtime::maintenance(&record, true).await.unwrap_or(false)
-                && service::unregister(&record).is_ok())
-        {
+        if absent || runtime::stop_idle(&record).await.unwrap_or(false) {
             continue;
         }
         let _ = runtime::maintenance(&record, false).await;
@@ -102,6 +99,7 @@ fn restore_connections(
         format_version: 1,
         phase: "removing".into(),
         services: vec![],
+        restart: vec![],
         changes: vec![],
     };
     journal.save(&path)?;

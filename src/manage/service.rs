@@ -69,7 +69,9 @@ pub fn unregister(record: &Record) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let target = format!("{}/{}", domain(), record.label);
-        run(Command::new("launchctl").args(["bootout", &target]))?;
+        if installed(record)? {
+            run(Command::new("launchctl").args(["bootout", &target]))?;
+        }
         let path = agent_path(record)?;
         if path.exists() {
             std::fs::remove_file(path)?;
@@ -77,8 +79,13 @@ pub fn unregister(record: &Record) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        run(Command::new("schtasks.exe").args(["/End", "/TN", &record.label]))?;
-        run(Command::new("schtasks.exe").args(["/Delete", "/TN", &record.label, "/F"]))?;
+        if installed(record)? {
+            // /End may report that an already exited task is not running.
+            let _ = Command::new("schtasks.exe")
+                .args(["/End", "/TN", &record.label])
+                .output();
+            run(Command::new("schtasks.exe").args(["/Delete", "/TN", &record.label, "/F"]))?;
+        }
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     anyhow::bail!("Unsupported service platform: {}", record.label);

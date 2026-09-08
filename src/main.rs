@@ -88,10 +88,8 @@ enum Action {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("mcp_gate=info".parse()?),
-        )
+        // Dependency diagnostics can contain upstream RPC error payloads.
+        .with_env_filter("off,mcp_gate=info")
         .with_target(false)
         .init();
     match Cli::parse().command {

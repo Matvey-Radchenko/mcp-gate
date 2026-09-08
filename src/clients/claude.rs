@@ -34,6 +34,16 @@ pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> 
         let c = &mut out[index];
         let mut keys = base.clone();
         keys.push(name.clone());
+        if local.get(&name).is_none()
+            && c.binding
+                .source
+                .file_name()
+                .is_some_and(|n| n == ".mcp.json")
+            && !approved(target, project, &name)?
+        {
+            c.issue=Some("Project MCP is not explicitly approved in personal settings; migrating it would bypass the client's project approval. Approve it in Claude first.".into());
+            continue;
+        }
         if let Some(value) = local.get(&name) {
             *c = candidate(
                 Client::ClaudeCode,
@@ -88,4 +98,38 @@ pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> 
         }
     }
     Ok(())
+}
+
+fn approved(personal: &Path, project: &Path, name: &str) -> Result<bool> {
+    let document = super::document::parse(&std::fs::read_to_string(personal)?, false)?;
+    let scope = &document["projects"][project.to_str().context("Project path must be Unicode")?];
+    let contains = |value: &Value| {
+        value
+            .as_array()
+            .is_some_and(|a| a.iter().any(|n| n.as_str() == Some(name)))
+    };
+    let mut allowed = contains(&scope["enabledMcpjsonServers"]);
+    let mut disabled = contains(&scope["disabledMcpjsonServers"]);
+    let parent = personal
+        .parent()
+        .context("Personal configuration has no parent")?;
+    let user_settings = if std::env::var_os("CLAUDE_CONFIG_DIR").is_some() {
+        parent.join("settings.json")
+    } else {
+        parent.join(".claude/settings.json")
+    };
+    for path in [
+        user_settings,
+        project.join(".claude/settings.json"),
+        project.join(".claude/settings.local.json"),
+    ] {
+        if !path.is_file() {
+            continue;
+        }
+        let settings = super::document::parse(&std::fs::read_to_string(path)?, false)?;
+        allowed |= settings["enableAllProjectMcpServers"] == true
+            || contains(&settings["enabledMcpjsonServers"]);
+        disabled |= contains(&settings["disabledMcpjsonServers"]);
+    }
+    Ok(allowed && !disabled)
 }
