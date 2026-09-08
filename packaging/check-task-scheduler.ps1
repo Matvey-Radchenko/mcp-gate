@@ -12,7 +12,7 @@ $document = $document.Replace('{binary}', (XmlText (Join-Path $env:SystemRoot 'S
 $document = $document.Replace('{arguments}', '/C exit 0')
 $document = $document.Replace('{cwd}', (XmlText $fixtureDirectory))
 try {
-    [IO.File]::WriteAllText($xmlPath, $document, [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($xmlPath, $document, [Text.Encoding]::Unicode)
     & schtasks.exe /Create /TN $taskName /XML $xmlPath
     if ($LASTEXITCODE -ne 0) { throw 'The production Task Scheduler XML contract was rejected' }
     $registered = $true

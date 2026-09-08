@@ -89,7 +89,13 @@ pub fn register(record: &Record) -> Result<()> {
     #[cfg(windows)]
     {
         let task = record.release.join("task.xml");
-        super::store::atomic(&task, windows_xml(record)?.as_bytes())?;
+        // schtasks imports task definitions as Unicode XML. Match both its
+        // encoding declaration and byte-order marker, including non-ASCII paths.
+        let bytes: Vec<u8> = std::iter::once(0xfeff)
+            .chain(windows_xml(record)?.encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        super::store::atomic(&task, &bytes)?;
         run(Command::new("schtasks.exe")
             .args(["/Create", "/TN", &record.label, "/XML"])
             .arg(&task))
