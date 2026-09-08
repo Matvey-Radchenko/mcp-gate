@@ -25,6 +25,36 @@ fn run(command: &mut Command) -> Result<()> {
     );
     Ok(())
 }
+
+/// Only service state/error codes are returned; command lines and environments
+/// from the service manager's verbose response never reach user diagnostics.
+pub fn diagnostics(record: &Record) -> String {
+    #[cfg(target_os = "macos")]
+    if let Ok(output) = Command::new("launchctl")
+        .args(["print", &format!("{}/{}", domain(), record.label)])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let fields: Vec<_> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| {
+                line.starts_with("state =")
+                    || line.starts_with("last exit code =")
+                    || line.starts_with("last terminating signal =")
+                    || line.starts_with("runs =")
+            })
+            .collect();
+        if !fields.is_empty() {
+            return fields.join("; ");
+        }
+    }
+    if installed(record).unwrap_or(false) {
+        "service registered; runtime health unavailable".into()
+    } else {
+        "service is not registered".into()
+    }
+}
 pub fn register(record: &Record) -> Result<()> {
     #[cfg(target_os = "macos")]
     {

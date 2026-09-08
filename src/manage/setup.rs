@@ -14,11 +14,9 @@ pub async fn run(options: Selection) -> Result<()> {
     let root = store::root()?;
     // Reading the format precedes all writes, including binary copies.
     let registry = store::load(&root)?;
-    let project = options
-        .project
-        .clone()
-        .unwrap_or(std::env::current_dir()?)
-        .canonicalize()?;
+    let project = crate::platform::project_path(
+        &options.project.clone().unwrap_or(std::env::current_dir()?),
+    )?;
     let candidates: Vec<_> = clients::discover_current(
         &store::home()?,
         &project,

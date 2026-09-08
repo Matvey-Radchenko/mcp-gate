@@ -49,7 +49,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           for target in darwin-arm64 darwin-x64 win32-x64; do
-            npm publish "artifacts/native-$target/mcp-gate-$target-$RELEASE_VERSION.tgz" --access public --tag latest --provenance
+            npm publish "artifacts/native-$target/mcp-gate-bin-$target-$RELEASE_VERSION.tgz" --access public --tag latest --provenance
           done
       - name: Publish launcher last
         env:

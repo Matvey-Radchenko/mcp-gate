@@ -112,9 +112,8 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     }
     if let Some(recipe) = &candidate.recipe {
         config.tool_policy.disabled = recipe.disabled_tools.clone();
-        if recipe.id == "playwright" {
-            config.backend.directory_env = vec!["PLAYWRIGHT_MCP_OUTPUT_DIR".into()];
-        }
+        config.backend.directory_env = recipe.directory_env.clone();
+        config.backend.working_directory_env = recipe.working_directory_env.clone();
     }
     config.validate()?;
     crate::install::init_token(&config.token_file)?;
@@ -182,7 +181,9 @@ fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Res
     Ok(value)
 }
 pub async fn ready(record: &Record) -> Result<()> {
-    for _ in 0..100 {
+    // First execution of a copied native binary can be delayed by OS validation
+    // and the user service scheduler. Match the minimum backend startup budget.
+    for _ in 0..300 {
         if let Ok(value) = health(record).await {
             ensure!(
                 value["workers"] == 0,
@@ -192,7 +193,10 @@ pub async fn ready(record: &Record) -> Result<()> {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    anyhow::bail!("Gateway did not become healthy; inspect its private service logs")
+    anyhow::bail!(
+        "Gateway did not become healthy: {}. Inspect its private service logs",
+        super::service::diagnostics(record)
+    )
 }
 
 pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result<Option<Record>> {

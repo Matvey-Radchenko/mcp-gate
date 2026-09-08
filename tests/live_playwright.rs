@@ -106,9 +106,31 @@ fn screenshots(c: &Config, name: &str) -> BTreeSet<PathBuf> {
 }
 
 #[tokio::test]
-#[ignore = "Requires STAGED_PLAYWRIGHT_CONFIG, CODEX_BINARY, Chrome and explicit local-browser authorization"]
+#[ignore = "Requires PLAYWRIGHT_ENTRYPOINT/DEVTOOLS_NODE or an empty STAGED_PLAYWRIGHT_CONFIG, CODEX_BINARY and installed Chrome"]
 async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
-    let path = PathBuf::from(std::env::var("STAGED_PLAYWRIGHT_CONFIG").unwrap());
+    let mut owned = None;
+    let path = if let Ok(path) = std::env::var("STAGED_PLAYWRIGHT_CONFIG") {
+        PathBuf::from(path)
+    } else {
+        let mut h = support::Harness::generic("session", 4, 60, 30).await;
+        let mut backend = Config::load(&h.config).unwrap().backend;
+        backend.command = std::env::var("DEVTOOLS_NODE").unwrap().into();
+        backend.entrypoint = Some(std::env::var("PLAYWRIGHT_ENTRYPOINT").unwrap().into());
+        backend.version = "1.63.0-alpha-2026-08-31".into();
+        backend.args = vec![
+            "--isolated".into(),
+            "--browser".into(),
+            "chrome".into(),
+            "--headless".into(),
+        ];
+        backend.working_directory = Some(h.config.parent().unwrap().to_path_buf());
+        backend.directory_env = vec!["PLAYWRIGHT_MCP_OUTPUT_DIR".into()];
+        backend.working_directory_env = Some("PLAYWRIGHT_MCP_OUTPUT_DIR".into());
+        h.replace_backend(backend).await;
+        let path = h.config.clone();
+        owned = Some(h);
+        path
+    };
     let c = Config::load(&path).unwrap();
     assert!(c.ownership == Ownership::Session);
     assert_eq!(
@@ -225,4 +247,7 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     a.close().await;
     b.close().await;
     pages.abort();
+    if let Some(h) = &mut owned {
+        h.stop();
+    }
 }

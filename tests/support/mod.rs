@@ -60,7 +60,7 @@ impl Harness {
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
-        for _ in 0..100 {
+        for _ in 0..600 {
             if self.health().await.is_some() {
                 return;
             }
@@ -185,7 +185,9 @@ MOCK_CANCEL_FILE = {cancel_file:?}
             cancel_file,
             client_roots: generic.is_none(),
         };
-        for _ in 0..100 {
+        // Match the fixture's configured 30-second startup budget. Native CI
+        // may still be reading/signature-checking large debug binaries at 5 s.
+        for _ in 0..600 {
             if harness.health().await.is_some() {
                 return harness;
             }
@@ -194,7 +196,11 @@ MOCK_CANCEL_FILE = {cancel_file:?}
         panic!("Gateway failed to start")
     }
     pub(crate) async fn health(&self) -> Option<Value> {
-        Client::new()
+        Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap()
             .get(format!("{}/health", self.base))
             .bearer_auth(TOKEN)
             .send()
@@ -234,6 +240,19 @@ MOCK_CANCEL_FILE = {cancel_file:?}
 }
 impl Drop for Harness {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        if matches!(self.child.try_wait(), Ok(None)) {
+            // SAFETY: a failed assertion must still let the gateway reap its own browser
+            // groups. Probe before signalling: an already reaped PID can be reused.
+            unsafe {
+                libc::kill(self.child.id() as i32, libc::SIGTERM);
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(20);
+            while matches!(self.child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

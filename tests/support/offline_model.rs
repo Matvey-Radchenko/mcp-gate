@@ -16,7 +16,7 @@ async fn messages(Json(request): Json<Value>) -> impl IntoResponse {
         tools.iter().find_map(|tool| {
             tool["name"]
                 .as_str()
-                .filter(|name| name.ends_with("__state"))
+                .filter(|name| name.ends_with("_state"))
         })
     });
     let mut body = event(

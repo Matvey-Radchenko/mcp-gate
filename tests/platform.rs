@@ -16,7 +16,12 @@ async fn launch(command: &Path, directory: &Path, args: Vec<String>) {
         .unwrap();
     let actual: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
     assert_eq!(actual["args"], json!(args));
-    assert_eq!(actual["cwd"], json!(directory));
+    assert_eq!(
+        Path::new(actual["cwd"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        directory.canonicalize().unwrap()
+    );
     assert_eq!(actual["value"], "spaces Юникод\n");
     assert_eq!(actual["relative"], "fixture-relative-path");
     assert_eq!(config.backend.version, "mock-1");

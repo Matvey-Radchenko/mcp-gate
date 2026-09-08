@@ -9,13 +9,13 @@ const cargoVersion = readFileSync('Cargo.toml', 'utf8').match(/^version = "([^"]
 if (cargoVersion !== manifest.version) throw Error('Cargo/npm version mismatch');
 const output = resolve('dist');
 mkdirSync(output, { recursive: true });
-const native = join(output, `mcp-gate-${target}`);
+const native = join(output, `mcp-gate-bin-${target}`);
 mkdirSync(join(native, 'bin'), { recursive: true });
 const executable = `mcp-gate${process.platform === 'win32' ? '.exe' : ''}`;
 cpSync(join('target/release', executable), join(native, 'bin', executable));
 chmodSync(join(native, 'bin', executable), 0o755);
 writeFileSync(join(native, 'package.json'), JSON.stringify({
-  name: `mcp-gate-${target}`, version: manifest.version, description: `Native mcp-gate for ${target}`,
+  name: `mcp-gate-bin-${target}`, version: manifest.version, description: `Native mcp-gate for ${target}`,
   license: manifest.license, repository: manifest.repository, os: [process.platform], cpu: [process.arch],
   files: ['bin/', 'LICENSE', 'README.md'],
 }, null, 2) + '\n');

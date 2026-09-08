@@ -28,3 +28,31 @@ pub fn binary_name() -> &'static str {
         "mcp-gate"
     }
 }
+
+/// Resolve physical project identity in the spelling clients use as JSON keys.
+/// Rust's Windows verbatim prefix is an API detail, absent from client cwd keys.
+pub fn project_path(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let path = path.canonicalize()?;
+    #[cfg(windows)]
+    {
+        use std::{
+            os::windows::ffi::{OsStrExt, OsStringExt},
+            path::{Component, Prefix},
+        };
+        let wide: Vec<_> = path.as_os_str().encode_wide().collect();
+        if let Some(Component::Prefix(prefix)) = path.components().next() {
+            match prefix.kind() {
+                Prefix::VerbatimDisk(_) => {
+                    return Ok(std::ffi::OsString::from_wide(&wide[4..]).into());
+                }
+                Prefix::VerbatimUNC(_, _) => {
+                    let mut regular = vec![u16::from(b'\\'), u16::from(b'\\')];
+                    regular.extend_from_slice(&wide[8..]);
+                    return Ok(std::ffi::OsString::from_wide(&regular).into());
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(path)
+}

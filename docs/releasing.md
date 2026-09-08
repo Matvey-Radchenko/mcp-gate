@@ -5,8 +5,8 @@
 2. Review the exact Git tree/history and npm/archive contents for private data.
    The public branch starts at a sanitized source snapshot; original local history
    and operational notes are retained separately and must not be pushed.
-3. Confirm the availability/ownership of `mcp-gate`, `mcp-gate-darwin-arm64`,
-   `mcp-gate-darwin-x64`, and `mcp-gate-win32-x64`.
+3. Confirm the availability/ownership of `mcp-gate`, `mcp-gate-bin-darwin-arm64`,
+   `mcp-gate-bin-darwin-x64`, and `mcp-gate-bin-win32-x64`.
 4. The owner authenticates separately to npm and configures trusted publishing for
    all four packages: owner `Matvey-Radchenko`, repository `mcp-gate`, workflow
    `release.yml`, environment `npm`, with publishing allowed. See the current

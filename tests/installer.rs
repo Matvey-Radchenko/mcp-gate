@@ -34,7 +34,7 @@ fn actual_service_setup_repeat_remove_without_changing_project_files() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project space Юникод");
     fs::create_dir(&project).unwrap();
-    let project = project.canonicalize().unwrap();
+    let project = mcp_gate::platform::project_path(&project).unwrap();
     let personal = dir.path().join("claude");
     fs::create_dir(&personal).unwrap();
     let root = dir.path().join("state");

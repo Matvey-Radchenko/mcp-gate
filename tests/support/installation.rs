@@ -19,7 +19,7 @@ impl Installation {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("project space Юникод");
         fs::create_dir(&project).unwrap();
-        let project = project.canonicalize().unwrap();
+        let project = mcp_gate::platform::project_path(&project).unwrap();
         let personal = directory.path().join("claude");
         fs::create_dir(&personal).unwrap();
         let backend = directory.path().join(if cfg!(windows) {

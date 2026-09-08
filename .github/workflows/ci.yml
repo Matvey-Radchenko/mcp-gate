@@ -62,20 +62,39 @@ jobs:
           done
       - name: Real clients with local MCP and model fixtures
         run: cargo test --locked --all-features --test native_codex --test native_clients -- --ignored
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned uv tool runner
+        run: python -m pip install uv==0.11.3
+      - name: Locate wrapper commands
+        run: |
+          for pair in NPX_BINARY:npx UVX_BINARY:uvx PYTHON_BINARY:python; do
+            key="${pair%%:*}"
+            name="${pair#*:}"
+            binary="$(command -v "$name")"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              if [[ "$name" == "npx" ]]; then binary="$binary.cmd"; fi
+              binary="$(cygpath -w "$binary")"
+            fi
+            echo "$key=$binary" >> "$GITHUB_ENV"
+          done
+      - name: Offline npx and uvx launch contexts
+        run: cargo test --locked --all-features --test wrappers -- --ignored
       - name: Build release binary
         run: cargo build --locked --release --bin mcp-gate
       - name: Prepare and inspect npm archives
         run: |
           node packaging/build.mjs
           cd dist
-          npm pack ./mcp-gate-${{ matrix.target }} --ignore-scripts
+          npm pack ./mcp-gate-bin-${{ matrix.target }} --ignore-scripts
           npm pack ./mcp-gate --ignore-scripts
       - name: Clean archive installation
         run: npm exec -- node packaging/smoke.mjs
       - name: Download archive
         run: |
           version=$(node -p "require('./npm/mcp-gate/package.json').version")
-          cd dist/mcp-gate-${{ matrix.target }}
+          cd dist/mcp-gate-bin-${{ matrix.target }}
           tar -czf "../mcp-gate-$version-${{ matrix.target }}.tar.gz" bin LICENSE README.md
       - uses: actions/upload-artifact@v4
         with:

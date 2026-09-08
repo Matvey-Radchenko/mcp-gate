@@ -5,16 +5,28 @@ that all combinations have been tested. Update it only from completed checks.
 
 | Check | macOS ARM64 | macOS Intel | Windows x64 |
 | --- | --- | --- | --- |
-| Rust format, strict Clippy, size budgets, ordinary tests | Passing before latest acceptance additions; final rerun pending | Native CI pending | Native CI pending |
-| Compilation of all targets/tests | Local native build | Pending | Cross-check passed before latest additions; native run pending |
-| User service setup, repeat setup, remove | In progress | Pending | Pending |
-| Codex 0.153.4 shared/session tool calls | In progress | Pending | Pending |
-| OpenCode 1.14.23 private file header, lazy discovery | In progress | Pending | Pending |
-| Claude Code 2.1.160 local model tool call and headers helper | In progress | Pending | Pending |
-| Claude local MCP precedence | Verified with CLI in isolated settings; shared file unchanged | Pending | Pending |
-| Clean npm archive install | Pending | Pending | Pending |
-| Login autostart, idle upgrade, busy upgrade, compatible downgrade | Pending | Pending | Pending |
-| Browser independence, artifacts, owned-process cleanup | Previous private pilots; public installer retest pending | Pending | Pending |
+| Rust formatting, strict Clippy, size budgets, ordinary tests | Local passing; latest CI rerun pending | Earlier CI passed; startup deadline fix pending | Core passed; path-assertion fix pending |
+| User service setup, repeat setup, remove | Passed locally and in earlier CI | Passed in earlier CI | Native service test pending |
+| Recovery at five installation and three update stages | Passed locally | Pending | Pending |
+| Remove one client while retaining another | Passed locally | Pending | Pending |
+| Codex 0.153.4 shared/session tool calls | Passed locally and in earlier CI | Passed in earlier CI | Pending |
+| OpenCode 1.14.23 private header and lazy discovery | Passed locally and in earlier CI | Passed in earlier CI | Pending |
+| OpenCode 1.14.23 tool call with a local model | Passed locally | Pending | Pending |
+| Claude Code 2.1.160 local model tool call and headers helper | Passed locally and in earlier CI | Passed in earlier CI | Pending |
+| Claude local MCP precedence and physical project key | Passed with real CLI; shared file unchanged | Pending | Pending |
+| Clean npm archive install | Passed locally and in earlier CI | Passed in earlier CI | Pending |
+| Busy update deferred; idle update retains credentials | Passed locally | Pending | Pending |
+| Autostart after an actual new login; compatible version downgrade | Pending | Pending | Pending |
+| Chrome DevTools 1.8.0 browser independence and owned cleanup | Passed locally with Codex | Pending | Pending |
+| Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally with Codex | Pending | Pending |
+| Real npx/uvx with local offline fixture packages | Passed locally | Pending | Pending |
+| Windows Job Objects and native private-file ACLs | N/A | N/A | Passed in native ordinary tests |
+| Docker container ownership and cleanup | Blocked: local daemon unavailable | Pending | Pending |
+
+Earlier complete macOS CI evidence: [run 34264584770](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34264584770), commit `e08454d`.
+Later [run 34269320294](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34269320294)
+identified test startup deadlines and Windows path spelling assumptions. Its failure
+is retained; it does not establish release readiness. Pending fixes require new CI.
 
 Definitions: `session` means an MCP connection. It does not promise separation
 between OpenCode chats sharing that connection; `_meta.sessionID` routing is excluded.
@@ -39,3 +51,14 @@ must also be checked before declaring release complete.
 Reference contracts: [Claude scope precedence and headers helpers](https://code.claude.com/docs/en/mcp),
 [GitHub native runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
 [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+
+Installer scope still needs final acceptance: ordinary global commands without an
+explicit cwd are skipped. In particular, OpenCode configurations do not gain a
+made-up cwd field; a supported project-local solution remains a separate setup.
+The OpenCode transport tests above do not establish automatic migration for every
+configuration source or schema.
+
+Automatic recipes currently carry only reviewed `macos-aarch64` conditions; other
+platforms do not select shared ownership from an untested recipe. Playwright's
+narrow recipe explicitly changes backend cwd to its retained per-connection output
+directory, and only accepts its listed startup flags with no custom environment.

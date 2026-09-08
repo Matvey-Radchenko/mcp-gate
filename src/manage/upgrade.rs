@@ -61,7 +61,9 @@ pub async fn apply(root: &Path, registry: &mut Registry, options: &Selection) ->
         if old.binary_hash == hash
             && !changed
             && service::installed(&old)?
-            && runtime::health(&old).await.is_ok()
+            && runtime::health(&old)
+                .await
+                .is_ok_and(|value| value["maintenance"] != true)
         {
             results.push(format!(
                 "{}: already current; no token, service or backend restarted",

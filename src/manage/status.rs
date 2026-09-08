@@ -28,6 +28,21 @@ pub async fn run(options: Status) -> Result<()> {
     }
     let root = store::root()?;
     let registry = store::load(&root)?;
+    // Active discovery and setup/remove share the same operation lock. A passive
+    // status never creates files or acquires an exclusive maintenance barrier.
+    let _probe_lock = if options.probe && root.exists() {
+        use fs2::FileExt;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(root.join("setup.lock"))?;
+        file.try_lock_exclusive()
+            .map_err(|_| anyhow::anyhow!("Another setup, remove or active probe is running"))?;
+        Some(file)
+    } else {
+        None
+    };
     let operations = super::recovery::diagnostics(&root).await?;
     let mut results = Vec::new();
     let selection = super::Selection {
@@ -75,6 +90,12 @@ pub async fn run(options: Status) -> Result<()> {
             }
         }
         let health = runtime::health(record).await.ok();
+        if health
+            .as_ref()
+            .is_some_and(|value| value["maintenance"] == true)
+        {
+            issues.push("Gateway is paused for maintenance; after an interrupted operation, rerun setup to resume safely".into());
+        }
         if health.is_none() {
             issues.push("Gateway is not reachable".into());
         }
