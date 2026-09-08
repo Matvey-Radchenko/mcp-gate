@@ -1,6 +1,7 @@
 name: Native checks
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -35,6 +36,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Verify production Task Scheduler XML before compilation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/check-task-scheduler.ps1
       - name: Install Rust checks
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy && rustup default 1.95.0
       - uses: actions/cache@v4
@@ -104,3 +109,12 @@ jobs:
             dist/*.tar.gz
             dist/*.sha256
           if-no-files-found: error
+      - name: Retain compilation cache after a failed acceptance check
+        if: failure()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-1.95.0-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}

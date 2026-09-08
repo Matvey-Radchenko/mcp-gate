@@ -34,7 +34,12 @@ fn failures_restore_owned_changes_and_allow_retry() {
         for journal in fixture.journals() {
             assert_eq!(journal.phase, "restored");
             for record in journal.services {
-                assert!(!service::installed(&record).unwrap());
+                assert!(
+                    !service::installed(&record).unwrap(),
+                    "Stage {stage}, service {}: {}",
+                    record.id,
+                    service::diagnostics(&record)
+                );
             }
         }
     }
