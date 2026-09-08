@@ -6,6 +6,12 @@ use super::{
 use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
 
+#[derive(Default)]
+pub struct Outcome {
+    pub messages: Vec<String>,
+    pub restart: std::collections::BTreeSet<crate::clients::Client>,
+}
+
 pub fn binary(root: &Path) -> Result<PathBuf> {
     let current = std::env::current_exe()?;
     let hash = crate::catalog::digest(&current)?;
@@ -30,13 +36,10 @@ pub fn binary(root: &Path) -> Result<PathBuf> {
     crate::platform::executable(&target)?;
     Ok(target)
 }
-pub async fn apply(
-    root: &Path,
-    registry: &mut Registry,
-    options: &Selection,
-) -> Result<Vec<String>> {
+pub async fn apply(root: &Path, registry: &mut Registry, options: &Selection) -> Result<Outcome> {
     let hash = crate::catalog::digest(&std::env::current_exe()?)?;
-    let mut results = Vec::new();
+    let mut outcome = Outcome::default();
+    let results = &mut outcome.messages;
     for index in 0..registry.gateways.len() {
         let old = registry.gateways[index].clone();
         if !old
@@ -55,7 +58,11 @@ pub async fn apply(
         }
         let config = crate::config::Config::load(&old.config())?;
         let changed = crate::catalog::Catalog::load(&config.catalog_file, &config.backend).is_err();
-        if old.binary_hash == hash && !changed && service::installed(&old)? {
+        if old.binary_hash == hash
+            && !changed
+            && service::installed(&old)?
+            && runtime::health(&old).await.is_ok()
+        {
             results.push(format!(
                 "{}: already current; no token, service or backend restarted",
                 old.id
@@ -86,11 +93,14 @@ pub async fn apply(
             continue;
         }
         let result: Result<()> = async {
+            super::checkpoint("upgrade-stopped")?;
             if changed {
-                refresh(&new, config, &mut journal, &path).await?;
+                refresh(&new, config, &mut journal, &path, options).await?;
             }
             service::register(&new)?;
+            super::checkpoint("upgrade-registered")?;
             runtime::ready(&new).await?;
+            super::checkpoint("upgrade-ready")?;
             registry.gateways[index] = new;
             let target = root.join("registry.json");
             journal.write(
@@ -124,14 +134,18 @@ pub async fn apply(
                 ""
             }
         ));
+        outcome
+            .restart
+            .extend(old.bindings.iter().map(|b| b.client));
     }
-    Ok(results)
+    Ok(outcome)
 }
 async fn refresh(
     record: &Record,
     mut config: crate::config::Config,
     journal: &mut store::Journal,
     path: &Path,
+    options: &Selection,
 ) -> Result<()> {
     // Shared ownership remains eligible only while the reviewed launch recipe matches.
     let mut command = vec![config.backend.command.to_string_lossy().into_owned()];
@@ -176,6 +190,7 @@ async fn refresh(
             "Discovered backend version is outside the reviewed recipe"
         );
     }
+    super::preview::catalog_change(&config.catalog_file, &catalog, options)?;
     let target = &config.catalog_file;
     journal.write(
         path,

@@ -35,6 +35,12 @@ pub struct Selection {
 }
 #[derive(Args)]
 pub struct Status {
+    #[arg(long, value_enum)]
+    pub client: Vec<Client>,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    #[arg(long)]
+    pub server: Vec<String>,
     #[arg(long)]
     pub json: bool,
     /// Explicitly initialize configured backends for diagnosis; never calls their tools.
@@ -98,4 +104,16 @@ pub(crate) fn matches_binding(options: &Selection, binding: &crate::clients::Bin
             .project
             .as_ref()
             .is_none_or(|project| project.canonicalize().ok().as_ref() == binding.project.as_ref())
+}
+
+/// Fault injection exists only in the test-feature binary, never npm artifacts.
+pub(crate) fn checkpoint(stage: &str) -> Result<()> {
+    #[cfg(feature = "test-backend")]
+    ensure!(
+        std::env::var("MCP_GATE_TEST_FAIL").as_deref() != Ok(stage),
+        "Injected fixture failure at {stage}"
+    );
+    #[cfg(not(feature = "test-backend"))]
+    let _ = stage;
+    Ok(())
 }

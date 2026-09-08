@@ -35,6 +35,7 @@ pub async fn run(options: Selection) -> Result<()> {
         })
     })
     .collect();
+    let hash = crate::catalog::digest(&std::env::current_exe()?)?;
     let managed: Vec<_> = registry
         .gateways
         .iter()
@@ -43,29 +44,56 @@ pub async fn run(options: Selection) -> Result<()> {
                 .iter()
                 .any(|b| super::matches_binding(&options, b))
         })
-        .flat_map(|r| r.bindings.iter().map(preview::target))
+        .map(|r| preview::managed(r, &hash))
         .collect();
-    let plan = json!({"servers":candidates.iter().map(|c| {
+    let mut plan = json!({"servers":candidates.iter().map(|c| {
         let mut v=c.summary(); if options.diff { v["diff"] = preview::diff(c); } v
     }).collect::<Vec<_>>(),"managed":managed,
         "discovery":"Runs the original command. npx, uvx and Docker may download dependencies.",
         "verification":"Gateway readiness does not prove the running application has switched."});
     if options.dry_run {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(
-                &json!({"format_version":1,"phase":"preview","plan":plan})
-            )?
-        );
+        if options.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &json!({"format_version":1,"phase":"preview","plan":plan})
+                )?
+            );
+        } else {
+            preview::display(&plan);
+        }
         return Ok(());
     }
-    eprintln!("{}", serde_json::to_string_pretty(&plan)?);
+    plan["skipped"] = json!(
+        candidates
+            .iter()
+            .filter(|c| c.issue.is_some())
+            .map(Candidate::summary)
+            .collect::<Vec<_>>()
+    );
     let selected = choose(candidates, &options)?;
+    plan["servers"] = json!(
+        selected
+            .iter()
+            .map(|c| {
+                let mut value = c.summary();
+                if options.diff {
+                    value["diff"] = preview::diff(c);
+                }
+                value
+            })
+            .collect::<Vec<_>>()
+    );
+    preview::display(&plan);
     if selected.is_empty() && managed.is_empty() {
-        println!(
-            "{}",
-            json!({"format_version":1,"phase":"unchanged","plan":plan})
-        );
+        if options.json {
+            println!(
+                "{}",
+                json!({"format_version":1,"phase":"unchanged","plan":plan})
+            );
+        } else {
+            println!("No selected MCP connections can be changed. See the reasons above.");
+        }
         return Ok(());
     }
     if !super::confirm(
@@ -85,15 +113,16 @@ pub async fn run(options: Selection) -> Result<()> {
     recovery::pending(&root).await?;
     let mut registry = store::load(&root)?;
     let updates = upgrade::apply(&root, &mut registry, &options).await?;
-    let affected = install(&root, &mut registry, selected).await?;
+    let mut affected = install(&root, &mut registry, selected).await?;
+    affected.extend(updates.restart);
     if options.json {
         println!(
             "{}",
-            json!({"format_version":1,"phase":"complete","plan":plan,"updates":updates,
+            json!({"format_version":1,"phase":"complete","plan":plan,"updates":updates.messages,
             "restart_clients":affected,"connection":"awaiting client restart and a new MCP connection"})
         );
     } else {
-        for update in updates {
+        for update in updates.messages {
             println!("{update}");
         }
         println!(
@@ -152,8 +181,11 @@ async fn install(
                 let record = runtime::prepare(root, &candidate).await?;
                 journal.services.push(record.clone());
                 journal.save(&path)?;
+                super::checkpoint("prepared")?;
                 service::register(&record)?;
+                super::checkpoint("registered")?;
                 runtime::ready(&record).await?;
+                super::checkpoint("ready")?;
                 record
             };
             let b = &record.bindings[0];
@@ -167,6 +199,7 @@ async fn install(
                 &b.after,
             )?;
             journal.write(&path, &b.target, before, after.into_bytes())?;
+            super::checkpoint("client-written")?;
             affected.insert(b.client);
             if let Some(existing) = registry.gateways.iter_mut().find(|r| r.id == record.id) {
                 existing.bindings.extend(record.bindings);
@@ -183,6 +216,7 @@ async fn install(
             store::read_optional(&target)?,
             serde_json::to_vec_pretty(registry)?,
         )?;
+        super::checkpoint("registry-written")?;
         journal.phase = "complete".into();
         journal.save(&path)
     }

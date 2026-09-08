@@ -37,10 +37,18 @@ jobs:
           node-version: '24'
       - name: Install Rust checks
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy && rustup default 1.95.0
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-1.95.0-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: rust-1.95.0-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-
       - name: Repository harness
         run: cargo xtask check
       - name: Temporary user service lifecycle
-        run: cargo test --locked --all-features --test installer -- --ignored
+        run: cargo test --locked --all-features --test installer --test installer_recovery -- --ignored
       - name: Install pinned native clients
         run: npm install --global @openai/codex@0.153.4 opencode-ai@1.14.23 @anthropic-ai/claude-code@2.1.160
       - name: Locate native client commands

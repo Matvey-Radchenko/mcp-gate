@@ -3,6 +3,8 @@ pub mod docker;
 mod storage;
 pub use storage::{executable, private_dir, private_file, private_permissions, validate_private};
 #[cfg(windows)]
+mod windows_acl;
+#[cfg(windows)]
 pub(crate) mod windows_job;
 
 pub async fn shutdown_signal() -> std::io::Result<()> {

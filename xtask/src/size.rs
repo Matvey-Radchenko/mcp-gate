@@ -106,7 +106,8 @@ mod tests {
         check(dir.path()).unwrap();
         fs::write(&source, "// comment\n\nfn extra() {}").unwrap();
         let error = check(dir.path()).unwrap_err().to_string();
-        assert!(error.contains("src/nested/lib.rs: 3 lines, limit 2"));
+        let relative = Path::new("src").join("nested").join("lib.rs");
+        assert!(error.contains(&format!("{}: 3 lines, limit 2", relative.display())));
     }
 
     #[test]

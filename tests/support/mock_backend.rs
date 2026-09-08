@@ -175,6 +175,19 @@ impl ServerHandler for Mock {
 }
 #[tokio::main(worker_threads = 2)]
 async fn main() {
+    if let Ok(path) = std::env::var("MOCK_CONTEXT_FILE") {
+        std::fs::write(
+            path,
+            serde_json::to_vec(&serde_json::json!({
+                "args":std::env::args().skip(1).collect::<Vec<_>>(),
+                "cwd":std::env::current_dir().unwrap(),
+                "value":std::env::var("MOCK_CONTEXT_VALUE").unwrap_or_default(),
+                "relative":std::fs::read_to_string("relative input.txt").ok()
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
     if std::env::var_os("MOCK_CHILD_SLEEP").is_some() {
         tokio::time::sleep(std::time::Duration::from_secs(120)).await;
         return;

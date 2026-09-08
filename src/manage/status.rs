@@ -5,6 +5,10 @@ use serde_json::json;
 
 pub async fn run(options: Status) -> Result<()> {
     if let Some(path) = &options.config {
+        anyhow::ensure!(
+            !options.probe,
+            "Active probes require a managed gateway; legacy --config is passive only"
+        );
         let c = Config::load(path)?;
         c.token()?;
         Catalog::load(&c.catalog_file, &c.backend)?;
@@ -16,13 +20,30 @@ pub async fn run(options: Status) -> Result<()> {
             .error_for_status()?
             .json::<serde_json::Value>()
             .await?;
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({"format_version":1,"gateway":response}))?
+        );
         return Ok(());
     }
     let root = store::root()?;
     let registry = store::load(&root)?;
+    let operations = super::recovery::diagnostics(&root).await?;
     let mut results = Vec::new();
+    let selection = super::Selection {
+        client: options.client.clone(),
+        project: options.project.clone(),
+        server: options.server.clone(),
+        ..Default::default()
+    };
     for record in &registry.gateways {
+        if !record
+            .bindings
+            .iter()
+            .any(|b| super::matches_binding(&selection, b))
+        {
+            continue;
+        }
         let mut issues = Vec::new();
         if record.removing {
             issues.push("Direct connections restored; service removal pending".into());
@@ -66,13 +87,23 @@ pub async fn run(options: Status) -> Result<()> {
     if options.json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&json!({"format_version":1,"gateways":results}))?
+            serde_json::to_string_pretty(
+                &json!({"format_version":1,"gateways":results,"operations":operations})
+            )?
         );
     } else if results.is_empty() {
         println!("No managed gateways. Run mcp-gate setup.");
     } else {
         for value in results {
             println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+    }
+    if !options.json {
+        for operation in operations {
+            println!(
+                "{}: {}. Journal: {}",
+                operation["phase"], operation["reason"], operation["journal"]
+            );
         }
     }
     Ok(())

@@ -92,7 +92,23 @@ async fn main() -> Result<()> {
         .with_env_filter("off,mcp_gate=info")
         .with_target(false)
         .init();
-    match Cli::parse().command {
+    let action = Cli::parse().command;
+    let json = match &action {
+        Action::Setup(options) | Action::Remove(options) => options.json,
+        Action::Status(options) => options.json,
+        _ => false,
+    };
+    let result = dispatch(action).await;
+    if json && let Err(error) = &result {
+        println!(
+            "{}",
+            serde_json::json!({"format_version":1,"phase":"failed","error":error.to_string()})
+        );
+    }
+    result
+}
+async fn dispatch(action: Action) -> Result<()> {
+    match action {
         Action::Stage {
             config,
             prefix,
@@ -161,46 +177,49 @@ async fn main() -> Result<()> {
             std::fs::write(&config.catalog_file, serde_json::to_vec_pretty(&catalog)?)?;
             println!("Catalog generated: {} tools", catalog.tools.len());
         }
-        Action::Serve { config } => {
-            let config = Config::load(&config)?;
-            let token = config.token()?;
-            let catalog = Catalog::load(&config.catalog_file, &config.backend)?;
-            config.tool_policy.validate_catalog(&catalog.tools)?;
-            std::fs::create_dir_all(&config.state_dir)?;
-            let lock = OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .open(config.state_dir.join("gateway.lock"))?;
-            lock.try_lock_exclusive()
-                .context("Another gateway owns this state directory")?;
-            let listener = tokio::net::TcpListener::bind(config.listen)
-                .await
-                .context("Cannot bind gateway listener")?;
-            tracing::info!(listen = %config.listen, tools = catalog.tools.len(), "gateway ready; workers start on demand");
-            let gateway = Gateway::new(config, catalog);
-            let server = Server::new(gateway.clone(), token);
-            let cancellation = server.cancellation.clone();
-            let router = server.router.clone();
-            let mut http = tokio::spawn(async move {
-                axum::serve(listener, router)
-                    .with_graceful_shutdown(async move { cancellation.cancelled().await })
-                    .await
-            });
-            let failure = tokio::select! {
-                signal = mcp_gate::platform::shutdown_signal() => { signal?; None },
-                result = &mut http => Some(result),
-            };
-            tracing::info!("gateway shutting down");
-            server.shutdown().await;
-            gateway.shutdown().await;
-            if let Some(result) = failure {
-                result??;
-            } else {
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(3), http).await;
-            }
-            drop(lock);
-        }
+        Action::Serve { config } => serve(config).await?,
     }
+    Ok(())
+}
+
+async fn serve(config: PathBuf) -> Result<()> {
+    let config = Config::load(&config)?;
+    let token = config.token()?;
+    let catalog = Catalog::load(&config.catalog_file, &config.backend)?;
+    config.tool_policy.validate_catalog(&catalog.tools)?;
+    std::fs::create_dir_all(&config.state_dir)?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(config.state_dir.join("gateway.lock"))?;
+    lock.try_lock_exclusive()
+        .context("Another gateway owns this state directory")?;
+    let listener = tokio::net::TcpListener::bind(config.listen)
+        .await
+        .context("Cannot bind gateway listener")?;
+    tracing::info!(listen = %config.listen, tools = catalog.tools.len(), "gateway ready; workers start on demand");
+    let gateway = Gateway::new(config, catalog);
+    let server = Server::new(gateway.clone(), token);
+    let cancellation = server.cancellation.clone();
+    let router = server.router.clone();
+    let mut http = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move { cancellation.cancelled().await })
+            .await
+    });
+    let failure = tokio::select! {
+        signal = mcp_gate::platform::shutdown_signal() => { signal?; None },
+        result = &mut http => Some(result),
+    };
+    tracing::info!("gateway shutting down");
+    server.shutdown().await;
+    gateway.shutdown().await;
+    if let Some(result) = failure {
+        result??;
+    } else {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), http).await;
+    }
+    drop(lock);
     Ok(())
 }
