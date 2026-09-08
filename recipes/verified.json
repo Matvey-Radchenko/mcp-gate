@@ -1,0 +1,36 @@
+[
+  {
+    "id": "chrome-devtools", "mode": "session", "package": "chrome-devtools-mcp", "package_version": "1.8.0", "server_version": "1.8.0",
+    "required_args": ["--isolated"], "required_env": {}, "credential_keys": [], "disabled_tools": [],
+    "conditions": "Isolated browser only; no existing browser URL, websocket endpoint, autoConnect or user profile. Browser lifecycle must be retested for each client/platform."
+  },
+  {
+    "id": "playwright", "mode": "session", "package": "@playwright/mcp", "package_version": "0.0.80", "server_version": "1.63.0-alpha-2026-08-31",
+    "required_args": ["--isolated", "--browser", "chrome"], "required_env": {}, "credential_keys": [], "disabled_tools": [],
+    "conditions": "Independent owned Chrome browser; retained private worker output directory. Relative output paths are scoped per MCP connection."
+  },
+  {
+    "id": "atlassian", "mode": "shared", "artifact_sha256": "f42b5854c41d50005231247ed08285c057a6d464f615ace3cbbe872280c721bc", "server_version": "3.4.7",
+    "required_args": ["--transport", "stdio", "--env-file", "/dev/null"],
+    "required_env": {"PYTHONHASHSEED":"0", "PYTHONNOUSERSITE":"1", "PYTHON_DOTENV_DISABLED":"1"},
+    "credential_keys": ["JIRA_URL", "CONFLUENCE_URL", "JIRA_PERSONAL_TOKEN", "CONFLUENCE_PERSONAL_TOKEN"], "disabled_tools": [],
+    "conditions": "Reviewed Python wrapper plus its installed environment; fixed single-user identity and host allowlist. FastMCP serverInfo version is distinct from the Python distribution version. Python dependency changes require fresh discovery."
+  },
+  {
+    "id": "bitbucket", "mode": "shared", "package": "@nexus2520/bitbucket-mcp-server", "package_version": "3.0.0",
+    "artifact_sha256": "62b7a74b4738a4e4f24db3d25038c3aaa5f02d4ed1670b604f26fb1ed4677c07", "server_version": "3.0.0",
+    "required_args": [], "required_env": {}, "credential_keys": ["BITBUCKET_BASE_URL", "BITBUCKET_TOKEN", "BITBUCKET_USERNAME"], "disabled_tools": [],
+    "conditions": "Reviewed entrypoint; fixed single-user credentials and root-independent API. Entry hash does not pin all transitive dependencies."
+  },
+  {
+    "id": "testops", "mode": "shared", "artifact_sha256": "3ef9a6ca5b142d94dde4f794b39cdd8f0d3a346f39a945b9530d8340b8ecbac1", "server_version": "1.0.0",
+    "required_args": [], "required_env": {}, "credential_keys": ["TESTOPS_BASE_URL", "ALLURE_TOKEN"], "disabled_tools": ["configure_testops"],
+    "conditions": "Reviewed local entrypoint and SDK 0.5.0; configuration mutation tool is excluded so another connection cannot change the shared identity."
+  },
+  {
+    "id": "telegram", "mode": "shared", "artifact_sha256": "0264a8c91b58f32dcd9a488d7b6265834461953a7215c827a86cd13c51b80fd4", "server_version": "1.16.0-codex.4",
+    "required_args": ["-jar"], "required_env": {"SPRING_AI_MCP_SERVER_CAPABILITIES_COMPLETION":"false"},
+    "credential_keys": ["TDLIB_API_HASH", "TDLIB_API_ID", "TDLIB_DATA_DIR", "TELEGRAM_MCP_DATA_DIR"], "disabled_tools": [],
+    "conditions": "Reviewed JAR; single TDLib owner and fixed identity. Preserve all existing read/write/confirmation policy values. Close the old owner before discovery; never force-stop it or copy TDLib data."
+  }
+]

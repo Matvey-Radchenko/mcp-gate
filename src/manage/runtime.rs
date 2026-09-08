@@ -1,0 +1,258 @@
+use super::store::Record;
+use crate::{
+    clients::{Binding, Candidate, Client},
+    config::Config,
+};
+use anyhow::{Context, Result, ensure};
+use serde_json::{Value, json};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+pub fn http() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(5))
+        .build()?)
+}
+pub async fn health(record: &Record) -> Result<Value> {
+    let c = Config::load(&record.config())?;
+    Ok(http()?
+        .get(format!("http://{}/health", c.listen))
+        .bearer_auth(c.token()?)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+pub async fn maintenance(record: &Record, enable: bool) -> Result<bool> {
+    let c = Config::load(&record.config())?;
+    let method = if enable {
+        reqwest::Method::POST
+    } else {
+        reqwest::Method::DELETE
+    };
+    let response = http()?
+        .request(method, format!("http://{}/admin/maintenance", c.listen))
+        .bearer_auth(c.token()?)
+        .send()
+        .await?;
+    if response.status() == reqwest::StatusCode::CONFLICT {
+        return Ok(false);
+    }
+    response.error_for_status()?;
+    Ok(true)
+}
+
+pub fn resolve(command: &str, cwd: &Path) -> Result<PathBuf> {
+    let p = Path::new(command);
+    if p.is_absolute() || p.components().count() > 1 {
+        let path = cwd.join(p);
+        ensure!(path.is_file(), "MCP executable not found");
+        return Ok(path);
+    }
+    let paths = std::env::var_os("PATH").context("PATH is not set")?;
+    for directory in std::env::split_paths(&paths) {
+        for suffix in if cfg!(windows) {
+            vec!["", ".exe", ".cmd", ".bat"]
+        } else {
+            vec![""]
+        } {
+            let path = directory.join(format!("{command}{suffix}"));
+            if path.is_file() {
+                return Ok(path);
+            }
+        }
+    }
+    anyhow::bail!("MCP executable is not on PATH; install it first")
+}
+
+pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let release = root.join("releases").join(&id);
+    crate::platform::private_dir(&release)?;
+    for name in ["bin", "state", "credentials", "logs"] {
+        crate::platform::private_dir(&release.join(name))?;
+    }
+    let binary = super::upgrade::binary(root)?;
+    let port = std::net::TcpListener::bind("127.0.0.1:0")?
+        .local_addr()?
+        .port();
+    let command = resolve(
+        candidate
+            .command
+            .first()
+            .context("Missing backend command")?,
+        &candidate.cwd,
+    )?;
+    let environment = launch_environment(candidate)?;
+    let mode = candidate
+        .recipe
+        .as_ref()
+        .map_or("session", |r| r.mode.as_str());
+    let config = json!({"format_version":2,"ownership":mode,"max_workers":if mode == "shared" { 1 } else { 4 },"shared_client_roots":if mode == "shared" { "ignore" } else { "reject" },"listen":format!("127.0.0.1:{port}"),
+        "token_file":release.join("client-token"),"catalog_file":release.join("catalog.json"),"state_dir":release.join("state"),
+        "backend":{"profile":"stdio","command":command,"docker": command.file_stem().is_some_and(|s|s == "docker"),"args":&candidate.command[1..],"version":"discovery-pending",
+        "working_directory":candidate.cwd,"env":environment,"inherit_env":candidate.inherit_env}});
+    let mut config: Config = serde_json::from_value(config)?;
+    if let Some(entry) = crate::clients::recipes::entrypoint(&candidate.command, &candidate.cwd)
+        && entry != config.backend.command
+    {
+        let index = candidate
+            .command
+            .iter()
+            .position(|arg| candidate.cwd.join(arg) == entry)
+            .context("Cannot retain entrypoint argument order")?;
+        config.backend.command_args = candidate.command[1..index].to_vec();
+        config.backend.entrypoint = Some(entry);
+        config.backend.args = candidate.command[index + 1..].to_vec();
+    }
+    if let Some(recipe) = &candidate.recipe {
+        config.tool_policy.disabled = recipe.disabled_tools.clone();
+        if recipe.id == "playwright" {
+            config.backend.directory_env = vec!["PLAYWRIGHT_MCP_OUTPUT_DIR".into()];
+        }
+    }
+    config.validate()?;
+    crate::install::init_token(&config.token_file)?;
+    let catalog = crate::install::discover_and_pin(&mut config).await?;
+    if let Some(recipe) = &candidate.recipe {
+        ensure!(
+            config.backend.version == recipe.server_version,
+            "Backend serverInfo.version does not match the proposed recipe; no client settings changed"
+        );
+    }
+    super::store::atomic(&config.catalog_file, &serde_json::to_vec_pretty(&catalog)?)?;
+    super::store::atomic(
+        &release.join("config.toml"),
+        toml::to_string_pretty(&config)?.as_bytes(),
+    )?;
+    let mut binding = candidate.binding.clone();
+    binding.after = remote(&binding, &binary, &release.join("config.toml"), &config)?;
+    Ok(Record {
+        removing: false,
+        id: id.clone(),
+        release,
+        label: format!("local.mcp-gate.{id}"),
+        binary_hash: crate::catalog::digest(&binary)?,
+        binary,
+        bindings: vec![binding],
+    })
+}
+
+fn quote(path: &Path) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", path.display())
+    } else {
+        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+    }
+}
+fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Result<Value> {
+    let mut value = binding.direct.clone();
+    let object = value
+        .as_object_mut()
+        .context("MCP configuration must be an object")?;
+    for key in ["command", "args", "env", "environment", "env_vars", "cwd"] {
+        object.remove(key);
+    }
+    object.insert("url".into(), json!(format!("http://{}/mcp", config.listen)));
+    let helper = format!("{} headers --config {}", quote(binary), quote(path));
+    match binding.client {
+        Client::Codex => {
+            object.insert("http_headers_helper".into(), json!(helper));
+        }
+        Client::ClaudeCode => {
+            object.insert("type".into(), json!("http"));
+            object.insert("headersHelper".into(), json!(helper));
+        }
+        Client::Opencode => {
+            object.insert("type".into(), json!("remote"));
+            object.insert("oauth".into(), json!(false));
+            let auth = config.token_file.with_file_name("authorization");
+            super::store::atomic(&auth, format!("Bearer {}", config.token()?).as_bytes())?;
+            object.insert(
+                "headers".into(),
+                json!({"Authorization":format!("{{file:{}}}",auth.display())}),
+            );
+        }
+    }
+    Ok(value)
+}
+pub async fn ready(record: &Record) -> Result<()> {
+    for _ in 0..100 {
+        if let Ok(value) = health(record).await {
+            ensure!(
+                value["workers"] == 0,
+                "New gateway unexpectedly started a backend"
+            );
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    anyhow::bail!("Gateway did not become healthy; inspect its private service logs")
+}
+
+pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result<Option<Record>> {
+    if candidate.recipe.as_ref().is_none_or(|r| r.mode != "shared") {
+        return Ok(None);
+    }
+    for record in &registry.gateways {
+        if record.removing
+            || !record
+                .bindings
+                .iter()
+                .any(|b| b.direct == candidate.binding.direct)
+        {
+            continue;
+        }
+        let config = Config::load(&record.config())?;
+        if config.ownership != crate::config::Ownership::Shared
+            || config.backend.env != launch_environment(candidate)?
+            || config.backend.working_directory.as_ref() != Some(&candidate.cwd)
+            || config.backend.inherit_env != candidate.inherit_env
+        {
+            continue;
+        }
+        crate::catalog::Catalog::load(&config.catalog_file, &config.backend)?;
+        let mut binding = candidate.binding.clone();
+        binding.after = remote(&binding, &record.binary, &record.config(), &config)?;
+        let mut reused = record.clone();
+        reused.bindings = vec![binding];
+        return Ok(Some(reused));
+    }
+    Ok(None)
+}
+
+fn launch_environment(candidate: &Candidate) -> Result<std::collections::BTreeMap<String, String>> {
+    let mut values = std::collections::BTreeMap::new();
+    for name in [
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "SystemRoot",
+        "USERPROFILE",
+        "TEMP",
+        "TMP",
+        "COMSPEC",
+        "PATHEXT",
+    ] {
+        if let Ok(value) = std::env::var(name) {
+            values.insert(name.into(), value);
+        }
+    }
+    for name in &candidate.inherit_env {
+        let value = std::env::var(name).with_context(|| {
+            format!(
+                "Declared inherited environment variable {name} is unavailable in the setup process"
+            )
+        })?;
+        values.insert(name.clone(), value);
+    }
+    values.extend(candidate.env.clone());
+    Ok(values)
+}

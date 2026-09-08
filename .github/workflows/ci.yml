@@ -1,0 +1,78 @@
+name: Native checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+          - runner: windows-2025
+            target: win32-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install Rust checks
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy && rustup default 1.95.0
+      - name: Repository harness
+        run: cargo xtask check
+      - name: Temporary user service lifecycle
+        run: cargo test --locked --all-features --test installer -- --ignored
+      - name: Install pinned native clients
+        run: npm install --global @openai/codex@0.153.4 opencode-ai@1.14.23 @anthropic-ai/claude-code@2.1.160
+      - name: Locate native client commands
+        run: |
+          for pair in CODEX_BINARY:codex OPENCODE_BINARY:opencode CLAUDE_BINARY:claude; do
+            key="${pair%%:*}"
+            name="${pair#*:}"
+            binary="$(command -v "$name")"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$(cygpath -w "$binary.cmd")"; fi
+            echo "$key=$binary" >> "$GITHUB_ENV"
+          done
+      - name: Real clients with local MCP and model fixtures
+        run: cargo test --locked --all-features --test native_codex --test native_clients -- --ignored
+      - name: Build release binary
+        run: cargo build --locked --release --bin mcp-gate
+      - name: Prepare and inspect npm archives
+        run: |
+          node packaging/build.mjs
+          cd dist
+          npm pack ./mcp-gate-${{ matrix.target }} --ignore-scripts
+          npm pack ./mcp-gate --ignore-scripts
+      - name: Clean archive installation
+        run: npm exec -- node packaging/smoke.mjs
+      - name: Download archive
+        run: |
+          cd dist/mcp-gate-${{ matrix.target }}
+          tar -czf ../mcp-gate-0.1.0-${{ matrix.target }}.tar.gz bin LICENSE README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: |
+            dist/*.tgz
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error

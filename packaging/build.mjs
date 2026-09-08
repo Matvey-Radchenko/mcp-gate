@@ -1,0 +1,31 @@
+// Build only from a native release binary produced by the same CI job.
+import { cpSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { createHash } from 'node:crypto';
+const target = `${process.platform}-${process.arch}`;
+if (!['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(target)) throw Error('Unsupported native target');
+const manifest = JSON.parse(readFileSync('npm/mcp-gate/package.json', 'utf8'));
+const cargoVersion = readFileSync('Cargo.toml', 'utf8').match(/^version = "([^"]+)"/m)?.[1];
+if (cargoVersion !== manifest.version) throw Error('Cargo/npm version mismatch');
+const output = resolve('dist');
+mkdirSync(output, { recursive: true });
+const native = join(output, `mcp-gate-${target}`);
+mkdirSync(join(native, 'bin'), { recursive: true });
+const executable = `mcp-gate${process.platform === 'win32' ? '.exe' : ''}`;
+cpSync(join('target/release', executable), join(native, 'bin', executable));
+chmodSync(join(native, 'bin', executable), 0o755);
+writeFileSync(join(native, 'package.json'), JSON.stringify({
+  name: `mcp-gate-${target}`, version: manifest.version, description: `Native mcp-gate for ${target}`,
+  license: manifest.license, repository: manifest.repository, os: [process.platform], cpu: [process.arch],
+  files: ['bin/', 'LICENSE', 'README.md'],
+}, null, 2) + '\n');
+const launcher = join(output, 'mcp-gate');
+cpSync('npm/mcp-gate', launcher, { recursive: true });
+chmodSync(join(launcher, 'bin/mcp-gate.cjs'), 0o755);
+for (const folder of [native, launcher]) {
+  cpSync('LICENSE', join(folder, 'LICENSE'));
+  cpSync('npm/README.md', join(folder, 'README.md'));
+}
+const hash = createHash('sha256').update(readFileSync(join(native, 'bin', executable))).digest('hex');
+writeFileSync(join(output, `${target}.sha256`), `${hash}  ${executable}\n`);
+console.log(`Prepared ${target} ${manifest.version}`);

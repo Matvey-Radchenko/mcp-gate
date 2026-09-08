@@ -1,0 +1,7 @@
+{
+  "name": "mcp-session-gateway-backend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pinned, unmodified Chrome DevTools MCP runtime",
+  "dependencies": { "chrome-devtools-mcp": "1.8.0" }
+}

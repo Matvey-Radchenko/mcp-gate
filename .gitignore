@@ -1,0 +1,8 @@
+/target/
+/runtime/node_modules/
+/local/
+*.log
+.DS_Store
+/dist/
+/npm/*/bin/mcp-gate
+/npm/*/bin/mcp-gate.exe

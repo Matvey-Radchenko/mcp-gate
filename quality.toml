@@ -1,0 +1,13 @@
+# Physical lines, including comments and blanks. Split by responsibility, not by
+# compressing code or removing useful explanations. Every nested .rs file counts.
+[[limits]]
+path = "src"
+max_lines = 400
+
+[[limits]]
+path = "tests"
+max_lines = 800
+
+[[limits]]
+path = "xtask/src"
+max_lines = 300
