@@ -5,28 +5,42 @@ that all combinations have been tested. Update it only from completed checks.
 
 | Check | macOS ARM64 | macOS Intel | Windows x64 |
 | --- | --- | --- | --- |
-| Rust formatting, strict Clippy, size budgets, ordinary tests | Local passing; latest CI rerun pending | Earlier CI passed; startup deadline fix pending | Core passed; path-assertion fix pending |
-| User service setup, repeat setup, remove | Passed locally and in earlier CI | Passed in earlier CI | Native service test pending |
-| Recovery at five installation and three update stages | Passed locally | Pending | Pending |
-| Remove one client while retaining another | Passed locally | Pending | Pending |
-| Codex 0.153.4 shared/session tool calls | Passed locally and in earlier CI | Passed in earlier CI | Pending |
-| OpenCode 1.14.23 private header and lazy discovery | Passed locally and in earlier CI | Passed in earlier CI | Pending |
-| OpenCode 1.14.23 tool call with a local model | Passed locally | Pending | Pending |
-| Claude Code 2.1.160 local model tool call and headers helper | Passed locally and in earlier CI | Passed in earlier CI | Pending |
-| Claude local MCP precedence and physical project key | Passed with real CLI; shared file unchanged | Pending | Pending |
-| Clean npm archive install | Passed locally and in earlier CI | Passed in earlier CI | Pending |
-| Busy update deferred; idle update retains credentials | Passed locally | Pending | Pending |
+| Rust formatting, strict Clippy, size budgets, ordinary tests | Passed locally and in CI | Passed in CI | Passed in CI |
+| User service setup, repeat setup, remove | Passed locally and in CI | Passed in CI | Passed in CI |
+| Recovery at five installation and three update stages | Passed locally and in CI | Passed in CI | Passed in CI |
+| Remove one client while retaining another | Passed locally and in CI | Passed in CI | Passed in CI |
+| Codex 0.153.4 shared/session tool calls | Passed locally and in CI | Passed in CI | Pending |
+| OpenCode 1.14.23 private header and lazy discovery | Passed locally and in CI | Passed in CI | Pending |
+| OpenCode 1.14.23 tool call with a local model | Passed locally and in CI | Passed in CI | Pending |
+| Claude Code 2.1.160 local model tool call and headers helper | Passed locally and in CI | Passed in CI | Pending |
+| Claude local MCP precedence and physical project key | Passed with real CLI; shared file unchanged | Passed in CI | Pending |
+| Clean npm archive install | Passed locally and in CI | Passed in CI | Pending |
+| Busy update deferred; idle update retains credentials | Passed locally and in CI | Passed in CI | Passed in CI |
+| Unavailable old backend permits later repair | Passed locally | Passed in CI | Readiness deadline fix awaiting CI |
 | Autostart after an actual new login; compatible version downgrade | Pending | Pending | Pending |
+| Background access to macOS protected folders | Separate OS permission needed; acceptance pending | Pending | N/A |
 | Chrome DevTools 1.8.0 browser independence and owned cleanup | Passed locally with Codex | Pending | Pending |
 | Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally with Codex | Pending | Pending |
-| Real npx/uvx with local offline fixture packages | Passed locally | Pending | Pending |
+| Real npx/uvx with local offline fixture packages | Passed locally and in CI | Passed in CI | Pending |
 | Windows Job Objects and native private-file ACLs | N/A | N/A | Passed in native ordinary tests |
 | Docker container ownership and cleanup | Blocked: local daemon unavailable | Pending | Pending |
 
-Earlier complete macOS CI evidence: [run 34264584770](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34264584770), commit `e08454d`.
-Later [run 34269320294](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34269320294)
-identified test startup deadlines and Windows path spelling assumptions. Its failure
-is retained; it does not establish release readiness. Pending fixes require new CI.
+Complete macOS CI and all-platform ordinary harness evidence:
+[run 34272113309](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34272113309),
+commit `0acfb4d`. That run failed Windows service registration. The isolated
+[schema check](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34274204145)
+identified an XML encoding mismatch. The UTF-16 fix passed service setup, repeat,
+busy/idle update, remove, and fault recovery in
+[run 34274431317](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34274431317).
+Both macOS jobs completed successfully. Windows was cancelled after the missing
+backend recovery scenario stalled: a retry count multiplied connection timeouts.
+The replacement uses a total elapsed-time deadline and requires another CI run.
+
+macOS client tool approvals and operating-system privacy grants are separate.
+A locally observed LaunchAgent stalled opening a test backend under Documents;
+the same test passed with its generated fixture contained in a temporary directory.
+Setup explains that protected-folder access may need separate macOS approval.
+The installer does not grant that access, move real MCP packages, or modify TCC.
 
 Definitions: `session` means an MCP connection. It does not promise separation
 between OpenCode chats sharing that connection; `_meta.sessionID` routing is excluded.

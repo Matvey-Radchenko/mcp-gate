@@ -39,8 +39,17 @@ fn actual_service_setup_repeat_remove_without_changing_project_files() {
     fs::create_dir(&personal).unwrap();
     let root = dir.path().join("state");
     let _cleanup = Installation { root: root.clone() };
+    // Keep the generated fixture outside the developer's Documents directory;
+    // background-service access there has a separate macOS privacy prompt.
+    let backend = dir.path().join(if cfg!(windows) {
+        "fixture.exe"
+    } else {
+        "fixture"
+    });
+    fs::copy(env!("CARGO_BIN_EXE_mock-backend"), &backend).unwrap();
+    mcp_gate::platform::executable(&backend).unwrap();
     let source = json!({"projects":{project.to_str().unwrap():{"mcpServers":{"fixture":{
-        "type":"stdio","command":env!("CARGO_BIN_EXE_mock-backend"),"args":[],"env":{"FIXTURE_SECRET":"do-not-print-this"}
+        "type":"stdio","command":backend,"args":[],"env":{"FIXTURE_SECRET":"do-not-print-this"}
     }},"allowedTools":[],"deniedTools":["mcp__fixture__danger"]}}});
     let settings = personal.join(".claude.json");
     fs::write(&settings, source.to_string()).unwrap();
@@ -111,6 +120,7 @@ fn actual_service_setup_repeat_remove_without_changing_project_files() {
         token
     );
     assert_eq!(fs::read(&shared).unwrap(), untouched);
+    probe_detects_drift_without_replacing_catalog(&root, &config);
     // An active MCP connection blocks replacement even before its first tool call.
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -172,4 +182,35 @@ fn actual_service_setup_repeat_remove_without_changing_project_files() {
     );
     assert_eq!(fs::read(&shared).unwrap(), untouched);
     assert!(record.release.exists());
+}
+
+fn probe_detects_drift_without_replacing_catalog(
+    root: &std::path::Path,
+    config: &mcp_gate::config::Config,
+) {
+    // An active probe detects schema drift even when serverInfo.version stays
+    // unchanged, and does not silently replace the reviewed catalog on disk.
+    let original_catalog = fs::read(&config.catalog_file).unwrap();
+    let mut changed: serde_json::Value = serde_json::from_slice(&original_catalog).unwrap();
+    changed["tools"][0]["description"] = json!("a previously reviewed description");
+    let changed = serde_json::to_vec(&changed).unwrap();
+    store::atomic(&config.catalog_file, &changed).unwrap();
+    let probe = Command::new(env!("CARGO_BIN_EXE_mcp-gate"))
+        .args(["status", "--probe", "--json"])
+        .env("MCP_GATE_TEST_ROOT", root)
+        .output()
+        .unwrap();
+    assert!(probe.status.success());
+    let diagnosis: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
+    assert!(
+        diagnosis["gateways"][0]["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| issue
+                .as_str()
+                .is_some_and(|text| text.contains("catalog changed")))
+    );
+    assert_eq!(fs::read(&config.catalog_file).unwrap(), changed);
+    store::atomic(&config.catalog_file, &original_catalog).unwrap();
 }

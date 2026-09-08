@@ -18,6 +18,9 @@ pub fn display(plan: &Value) {
         if let Some(reason) = server["issue"].as_str() {
             eprintln!("    Skipped: {reason}");
         }
+        if let Some(note) = server["platform_note"].as_str() {
+            eprintln!("    {note}");
+        }
         if let Some(conditions) = server["recipe"]["conditions"].as_str() {
             eprintln!("    Recipe conditions: {conditions}");
         }

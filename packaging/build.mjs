@@ -1,5 +1,6 @@
 // Build only from a native release binary produced by the same CI job.
-import { cpSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, writeFileSync, chmodSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
 const target = `${process.platform}-${process.arch}`;
@@ -7,11 +8,17 @@ if (!['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(target)) throw Error('
 const manifest = JSON.parse(readFileSync('npm/mcp-gate/package.json', 'utf8'));
 const cargoVersion = readFileSync('Cargo.toml', 'utf8').match(/^version = "([^"]+)"/m)?.[1];
 if (cargoVersion !== manifest.version) throw Error('Cargo/npm version mismatch');
+const executable = `mcp-gate${process.platform === 'win32' ? '.exe' : ''}`;
+const binary = readFileSync(join('target/release', executable));
+for (const path of [homedir(), process.cwd(), realpathSync(process.cwd()), process.env.CARGO_HOME, process.env.RUSTUP_HOME]) {
+  if (path && [path, path.replaceAll('\\', '/')].some(value => binary.includes(Buffer.from(value)))) {
+    throw Error('Native binary retains build-machine paths. Rebuild with node packaging/compile.mjs.');
+  }
+}
 const output = resolve('dist');
 mkdirSync(output, { recursive: true });
 const native = join(output, `mcp-gate-bin-${target}`);
 mkdirSync(join(native, 'bin'), { recursive: true });
-const executable = `mcp-gate${process.platform === 'win32' ? '.exe' : ''}`;
 cpSync(join('target/release', executable), join(native, 'bin', executable));
 chmodSync(join(native, 'bin', executable), 0o755);
 writeFileSync(join(native, 'package.json'), JSON.stringify({

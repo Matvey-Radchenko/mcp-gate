@@ -21,6 +21,10 @@ Windows x64 runners. Before a commit or handoff, run it locally too. There is no
 installed Git hook. CI also tests temporary user services, pinned real clients and
 clean npm archive installation; publication has a separate evidence gate.
 
+Build distributable binaries with `node packaging/compile.mjs`. It remaps home and
+workspace paths in compiled diagnostics before `packaging/build.mjs` stages the
+npm archives. A normal local Cargo build can retain the developer's absolute paths.
+
 ## Formatting and mechanical limits
 
 - `.editorconfig`: UTF-8, LF, final newline, spaces.

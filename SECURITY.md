@@ -3,7 +3,8 @@
 This is a trusted-user, local-only service, not a multi-tenant browser sandbox.
 
 - Bind is restricted to loopback. Every endpoint, including health and DELETE,
-  requires a local bearer token. Token file permissions must exclude group/other.
+  requires a local bearer token. Private files exclude group/other access on macOS;
+  Windows uses a protected ACL granting access only to the current user and SYSTEM.
 - Requests with Origin, an unexpected Host or duplicate security-sensitive headers
   are rejected. No CORS, unauthenticated status, arbitrary target selection or shell
   command execution is exposed over HTTP.
@@ -16,12 +17,15 @@ This is a trusted-user, local-only service, not a multi-tenant browser sandbox.
 - Browser user-data directories are temporary and per backend. No existing personal
   Chrome is attached. Upstream roots restrictions are forwarded, not bypassed with
   `--allow-unrestricted-paths`.
-- Backend receives the launch environment except NODE_OPTIONS. Google usage telemetry
-  and runtime update checks are disabled. Chrome's own networking and upstream CrUX
-  behavior remain upstream defaults unless explicitly configured otherwise.
+- Managed stdio backends receive the recorded launch context, a small base process
+  environment, and explicitly configured values or private file references. The
+  legacy Chrome profile inherits its launch environment except NODE_OPTIONS and
+  disables that MCP's usage telemetry/update checks. Other MCP networking and
+  telemetry remain controlled by their original command and environment.
 - Default gateway logs contain lifecycle metadata, not tool arguments/results, page
-  contents, URLs or cookies. Backend stderr is discarded. Enabling SDK trace logging
-  via RUST_LOG can expose protocol data: never share such logs without review.
+  contents, URLs or cookies. Backend stderr is discarded; the CLI uses a fixed
+  logging filter instead of ambient RUST_LOG. Private recovery journals contain
+  original configuration values and must be treated as credential-bearing files.
 - The `headers` command intentionally emits a credential for the local client. Do not
   run it in recorded output or commit its result. The generated Codex example contains
   only a command/path and URL, not the credential.
@@ -33,4 +37,6 @@ This is a trusted-user, local-only service, not a multi-tenant browser sandbox.
   guaranteed by this release. This boundary is explicit rather than hidden by an
   unsafe wildcard kill of all Chrome or Node processes.
 
-No remote publishing, public issue tracker or security upload is configured.
+Diagnostics are not uploaded automatically. Release publication requires completed
+acceptance evidence and owner-configured npm authorization. Never include tokens,
+private configuration files or backend payloads in issue reports.

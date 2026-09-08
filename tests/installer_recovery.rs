@@ -77,7 +77,12 @@ fn unavailable_previous_backend_does_not_trap_future_setup() {
     fixture.run("setup");
     let backend_bytes = fs::read(&fixture.backend).unwrap();
     fs::remove_file(&fixture.backend).unwrap();
+    let started = std::time::Instant::now();
     let failed = fixture.command("setup").output().unwrap();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(60),
+        "Failed-service recovery exceeded its bounded readiness deadline"
+    );
     assert!(!failed.status.success());
     assert!(String::from_utf8_lossy(&failed.stderr).contains("could not be restored"));
     let status = fixture.run("status");

@@ -142,7 +142,7 @@ async fn probe(record: &store::Record, config: &Config) -> Vec<String> {
     }
     match runtime::health(record).await {
         Ok(value) if value["workers"] == 0 => {
-            if crate::install::generate_catalog(config).await.is_err() {
+            if verify_probe(config).await.is_err() {
                 issues.push(
                     "Backend discovery failed or catalog changed; rerun setup with review".into(),
                 );
@@ -156,4 +156,16 @@ async fn probe(record: &store::Record, config: &Config) -> Vec<String> {
         );
     }
     issues
+}
+
+async fn verify_probe(config: &Config) -> anyhow::Result<()> {
+    let recorded = Catalog::load(&config.catalog_file, &config.backend)?;
+    let discovered = crate::install::generate_catalog(config).await?;
+    // A stable serverInfo.version does not guarantee unchanged tool schemas.
+    // Active diagnostics must detect drift without accepting or saving it.
+    anyhow::ensure!(
+        serde_json::to_value(recorded)? == serde_json::to_value(discovered)?,
+        "Backend catalog changed; rerun setup with review"
+    );
+    Ok(())
 }

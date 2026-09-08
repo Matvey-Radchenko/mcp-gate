@@ -181,17 +181,22 @@ fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Res
     Ok(value)
 }
 pub async fn ready(record: &Record) -> Result<()> {
-    // First execution of a copied native binary can be delayed by OS validation
-    // and the user service scheduler. Match the minimum backend startup budget.
-    for _ in 0..300 {
-        if let Ok(value) = health(record).await {
-            ensure!(
-                value["workers"] == 0,
-                "New gateway unexpectedly started a backend"
-            );
-            return Ok(());
+    // Bound elapsed time, not retries: refused connections on Windows can take
+    // seconds each, and multiplying those delays would stall safe recovery.
+    let wait = async {
+        loop {
+            if let Ok(value) = health(record).await {
+                ensure!(
+                    value["workers"] == 0,
+                    "New gateway unexpectedly started a backend"
+                );
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    if let Ok(result) = tokio::time::timeout(Duration::from_secs(30), wait).await {
+        return result;
     }
     anyhow::bail!(
         "Gateway did not become healthy: {}. Inspect its private service logs",
