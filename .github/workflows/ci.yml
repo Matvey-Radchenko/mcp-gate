@@ -66,8 +66,9 @@ jobs:
         run: npm exec -- node packaging/smoke.mjs
       - name: Download archive
         run: |
+          version=$(node -p "require('./npm/mcp-gate/package.json').version")
           cd dist/mcp-gate-${{ matrix.target }}
-          tar -czf ../mcp-gate-0.1.0-${{ matrix.target }}.tar.gz bin LICENSE README.md
+          tar -czf "../mcp-gate-$version-${{ matrix.target }}.tar.gz" bin LICENSE README.md
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.target }}

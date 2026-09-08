@@ -2,7 +2,7 @@
 
 - Read `CONTRIBUTING.md` before changing code. Current behavior is documented in
   `docs/architecture.md`; planned work is separately scoped in `docs/compatibility.md`.
-- Preserve unrelated changes. This repo is local-only: no publishing, service
+- Preserve unrelated changes. No publishing, service
   installation, credential access, or client config changes without authorization.
 - One module owns one responsibility. Keep CLI wiring, HTTP/auth, protocol routing,
   session policy, process ownership and backend-specific configuration separate.

@@ -1,0 +1,90 @@
+name: Publish verified release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Verified stable version (must match Cargo, npm and acceptance evidence)
+        required: true
+        default: '0.1.0'
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify required release evidence
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          node packaging/release-gate.mjs "$RELEASE_VERSION"
+          test "$REPOSITORY_PRIVATE" = false
+  native:
+    needs: evidence
+    uses: ./.github/workflows/ci.yml
+  publish:
+    needs: native
+    runs-on: macos-15
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts
+      - name: Verify all archives and write checksums
+        run: node packaging/checksums.mjs artifacts
+      - name: Publish platform packages first
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          for target in darwin-arm64 darwin-x64 win32-x64; do
+            npm publish "artifacts/native-$target/mcp-gate-$target-$RELEASE_VERSION.tgz" --access public --tag latest --provenance
+          done
+      - name: Publish launcher last
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npm publish "artifacts/native-darwin-arm64/mcp-gate-$RELEASE_VERSION.tgz" --access public --tag latest --provenance
+      - name: Create GitHub Release from these checked artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v$RELEASE_VERSION" --target "$GITHUB_SHA" --title "mcp-gate $RELEASE_VERSION" --notes-file release/notes.md artifacts/native-*/*.tar.gz artifacts/SHA256SUMS
+  registry:
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Download and verify the GitHub Release binary
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: node packaging/download-smoke.mjs "$RELEASE_VERSION"
+      - name: Install from the real npm registry
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npx --yes "mcp-gate@$env:RELEASE_VERSION" --version
+        if: runner.os == 'Windows'
+      - name: Install from the real npm registry
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: npx --yes "mcp-gate@$RELEASE_VERSION" --version
+        if: runner.os != 'Windows'

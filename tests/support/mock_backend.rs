@@ -190,6 +190,15 @@ async fn main() {
         tokio::time::sleep(std::time::Duration::from_secs(120)).await;
         let _ = child.wait();
     }
+    let _owned_child = std::env::var("MOCK_CHILD_PID_FILE").ok().map(|path| {
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .env("MOCK_CHILD_SLEEP", "1")
+            .env_remove("MOCK_CHILD_PID_FILE")
+            .spawn()
+            .unwrap();
+        std::fs::write(path, child.id().to_string()).unwrap();
+        child
+    });
     Mock::default()
         .serve((tokio::io::stdin(), tokio::io::stdout()))
         .await

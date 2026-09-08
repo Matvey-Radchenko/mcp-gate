@@ -41,3 +41,39 @@ async fn maintenance_excludes_sessions_and_new_initialization_atomically() {
     );
     h.stop();
 }
+
+#[tokio::test]
+async fn normally_exiting_backend_does_not_leave_its_child_alive() {
+    let mut h = support::Harness::generic("session", 4, 10, 5).await;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("child-pid");
+    let mut backend = mcp_gate::config::Config::load(&h.config).unwrap().backend;
+    backend.env.insert(
+        "MOCK_CHILD_PID_FILE".into(),
+        file.to_string_lossy().into_owned(),
+    );
+    h.replace_backend(backend).await;
+    // Discovery itself also has to clean up the child created before initialize.
+    let discovery_pid: u32 = std::fs::read_to_string(&file).unwrap().parse().unwrap();
+    for _ in 0..100 {
+        if !support::alive(discovery_pid) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!support::alive(discovery_pid));
+    let session = h.session().await;
+    session.call("state", json!({"value":"owned-child"})).await;
+    let pid: u32 = std::fs::read_to_string(file).unwrap().parse().unwrap();
+    assert!(support::alive(pid));
+    session.close().await;
+    h.workers(0).await;
+    for _ in 0..100 {
+        if !support::alive(pid) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(!support::alive(pid));
+    h.stop();
+}

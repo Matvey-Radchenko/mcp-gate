@@ -288,5 +288,16 @@ pub async fn stop_idle(record: &Record) -> Result<bool> {
     }
     drop(offline);
     result?;
-    Ok(true)
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .open(config.state_dir.join("gateway.lock"))?;
+    for _ in 0..400 {
+        if lock.try_lock_exclusive().is_ok() {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    anyhow::bail!(
+        "Service stop requested but its process still owns the state directory; replacement deferred"
+    )
 }

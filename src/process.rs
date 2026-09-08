@@ -97,26 +97,29 @@ async fn cleanup(
     if let Some(container) = container {
         container.stop().await;
     }
-    if tokio::time::timeout(Duration::from_secs(6), child.wait())
-        .await
-        .is_err()
+    #[cfg(unix)]
     {
-        #[cfg(unix)]
+        // Keep the leader unreaped through both signals so its PID/process-group
+        // ID cannot be reused by an unrelated process between TERM and KILL.
         signal_group(pid, libc::SIGTERM);
-        #[cfg(windows)]
-        if let Some(job) = &job {
-            job.terminate();
-        }
-        if tokio::time::timeout(Duration::from_secs(2), child.wait())
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        signal_group(pid, libc::SIGKILL);
+        let _ = child.wait().await;
+    }
+    #[cfg(windows)]
+    {
+        if tokio::time::timeout(Duration::from_secs(6), child.wait())
             .await
             .is_err()
         {
-            #[cfg(unix)]
-            signal_group(pid, libc::SIGKILL);
-            #[cfg(windows)]
-            child.start_kill().ok();
+            if let Some(job) = &job {
+                job.terminate();
+            }
+            let _ = child.start_kill();
             let _ = child.wait().await;
         }
+        // Even a normally exited parent may have surviving descendants.
+        drop(job);
     }
     live.fetch_sub(1, Ordering::SeqCst);
     tracing::info!(pid, "worker process stopped");

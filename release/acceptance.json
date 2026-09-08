@@ -1,0 +1,13 @@
+{
+  "version": "0.1.0",
+  "checks": [
+    {"id":"native-matrix","status":"pending","evidence":[]},
+    {"id":"clean-service-login","status":"pending","evidence":[]},
+    {"id":"safe-update-downgrade","status":"pending","evidence":[]},
+    {"id":"failure-recovery-and-concurrent-edits","status":"pending","evidence":[]},
+    {"id":"multi-client-remove","status":"pending","evidence":[]},
+    {"id":"browser-isolation-artifacts-cleanup","status":"pending","evidence":[]},
+    {"id":"windows-cmd-npx-uvx-docker","status":"pending","evidence":[]},
+    {"id":"source-history-and-archive-inspection","status":"pending","evidence":[]}
+  ]
+}

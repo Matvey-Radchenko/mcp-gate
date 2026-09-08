@@ -1,6 +1,6 @@
 # Development and code style
 
-This is a local project. Development commands do not deploy binaries, update client
+Development commands do not deploy binaries, update client
 settings, register launchd jobs or publish anything. Keep secrets and runtime data
 outside the repository.
 
@@ -16,8 +16,10 @@ the `test-backend` feature. Requires Cargo, rustfmt, Clippy and local loopback a
 Cargo may need network access if locked dependencies are not cached. It never runs
 the ignored real Chrome/Codex tests. Their explicit commands remain in the README.
 
-The check is local and opt-in, not an installed Git hook or hosted CI. Before a
-commit or handoff, run it; future CI should use this same entrypoint.
+GitHub Actions runs this same entrypoint on native macOS ARM64, macOS Intel and
+Windows x64 runners. Before a commit or handoff, run it locally too. There is no
+installed Git hook. CI also tests temporary user services, pinned real clients and
+clean npm archive installation; publication has a separate evidence gate.
 
 ## Formatting and mechanical limits
 
