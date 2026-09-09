@@ -94,6 +94,14 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
             "chrome".into(),
             "--headless".into(),
         ];
+        if cfg!(windows) {
+            // Native hosted Windows runners can exceed Playwright's 5-second
+            // screenshot default. This explicit fixture option stays below the
+            // gateway call deadline; setup never changes a user's timeout.
+            backend
+                .args
+                .extend(["--timeout-action".into(), "30000".into()]);
+        }
         backend.working_directory = Some(h.config.parent().unwrap().to_path_buf());
         backend.directory_env = vec!["PLAYWRIGHT_MCP_OUTPUT_DIR".into()];
         backend.working_directory_env = Some("PLAYWRIGHT_MCP_OUTPUT_DIR".into());

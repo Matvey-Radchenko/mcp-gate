@@ -18,8 +18,10 @@ the ignored real Chrome/Codex tests. Their explicit commands remain in the READM
 
 GitHub Actions runs this same entrypoint on native macOS ARM64, macOS Intel and
 Windows x64 runners. Before a commit or handoff, run it locally too. There is no
-installed Git hook. CI also tests temporary user services, pinned real clients and
-clean npm archive installation; publication has a separate evidence gate.
+installed Git hook. CI also tests temporary user services, pinned real clients,
+actual release update/downgrade and clean npm archive installation. See the
+[native acceptance procedures](docs/native-acceptance.md) for isolated checks;
+publication has a separate evidence gate.
 
 Build distributable binaries with `node packaging/compile.mjs`. It remaps home and
 workspace paths in compiled diagnostics before `packaging/build.mjs` stages the

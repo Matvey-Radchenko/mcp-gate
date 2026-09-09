@@ -261,6 +261,7 @@ impl Drop for Harness {
 #[derive(Clone)]
 pub(crate) struct Session {
     pub(crate) client: Client,
+    token: String,
     pub(crate) url: String,
     pub(crate) id: String,
     pub(crate) next: Arc<AtomicU64>,
@@ -271,11 +272,14 @@ impl Session {
         Self::with_roots(base, true).await
     }
     pub(crate) async fn with_roots(base: &str, roots: bool) -> Self {
+        Self::authenticated(base, roots, TOKEN).await
+    }
+    pub(crate) async fn authenticated(base: &str, roots: bool, token: &str) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(90))
             .build()
             .unwrap();
-        let response = client.post(format!("{base}/mcp")).bearer_auth(TOKEN).header("Accept", "application/json, text/event-stream")
+        let response = client.post(format!("{base}/mcp")).bearer_auth(token).header("Accept", "application/json, text/event-stream")
             .json(&json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{
                 "protocolVersion":"2025-11-25", "capabilities": if roots { json!({"roots":{"listChanged":true}}) } else { json!({}) }, "clientInfo":{"name":"identical-client", "version":"1"}
             }})).send().await.unwrap();
@@ -286,6 +290,7 @@ impl Session {
             .into();
         let session = Self {
             client,
+            token: token.into(),
             url: format!("{base}/mcp"),
             id,
             next: Arc::new(AtomicU64::new(1)),
@@ -300,7 +305,7 @@ impl Session {
     pub(crate) fn req(&self, method: reqwest::Method) -> reqwest::RequestBuilder {
         self.client
             .request(method, &self.url)
-            .bearer_auth(TOKEN)
+            .bearer_auth(&self.token)
             .header("Accept", "application/json, text/event-stream")
             .header("mcp-session-id", &self.id)
             .header("mcp-protocol-version", "2025-11-25")

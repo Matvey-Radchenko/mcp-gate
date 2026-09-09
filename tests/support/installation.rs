@@ -45,7 +45,10 @@ impl Installation {
         }
     }
     pub fn command(&self, action: &str) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_mcp-gate"));
+        self.command_with(std::path::Path::new(env!("CARGO_BIN_EXE_mcp-gate")), action)
+    }
+    pub fn command_with(&self, binary: &std::path::Path, action: &str) -> Command {
+        let mut c = Command::new(binary);
         c.arg(action)
             .arg("--json")
             .env("CLAUDE_CONFIG_DIR", self.settings.parent().unwrap())

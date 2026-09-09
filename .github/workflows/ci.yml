@@ -38,7 +38,7 @@ jobs:
           node-version: '24'
       - name: Release script checks
         run: |
-          for file in packaging/*.mjs npm/mcp-gate/bin/*.cjs; do node --check "$file"; done
+          for file in packaging/*.mjs npm/mcp-gate/bin/*.cjs tests/support/*.cjs; do node --check "$file"; done
           node --test packaging/*.test.mjs
       - name: Verify production Task Scheduler XML before compilation
         if: runner.os == 'Windows'
@@ -102,6 +102,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./packaging/check-windows-runtime.ps1
+      - name: Build unpublished version compatibility fixture
+        run: |
+          node packaging/compat-build.mjs
+          node -e 'const fs = require("node:fs"); const path = require("node:path"); const win = process.platform === "win32"; fs.appendFileSync(process.env.GITHUB_ENV, `MCP_GATE_RELEASE_BINARY=${path.resolve("target/release", win ? "mcp-gate.exe" : "mcp-gate")}\nMCP_GATE_COMPAT_BINARY=${path.resolve("target/compatibility", win ? "x86_64-pc-windows-msvc/release/mcp-gate.exe" : "release/mcp-gate")}\n`);'
+      - name: Actual release update and compatible downgrade
+        timeout-minutes: 5
+        run: cargo test --locked --all-features --test installer_versions -- --ignored
       - name: Prepare and inspect npm archives
         run: |
           node packaging/build.mjs
