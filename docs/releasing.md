@@ -7,13 +7,13 @@
    and operational notes are retained separately and must not be pushed.
 3. Confirm the availability/ownership of `mcp-gate`, `mcp-gate-bin-darwin-arm64`,
    `mcp-gate-bin-darwin-x64`, and `mcp-gate-bin-win32-x64`.
-4. Make the reviewed repository public. The owner authenticates separately to npm
+4. Confirm the reviewed repository is public. The owner authenticates separately to npm
    with 2FA. npm requires a package to exist before adding its first trusted
    publisher; neither OIDC nor staging can bootstrap a brand-new name. See
    [npm trust prerequisites](https://docs.npmjs.com/cli/v11/commands/npm-trust/)
    and [staging prerequisites](https://docs.npmjs.com/staged-publishing/).
 5. For the first release, configure the `npm` GitHub environment to hold the publish
-   job for owner approval. Dispatch `Publish verified release` for `0.1.0`. After
+   job for owner approval. Dispatch `Publish verified release` from `main` for `0.1.0`. After
    native checks finish, download that run's `native-*` artifacts and generate
    `SHA256SUMS` with `node packaging/checksums.mjs artifacts`. The owner publishes
    those exact three platform `.tgz` files first and the launcher `.tgz` last,
@@ -34,3 +34,8 @@
 Updating npm alone changes no services. Users must run setup with the chosen
 version to update or compatibly downgrade background gateways. The public tag is
 `latest`; no public rollback/update/doctor command is introduced.
+
+On 2026-09-09 the repository's `npm` environment was configured to require the
+owner's approval and permit deployments only from `main`. This prepares the hold
+needed for the first package bootstrap. It does not authenticate to npm, create
+trusted publishers, publish a package or mark the acceptance gates as passed.
