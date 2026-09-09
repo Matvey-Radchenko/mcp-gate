@@ -68,7 +68,9 @@ and the dedicated VM were cleaned up.
 dedicated WSL2 Linux engine. Its Ubuntu 24.04.4 image is checksum-pinned to the
 [Microsoft WSL registry](https://github.com/microsoft/WSL/blob/master/distributions/DistributionInfo.json).
 Only a new, recorded CI distribution is created and removed. A foreground WSL
-invocation owns the engine lifetime, with captured startup errors; the distribution's
+invocation owns the engine lifetime, with captured startup errors. Preparation and
+the entire native Docker test run in the same PowerShell process, retaining the
+WSL console and streams until acceptance completes. The distribution's
 Docker service and socket are stopped before this dedicated engine starts. The engine listens
 on WSL loopback and is reached through [localhost forwarding](https://learn.microsoft.com/en-us/windows/wsl/networking).
 The Node fixture is passed as literal `node -e` arguments in this test: standalone

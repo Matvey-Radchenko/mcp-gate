@@ -48,8 +48,8 @@ systemctl stop docker.service docker.socket
 $setup = $setup.Replace("`r`n", "`n")
 & wsl.exe --distribution $name --user root --exec sh -lc $setup
 if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare the owned Docker engine' }
-# Keep a foreground WSL invocation alive across steps. Detaching a Linux shell
-# job does not establish a durable host-owned engine/localhost-forwarding lifetime.
+# Keep this PowerShell process alive for the entire test, including WSL's console
+# and redirected streams. A live engine in one CI step did not survive step exit.
 $stderr = Join-Path $root 'dockerd-stderr.log'
 $stdout = Join-Path $root 'dockerd-stdout.log'
 $engine = Start-Process -FilePath 'wsl.exe' -ArgumentList @(
@@ -78,7 +78,24 @@ $env:DOCKER_CONFIG = Join-Path $root 'client'
 [IO.Directory]::CreateDirectory($env:DOCKER_CONFIG) | Out-Null
 & docker.exe version
 if ($LASTEXITCODE -ne 0) { throw 'Native Docker CLI cannot reach the test engine' }
-"DOCKER_HOST=$env:DOCKER_HOST" >> $env:GITHUB_ENV
-"DOCKER_CONTEXT=" >> $env:GITHUB_ENV
-"DOCKER_CONFIG=$env:DOCKER_CONFIG" >> $env:GITHUB_ENV
-"DOCKER_BINARY=$((Get-Command docker.exe).Source)" >> $env:GITHUB_ENV
+$env:DOCKER_BINARY = (Get-Command docker.exe).Source
+try {
+    Write-Output '::group::Prepare and verify the reviewed fixture image'
+    & docker.exe pull $env:DOCKER_IMAGE
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot pull the reviewed fixture image' }
+    $nodeVersion = & docker.exe run --rm --pull=never $env:DOCKER_IMAGE node --version
+    if ($LASTEXITCODE -ne 0 -or ([string]$nodeVersion).Trim() -ne 'v24.20.0') {
+        throw 'The pinned container did not return its expected Node version'
+    }
+    Write-Output $nodeVersion
+    Write-Output '::endgroup::'
+    Write-Output '::group::Native Windows gateway and Docker CLI ownership'
+    & cargo test --locked --all-features --test docker -- --ignored
+    if ($LASTEXITCODE -ne 0) { throw 'Native Docker acceptance failed' }
+    if ($engine.HasExited) { throw 'The owned engine exited during acceptance' }
+} catch {
+    Get-Content -LiteralPath $stderr -Tail 40
+    throw
+} finally {
+    Write-Output '::endgroup::'
+}

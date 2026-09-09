@@ -95,7 +95,11 @@ The Windows Docker runner successfully booted WSL2 and installed the engine in t
 pinned Ubuntu distribution, but its detached Linux daemon did not become reachable.
 The CI fixture now retains a foreground, host-owned WSL engine invocation and
 stops both the distribution's Docker service and socket first. This infrastructure
-correction still requires native verification.
+correction reached the engine and pulled the image in
+[run 34349203746](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34349203746),
+but the endpoint disappeared after the owning CI step exited, before the gateway
+fixture started. Preparation and the entire Docker fixture now share one owning
+PowerShell process; this lifetime correction still requires native verification.
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.

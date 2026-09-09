@@ -24,22 +24,10 @@ jobs:
             target
           key: rust-1.95.0-win32-x64-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: rust-1.95.0-win32-x64-${{ hashFiles('Cargo.lock') }}-
-      - name: Start an owned Linux engine through WSL2
-        timeout-minutes: 12
+      - name: WSL engine and native Docker acceptance in one owning process
+        timeout-minutes: 25
         shell: pwsh
         run: ./packaging/test-docker-windows.ps1
-      - name: Prepare the reviewed fixture image
-        timeout-minutes: 5
-        shell: pwsh
-        run: |
-          docker pull $env:DOCKER_IMAGE
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot pull the reviewed fixture image' }
-          docker run --rm --pull=never $env:DOCKER_IMAGE node --version
-          if ($LASTEXITCODE -ne 0) { throw 'Container runtime is unavailable' }
-      - name: Native Windows gateway and Docker CLI ownership
-        timeout-minutes: 8
-        shell: bash
-        run: cargo test --locked --all-features --test docker -- --ignored
       - name: Remove only the owned WSL distribution
         if: always()
         timeout-minutes: 3

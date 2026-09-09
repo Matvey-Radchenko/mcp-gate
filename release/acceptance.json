@@ -64,9 +64,10 @@
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Windows command/Job Object tests and real offline npx/uvx passed",
         "2026-09-09 local macOS ARM64: real Docker Engine 28.3.2 ownership, independent connections, crash/no-replay and cleanup passed with the pinned Node image documented in docs/native-acceptance.md",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008: native macOS Intel Docker ownership/isolation/crash/no-replay/cleanup passed with Colima 0.10.3, Docker CLI 29.7.2, engine 29.5.2 and Node 24.20.0; the dedicated VM was removed successfully"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008: native macOS Intel Docker ownership/isolation/crash/no-replay/cleanup passed with Colima 0.10.3, Docker CLI 29.7.2, engine 29.5.2 and Node 24.20.0; the dedicated VM was removed successfully",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34349203746: Windows Docker CLI reached the WSL2 engine and pulled the pinned image; the endpoint disappeared after the owning CI step exited, before the gateway fixture started"
       ],
-      "remaining": "Native Windows Docker fixture: WSL2 and pinned Ubuntu booted, but the detached engine did not become reachable. Host-owned foreground WSL engine invocation awaits native verification"
+      "remaining": "Windows Docker now runs engine preparation, image verification and the complete native fixture inside one owning PowerShell process; native verification remains pending"
     },
     {
       "id": "source-history-and-archive-inspection",
