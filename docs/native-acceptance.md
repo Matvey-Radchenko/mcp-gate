@@ -76,7 +76,10 @@ on WSL loopback and is reached through [localhost forwarding](https://learn.micr
 The Node fixture is passed as literal `node -e` arguments in this test: standalone
 Docker CLI with WSL does not provide Docker Desktop's Windows drive translation.
 This checks native process/argument/container ownership, not Desktop installation
-or bind-mount translation. It remains pending until that native job passes.
+or bind-mount translation. The preliminary Node version probe uses `-i` with an
+explicitly open stdin pipe, matching the MCP transport and avoiding WSL's
+[documented half-close/output issue](https://github.com/docker/cli/issues/6220).
+It remains pending until that native job passes.
 
 ## Actual login and protected-folder acceptance
 

@@ -83,9 +83,33 @@ try {
     Write-Output '::group::Prepare and verify the reviewed fixture image'
     & docker.exe pull $env:DOCKER_IMAGE
     if ($LASTEXITCODE -ne 0) { throw 'Cannot pull the reviewed fixture image' }
-    $nodeVersion = & docker.exe run --rm --pull=never $env:DOCKER_IMAGE node --version
-    if ($LASTEXITCODE -ne 0 -or ([string]$nodeVersion).Trim() -ne 'v24.20.0') {
-        throw 'The pinned container did not return its expected Node version'
+    # WSL's TCP forwarding can lose hijacked Docker output after stdin EOF:
+    # https://github.com/docker/cli/issues/6220. Hold a pipe open just as MCP does.
+    $probe = [Diagnostics.Process]::new()
+    $probe.StartInfo.FileName = $env:DOCKER_BINARY
+    $probe.StartInfo.UseShellExecute = $false
+    $probe.StartInfo.RedirectStandardInput = $true
+    $probe.StartInfo.RedirectStandardOutput = $true
+    $probe.StartInfo.RedirectStandardError = $true
+    foreach ($argument in @('run', '--rm', '-i', '--pull=never', $env:DOCKER_IMAGE, 'node', '--version')) {
+        $probe.StartInfo.ArgumentList.Add($argument)
+    }
+    try {
+        if (-not $probe.Start()) { throw 'Cannot start the native Docker version probe' }
+        $output = $probe.StandardOutput.ReadToEndAsync()
+        $errors = $probe.StandardError.ReadToEndAsync()
+        if (-not $probe.WaitForExit(30000)) {
+            $probe.Kill($true)
+            if (-not $probe.WaitForExit(5000)) { throw 'Cannot reap the owned Docker probe' }
+            throw 'The native Docker version probe exceeded 30 seconds'
+        }
+        $nodeVersion = $output.GetAwaiter().GetResult().Trim()
+        if ($probe.ExitCode -ne 0 -or $nodeVersion -ne 'v24.20.0') {
+            Write-Output $errors.GetAwaiter().GetResult()
+            throw 'The pinned container did not return its expected Node version'
+        }
+    } finally {
+        $probe.Dispose()
     }
     Write-Output $nodeVersion
     Write-Output '::endgroup::'

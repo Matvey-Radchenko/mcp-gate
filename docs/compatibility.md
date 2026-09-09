@@ -99,7 +99,10 @@ correction reached the engine and pulled the image in
 [run 34349203746](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34349203746),
 but the endpoint disappeared after the owning CI step exited, before the gateway
 fixture started. Preparation and the entire Docker fixture now share one owning
-PowerShell process; this lifetime correction still requires native verification.
+PowerShell process. The next preflight still produced no container output, matching
+Docker's [documented WSL stdin-EOF limitation](https://github.com/docker/cli/issues/6220).
+The bounded version probe now explicitly holds stdin open, as the actual MCP worker
+does. The native Docker gateway fixture has not passed yet.
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.

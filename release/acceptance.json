@@ -65,9 +65,10 @@
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Windows command/Job Object tests and real offline npx/uvx passed",
         "2026-09-09 local macOS ARM64: real Docker Engine 28.3.2 ownership, independent connections, crash/no-replay and cleanup passed with the pinned Node image documented in docs/native-acceptance.md",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008: native macOS Intel Docker ownership/isolation/crash/no-replay/cleanup passed with Colima 0.10.3, Docker CLI 29.7.2, engine 29.5.2 and Node 24.20.0; the dedicated VM was removed successfully",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34349203746: Windows Docker CLI reached the WSL2 engine and pulled the pinned image; the endpoint disappeared after the owning CI step exited, before the gateway fixture started"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34349203746: Windows Docker CLI reached the WSL2 engine and pulled the pinned image; the endpoint disappeared after the owning CI step exited, before the gateway fixture started",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34350068276: the owned Windows/WSL engine stayed available, but the standalone Node preflight returned no output; this matches the documented Docker/WSL stdin-EOF limitation (docker/cli#6220), before any gateway test ran"
       ],
-      "remaining": "Windows Docker now runs engine preparation, image verification and the complete native fixture inside one owning PowerShell process; native verification remains pending"
+      "remaining": "Native Windows Docker verification with an explicitly open stdin pipe for the bounded Node version probe; the actual gateway fixture already uses open stdio"
     },
     {
       "id": "source-history-and-archive-inspection",
