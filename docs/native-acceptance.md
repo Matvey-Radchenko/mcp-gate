@@ -52,7 +52,7 @@ and environment. Its Linux container does not establish Linux host support.
 
 Local macOS ARM64 evidence on 2026-09-09 used Docker Engine 28.3.2 and Node 24.20.0
 from `node@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf`.
-The test passed; Windows Docker acceptance remains outstanding.
+The test passed; native Intel and Windows evidence is recorded below.
 
 The native CI matrix also calls `docker-intel.yml`, using a dedicated Colima
 profile on `macos-15-intel`, the same reviewed Node image and the same Docker test.
@@ -79,7 +79,11 @@ This checks native process/argument/container ownership, not Desktop installatio
 or bind-mount translation. The preliminary Node version probe uses `-i` with an
 explicitly open stdin pipe, matching the MCP transport and avoiding WSL's
 [documented half-close/output issue](https://github.com/docker/cli/issues/6220).
-It remains pending until that native job passes.
+[Run 34351749071](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34351749071)
+passed on Windows Server 2025 with Docker CLI 29.1.5, WSL 2.7.12, kernel
+6.18.33.2-2, Ubuntu 24.04.4 / engine 29.1.3 and Node 24.20.0. The independent
+container baseline survived, owned containers were cleaned up, and only the
+recorded WSL distribution was removed.
 
 ## Actual login and protected-folder acceptance
 

@@ -26,83 +26,46 @@ this evidence does not substitute for desktop Windows login acceptance.
 | Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI with full job drain and process identity checks |
 | Real npx/uvx with local offline fixture packages | Passed locally and in CI | Passed in CI | Passed in CI |
 | Windows Job Objects and native private-file ACLs | N/A | N/A | Passed in native ordinary tests |
-| Docker container ownership and cleanup | Passed locally with Docker Engine 28.3.2 | Passed in CI with Colima 0.10.3 / engine 29.5.2 | Pending |
+| Docker container ownership and cleanup | Passed locally with Docker Engine 28.3.2 | Passed in CI with Colima 0.10.3 / engine 29.5.2 | Passed in CI with native CLI 29.1.5 / WSL engine 29.1.3 |
 
-The repository became public on 2026-09-09; GitHub Actions now starts successfully.
-[Run 34333009537](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537),
-commit `11d69b0`, passed all three native jobs, including real clients, browser
-ownership, services, independently built release versions and archive installation.
-Windows DLL inspection confirmed that the executable does not need a separate
-Visual C++ redistributable. Windows Playwright uses the explicit fixture option
-`--timeout-action 30000`; setup does not alter user commands or timeouts.
-The Codex fixture waits for each thread's MCP startup event and connected runtime
-status before checking inventory and connection counts.
+Completed native matrix evidence is recorded in
+[release/acceptance.json](../release/acceptance.json).
+[Run 34351749071](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34351749071),
+commit `66cb8e9`, passed all seven jobs: three native platforms, Intel/Windows
+Docker, the common-launcher build and the combined archive check. All three platforms installed the exact same launcher archive and exercised
+actual local/global commands. Native architectures, binary hashes, archive contents
+and known private-path/token signatures were inspected; see the
+[source and archive audit](../release/source-audit.md).
 
-[Run 34336206965](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965),
-commit `a624d6e`, also passed all five jobs. It builds one common npm launcher and
-installs those exact bytes on all three native platforms, exercises actual local
-and global command links, and verifies all seven release archives together.
-The downloaded archives passed file-list, native-architecture, binary-hash,
-shared-launcher and known private-path/token signature inspection. This resolves
-the different launcher tar permissions found in the earlier separate-platform
-builds. See the [source and archive audit](../release/source-audit.md).
+Docker acceptance passed separately on
+[Intel](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008) and
+[Windows](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34351749071), in
+addition to the local ARM64 check. The Windows job uses native `docker.exe`, WSL
+2.7.12 and a checksum-pinned Ubuntu 24.04.4 engine, with literal Node arguments.
+It does not test Docker Desktop installation or Windows drive-mount translation.
+The version probe holds stdin open, matching MCP and avoiding the documented
+[Docker/WSL half-close output limitation](https://github.com/docker/cli/issues/6220).
 
-A subsequent repeat of the same implementation exposed one remaining test race:
-[run 34338316908](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34338316908)
-passed Windows and Intel, but ARM64 counted a third session immediately after
-Codex inventory. In [Codex 0.153.4's implementation](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/codex-mcp/src/mcp/mod.rs#L468),
-`mcpServerStatus/list` creates a separate connection set even with `threadId`, then
-cancels its startup after collecting inventory. The test now waits within a bounded
-deadline for these probes to close before counting persistent sessions or choosing
-session IDs for browser cleanup. It still requires the exact session count and
-zero workers, and repeatedly checks that discovery preserves the thread's session
-and leaves none after client exit. This repeated-inventory check passed on all three
-platforms in [run 34341463558](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558).
-Both macOS jobs completed successfully; Windows exposed three other failures.
+The tested client/browser scenarios have these explicit conditions:
 
-Windows worker cleanup now waits for the entire owned Job Object to empty before
-reporting zero workers or permitting maintenance. Closing its handle alone could
-report completion before all descendants exited: [job termination](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject)
-uses the asynchronous [process termination](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)
-contract. Failed cleanup retains ownership and a busy worker count, with an error;
-no backend action is replayed. Browser checks record creation times on Windows so
-PID reuse cannot turn an unrelated process into an alleged orphan.
+- Codex fixtures wait for each thread's MCP startup and connected status. Its
+  [inventory operation](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/codex-mcp/src/mcp/mod.rs#L468)
+  creates temporary discovery connections; tests require their bounded teardown
+  before counting persistent connections, with zero backend workers during discovery.
+- Claude's local-model fixture sets `MCP_CONNECTION_NONBLOCKING=0` to wait for MCP
+  startup before the first query, and requires an actual successful tool result.
+  This [fixture setting](https://code.claude.com/docs/en/env-vars) does not change
+  users' client configuration.
+- Windows Playwright uses `--timeout-action 30000`. Tests distinguish process
+  identities from reused PIDs. The gateway waits for its entire Windows Job Object
+  to empty before reporting idle or permitting maintenance; failed cleanup retains
+  ownership and reports an error.
+- Windows releases use static CRT linkage; their inspected DLL imports do not
+  require a separate Visual C++ redistributable.
 
-The Claude local-model fixture explicitly sets `MCP_CONNECTION_NONBLOCKING=0`:
-2.1.160 otherwise permits its first query before MCP tools are ready. This is a
-[test fixture setting](https://code.claude.com/docs/en/env-vars), not an installer
-change to user behavior. Completion now requires the actual fixture tool result.
-The Codex fixture owns its Windows npm shell/Node/native process tree in a Job
-Object, so forced fixture shutdown also cleans up descendants. Startup timeouts
-include the RPC method and last lifecycle event. Its configuration preflight now
-awaits the subprocess with a deadline, instead of blocking the async runtime while
-another client is waiting for an RPC response. The exact cause of the preceding
-Codex startup timeout remains unproven.
-[Run 34344798587](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587),
-commit `ad36a4a`, subsequently passed all five jobs, including these corrections on
-all three native platforms and the combined release archives.
-
-[Run 34347193008](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008)
-passed the additional native Intel Docker job and both ARM64/Windows native suites.
-Intel's ordinary tests exposed an early shutdown failure. Previously, the async
-signal function installed handlers only on its first poll, after the HTTP task
-could already return readiness. Both Unix shutdown handlers and the Windows
-console handler are now installed before binding the listener. A regression sends
-signals before polling the receiver; it and the local full harness passed. The
-native matrix must be repeated for this production change.
-
-The Windows Docker runner successfully booted WSL2 and installed the engine in the
-pinned Ubuntu distribution, but its detached Linux daemon did not become reachable.
-The CI fixture now retains a foreground, host-owned WSL engine invocation and
-stops both the distribution's Docker service and socket first. This infrastructure
-correction reached the engine and pulled the image in
-[run 34349203746](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34349203746),
-but the endpoint disappeared after the owning CI step exited, before the gateway
-fixture started. Preparation and the entire Docker fixture now share one owning
-PowerShell process. The next preflight still produced no container output, matching
-Docker's [documented WSL stdin-EOF limitation](https://github.com/docker/cli/issues/6220).
-The bounded version probe now explicitly holds stdin open, as the actual MCP worker
-does. The native Docker gateway fixture has not passed yet.
+Shutdown handlers are installed before listener readiness. The regression sends
+signals before polling the receiver; the local harness and real-client/browser
+checks passed, followed by the complete seven-job native run linked above.
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.

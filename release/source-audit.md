@@ -61,3 +61,24 @@ same exact file-list, architecture, binary-hash, shared-launcher and private-pat
 checks; no findings or production test hooks were found. Seven unique archives
 passed the combined SHA-256 check. This candidate includes the Windows process
 termination fix; it is still unpublished and does not waive the remaining gates.
+
+## Native Docker and shutdown candidate
+
+[Run 34351749071](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34351749071)
+passed all seven jobs at `66cb8e98579a887e2206de0fb51f63d711cfbef2`:
+three native platforms, Intel/Windows Docker, the shared launcher and combined
+archives. This includes synchronous shutdown registration before readiness and
+the native Windows Docker fixture with explicitly open stdin.
+
+The 24 reachable public commits and 135 CI log entries (approximately 825 KB after
+removing terminal control sequences and WSL encoding nulls) passed Gitleaks
+inspection. All nine downloaded archive copies, seven unique archives, passed
+exact file-list, architecture, binary SHA-256, shared-launcher identity and known
+private-path/token signature inspection. No production test hooks or compatibility
+fixture binary were found. The combined SHA-256 check also passed locally.
+
+Subsequent documentation changes record these completed checks and keep actual
+new-login/protected-folder acceptance pending. They do not change the release
+executable. npm and GitHub Release publication remain blocked until the remaining
+evidence and owner authorization are available; final publication must inspect
+its own run's archives.
