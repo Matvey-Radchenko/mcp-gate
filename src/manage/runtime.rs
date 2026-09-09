@@ -1,14 +1,11 @@
-use super::store::Record;
+use super::{launch, store::Record};
 use crate::{
     clients::{Binding, Candidate, Client},
     config::Config,
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 
 pub fn http() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
@@ -47,29 +44,6 @@ pub async fn maintenance(record: &Record, enable: bool) -> Result<bool> {
     Ok(true)
 }
 
-pub fn resolve(command: &str, cwd: &Path) -> Result<PathBuf> {
-    let p = Path::new(command);
-    if p.is_absolute() || p.components().count() > 1 {
-        let path = cwd.join(p);
-        ensure!(path.is_file(), "MCP executable not found");
-        return Ok(path);
-    }
-    let paths = std::env::var_os("PATH").context("PATH is not set")?;
-    for directory in std::env::split_paths(&paths) {
-        for suffix in if cfg!(windows) {
-            vec!["", ".exe", ".cmd", ".bat"]
-        } else {
-            vec![""]
-        } {
-            let path = directory.join(format!("{command}{suffix}"));
-            if path.is_file() {
-                return Ok(path);
-            }
-        }
-    }
-    anyhow::bail!("MCP executable is not on PATH; install it first")
-}
-
 pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     let id = uuid::Uuid::new_v4().to_string();
     let release = root.join("releases").join(&id);
@@ -81,14 +55,8 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     let port = std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?
         .port();
-    let command = resolve(
-        candidate
-            .command
-            .first()
-            .context("Missing backend command")?,
-        &candidate.cwd,
-    )?;
-    let environment = launch_environment(candidate)?;
+    let environment = launch::environment(candidate)?;
+    let command = launch::executable(candidate, &environment)?;
     let mode = candidate
         .recipe
         .as_ref()
@@ -112,9 +80,8 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     }
     if let Some(recipe) = &candidate.recipe {
         config.tool_policy.disabled = recipe.disabled_tools.clone();
-        if recipe.id == "playwright" {
-            config.backend.directory_env = vec!["PLAYWRIGHT_MCP_OUTPUT_DIR".into()];
-        }
+        config.backend.directory_env = recipe.directory_env.clone();
+        config.backend.working_directory_env = recipe.working_directory_env.clone();
     }
     config.validate()?;
     crate::install::init_token(&config.token_file)?;
@@ -150,6 +117,9 @@ fn quote(path: &Path) -> String {
         format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
     }
 }
+pub fn headers_helper(binary: &Path, config: &Path) -> String {
+    format!("{} headers --config {}", quote(binary), quote(config))
+}
 fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Result<Value> {
     let mut value = binding.direct.clone();
     let object = value
@@ -159,7 +129,7 @@ fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Res
         object.remove(key);
     }
     object.insert("url".into(), json!(format!("http://{}/mcp", config.listen)));
-    let helper = format!("{} headers --config {}", quote(binary), quote(path));
+    let helper = headers_helper(binary, path);
     match binding.client {
         Client::Codex => {
             object.insert("http_headers_helper".into(), json!(helper));
@@ -182,17 +152,27 @@ fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Res
     Ok(value)
 }
 pub async fn ready(record: &Record) -> Result<()> {
-    for _ in 0..100 {
-        if let Ok(value) = health(record).await {
-            ensure!(
-                value["workers"] == 0,
-                "New gateway unexpectedly started a backend"
-            );
-            return Ok(());
+    // Bound elapsed time, not retries: refused connections on Windows can take
+    // seconds each, and multiplying those delays would stall safe recovery.
+    let wait = async {
+        loop {
+            if let Ok(value) = health(record).await {
+                ensure!(
+                    value["workers"] == 0,
+                    "New gateway unexpectedly started a backend"
+                );
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    if let Ok(result) = tokio::time::timeout(Duration::from_secs(30), wait).await {
+        return result;
     }
-    anyhow::bail!("Gateway did not become healthy; inspect its private service logs")
+    anyhow::bail!(
+        "Gateway did not become healthy: {}. Inspect its private service logs",
+        super::service::diagnostics(record)
+    )
 }
 
 pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result<Option<Record>> {
@@ -210,7 +190,7 @@ pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result
         }
         let config = Config::load(&record.config())?;
         if config.ownership != crate::config::Ownership::Shared
-            || config.backend.env != launch_environment(candidate)?
+            || config.backend.env != launch::environment(candidate)?
             || config.backend.working_directory.as_ref() != Some(&candidate.cwd)
             || config.backend.env_files != candidate.env_files
             || config.backend.inherit_env != candidate.inherit_env
@@ -225,40 +205,6 @@ pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result
         return Ok(Some(reused));
     }
     Ok(None)
-}
-
-fn launch_environment(candidate: &Candidate) -> Result<std::collections::BTreeMap<String, String>> {
-    let mut values = std::collections::BTreeMap::new();
-    for name in [
-        "PATH",
-        "HOME",
-        "TMPDIR",
-        "LANG",
-        "LC_ALL",
-        "SystemRoot",
-        "USERPROFILE",
-        "TEMP",
-        "TMP",
-        "COMSPEC",
-        "PATHEXT",
-    ] {
-        if let Ok(value) = std::env::var(name) {
-            values.insert(name.into(), value);
-        }
-    }
-    for name in &candidate.inherit_env {
-        let value = std::env::var(name).with_context(|| {
-            format!(
-                "Declared inherited environment variable {name} is unavailable in the setup process"
-            )
-        })?;
-        values.insert(name.clone(), value);
-    }
-    values.extend(candidate.env.clone());
-    for key in candidate.env_files.keys() {
-        values.remove(key);
-    }
-    Ok(values)
 }
 
 /// A live maintenance barrier or the daemon's exclusive state lock prevents a

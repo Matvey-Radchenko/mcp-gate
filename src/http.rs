@@ -168,6 +168,7 @@ async fn health(State(state): State<HttpState>) -> impl IntoResponse {
     axum::Json(
         json!({ "service": "mcp-gate", "version": env!("CARGO_PKG_VERSION"),
         "pid": std::process::id(), "sessions": state.leases.lock().unwrap().len(),
+        "maintenance":state.maintenance.lock().unwrap().is_some(),
         "workers": state.gateway.live.load(std::sync::atomic::Ordering::SeqCst),
         "max_workers": state.gateway.config.max_workers, "tools": state.gateway.catalog.tools.len(),
         "runtime": state.gateway.runtime_status(),

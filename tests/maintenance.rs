@@ -68,6 +68,11 @@ async fn normally_exiting_backend_does_not_leave_its_child_alive() {
     assert!(support::alive(pid));
     session.close().await;
     h.workers(0).await;
+    #[cfg(windows)]
+    assert!(
+        !support::alive(pid),
+        "Windows must not report an idle worker while its job has live descendants"
+    );
     for _ in 0..100 {
         if !support::alive(pid) {
             break;

@@ -1,3 +1,4 @@
+pub mod launch;
 mod preview;
 mod recovery;
 mod remove;
@@ -100,10 +101,9 @@ pub(crate) fn restart(clients: &std::collections::BTreeSet<Client>) {
 
 pub(crate) fn matches_binding(options: &Selection, binding: &crate::clients::Binding) -> bool {
     matches(options, binding.client, &binding.name)
-        && options
-            .project
-            .as_ref()
-            .is_none_or(|project| project.canonicalize().ok().as_ref() == binding.project.as_ref())
+        && options.project.as_ref().is_none_or(|project| {
+            crate::platform::project_path(project).ok().as_ref() == binding.project.as_ref()
+        })
 }
 
 /// Fault injection exists only in the test-feature binary, never npm artifacts.

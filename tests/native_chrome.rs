@@ -5,8 +5,12 @@
 mod support;
 use mcp_gate::config::{Config, Ownership};
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, path::PathBuf, process::Command, time::Duration};
-use support::{Harness, alive, native_codex::NativeCodex};
+use std::{path::PathBuf, time::Duration};
+use support::{
+    Harness,
+    native_codex::{NativeCodex, discovery_sessions},
+    process_tree::{descendants, track},
+};
 
 struct Probe {
     config: Config,
@@ -49,14 +53,6 @@ impl Probe {
             .unwrap();
     }
 }
-fn session_ids(health: &Value) -> BTreeSet<String> {
-    health["session_details"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| s["id"].as_str().unwrap().to_owned())
-        .collect()
-}
 fn text(result: &Value) -> &str {
     assert_ne!(
         result["isError"], true,
@@ -64,35 +60,6 @@ fn text(result: &Value) -> &str {
     );
     result["content"][0]["text"].as_str().expect("Tool text")
 }
-fn descendants(root: u32) -> Vec<u32> {
-    let output = Command::new("ps")
-        .args(["-axo", "pid=,ppid="])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let rows: Vec<(u32, u32)> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut f = line.split_whitespace();
-            Some((f.next()?.parse().ok()?, f.next()?.parse().ok()?))
-        })
-        .collect();
-    let mut result = vec![root];
-    loop {
-        let next: Vec<_> = rows
-            .iter()
-            .filter(|(pid, ppid)| result.contains(ppid) && !result.contains(pid))
-            .map(|(pid, _)| *pid)
-            .collect();
-        if next.is_empty() {
-            break;
-        }
-        result.extend(next);
-    }
-    result.remove(0);
-    result
-}
-
 async fn browser_isolation(c: &mut NativeCodex, a: &str, b: &str, url: &str) {
     for (thread, name) in [(a, "A"), (b, "B")] {
         text(
@@ -167,14 +134,17 @@ async fn two_threads_real_browsers_and_lifecycle() {
     let mut c = NativeCodex::for_config(config_path).await;
     let a = c.thread.clone();
     assert_eq!(c.discover().await, 29);
-    let first_ids = session_ids(&probe.health().await);
-    assert_eq!(first_ids.len(), 1);
+    let first_ids = discovery_sessions(config_path, 1).await;
     let cwd = tempfile::tempdir().unwrap();
     let second = c.request("thread/start",json!({"cwd":cwd.path(),"ephemeral":true,"approvalPolicy":"never","sandbox":"read-only"})).await;
     assert_eq!(second["thread"]["ephemeral"], true);
     let b = second["thread"]["id"].as_str().unwrap().to_owned();
     assert_eq!(c.discover_in(&b).await, 29);
-    assert_eq!(probe.health().await["sessions"], 2);
+    let both_ids = discovery_sessions(config_path, 2).await;
+    assert!(
+        first_ids.is_subset(&both_ids),
+        "First thread session changed"
+    );
     probe.workers(0).await;
     assert!(
         descendants(gateway_pid).is_empty(),
@@ -183,10 +153,12 @@ async fn two_threads_real_browsers_and_lifecycle() {
     text(&c.call_in(&a, "list_pages", json!({})).await);
     probe.workers(1).await;
     let a_pids = descendants(gateway_pid);
+    let a_processes = track(&a_pids);
     text(&c.call_in(&b, "list_pages", json!({})).await);
     probe.workers(2).await;
     let all_pids = descendants(gateway_pid);
     assert!(a_pids.len() >= 3 && all_pids.len() > a_pids.len());
+    let mut all_processes = track(&all_pids);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
     let pages = tokio::spawn(async move {
@@ -204,10 +176,7 @@ async fn two_threads_real_browsers_and_lifecycle() {
     });
     browser_isolation(&mut c, &a, &b, &url).await;
     // Include renderers created by navigation and the extra tab, not only startup PIDs.
-    let all_pids: BTreeSet<_> = all_pids
-        .into_iter()
-        .chain(descendants(gateway_pid))
-        .collect();
+    all_processes.extend(track(&descendants(gateway_pid)));
     tokio::time::sleep(Duration::from_secs(3)).await;
     let preserved = c.call_in(&a,"evaluate_script",json!({"pageId":1,"function":"() => window.name === 'native-A' && localStorage.getItem('gateway') === 'A' && document.cookie.includes('gateway=A')"})).await;
     assert!(
@@ -228,7 +197,7 @@ async fn two_threads_real_browsers_and_lifecycle() {
     probe.delete(first_ids.first().unwrap()).await;
     probe.workers(1).await;
     assert!(
-        a_pids.iter().all(|p| !alive(*p)),
+        a_processes.iter().all(|p| !p.running()),
         "A's original browser tree must be gone while B survives"
     );
     let surviving = c
@@ -243,7 +212,7 @@ async fn two_threads_real_browsers_and_lifecycle() {
     c.close().await;
     probe.workers(0).await;
     tokio::time::timeout(Duration::from_secs(15), async {
-        while all_pids.iter().any(|p| alive(*p)) {
+        while all_processes.iter().any(|p| p.running()) {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     })

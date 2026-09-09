@@ -3,6 +3,7 @@ pub mod document;
 pub mod expand;
 pub mod recipes;
 mod scan;
+pub use claude::project_key as claude_project_key;
 pub use scan::{discover, discover_current};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -60,6 +61,7 @@ impl Candidate {
             "transition":"stdio -> authenticated loopback HTTP", "mode": self.recipe.as_ref().map_or("session",|r|r.mode.as_str()),
             "recipe":self.recipe.as_ref().map(|r|serde_json::json!({"id":r.id,"conditions":r.conditions,"disabled_tools":r.disabled_tools})),
             "command":"preserved (values hidden)","permissions":"preserved",
+            "platform_note":cfg!(target_os = "macos").then_some("macOS privacy grants of the agent application do not transfer to a background gateway; access to protected folders may require a separate system approval."),
             "autostart": if cfg!(windows) { "Task Scheduler" } else { "LaunchAgent" },
             "issue":self.issue})
     }

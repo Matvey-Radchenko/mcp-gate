@@ -107,22 +107,39 @@ async fn cleanup(
         let _ = child.wait().await;
     }
     #[cfg(windows)]
-    {
-        if tokio::time::timeout(Duration::from_secs(6), child.wait())
-            .await
-            .is_err()
-        {
-            if let Some(job) = &job {
-                job.terminate();
-            }
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-        }
-        // Even a normally exited parent may have surviving descendants.
-        drop(job);
-    }
+    cleanup_windows(&mut child, job.expect("Windows worker owns its job")).await;
     live.fetch_sub(1, Ordering::SeqCst);
     tracing::info!(pid, "worker process stopped");
+}
+#[cfg(windows)]
+async fn cleanup_windows(child: &mut Child, job: crate::platform::windows_job::Job) {
+    let _ = tokio::time::timeout(Duration::from_secs(6), child.wait()).await;
+    loop {
+        // A normally exited parent can still have descendants. Do not publish
+        // an idle worker count or release its permit before the whole job exits.
+        let result = async {
+            job.terminate()?;
+            tokio::time::timeout(Duration::from_secs(10), child.wait())
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Owned parent is still stopping",
+                    )
+                })??;
+            job.wait_empty().await
+        }
+        .await;
+        match result {
+            Ok(()) => break,
+            Err(error) => {
+                tracing::error!(%error, "Owned job cleanup incomplete; worker remains busy");
+                // Retain ownership and the maintenance barrier after a bounded
+                // attempt fails. Only cleanup is retried, never backend actions.
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        }
+    }
 }
 #[cfg(unix)]
 fn signal_group(pid: Option<u32>, signal: i32) {

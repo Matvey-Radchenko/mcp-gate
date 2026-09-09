@@ -5,36 +5,10 @@ mod support;
 use mcp_gate::config::{Config, Ownership};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
-use support::native_codex::NativeCodex;
-
-fn descendants(root: u32) -> BTreeSet<u32> {
-    let output = std::process::Command::new("ps")
-        .args(["-axo", "pid=,ppid="])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let rows: Vec<(u32, u32)> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
-        })
-        .collect();
-    let mut found = BTreeSet::from([root]);
-    loop {
-        let next: Vec<_> = rows
-            .iter()
-            .filter(|(pid, parent)| found.contains(parent) && !found.contains(pid))
-            .map(|(pid, _)| *pid)
-            .collect();
-        if next.is_empty() {
-            break;
-        }
-        found.extend(next);
-    }
-    found.remove(&root);
-    found
-}
+use support::{
+    native_codex::{NativeCodex, discovery_sessions},
+    process_tree::{descendants, track},
+};
 
 async fn health(c: &Config) -> Value {
     reqwest::Client::builder()
@@ -51,14 +25,6 @@ async fn health(c: &Config) -> Value {
         .json()
         .await
         .unwrap()
-}
-fn ids(h: &Value) -> BTreeSet<String> {
-    h["session_details"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| s["id"].as_str().unwrap().to_owned())
-        .collect()
 }
 fn text(v: &Value) -> String {
     assert_ne!(v["isError"], true, "Local fixture failed: {v}");
@@ -106,9 +72,39 @@ fn screenshots(c: &Config, name: &str) -> BTreeSet<PathBuf> {
 }
 
 #[tokio::test]
-#[ignore = "Requires STAGED_PLAYWRIGHT_CONFIG, CODEX_BINARY, Chrome and explicit local-browser authorization"]
+#[ignore = "Requires PLAYWRIGHT_ENTRYPOINT/DEVTOOLS_NODE or an empty STAGED_PLAYWRIGHT_CONFIG, CODEX_BINARY and installed Chrome"]
 async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
-    let path = PathBuf::from(std::env::var("STAGED_PLAYWRIGHT_CONFIG").unwrap());
+    let mut owned = None;
+    let path = if let Ok(path) = std::env::var("STAGED_PLAYWRIGHT_CONFIG") {
+        PathBuf::from(path)
+    } else {
+        let mut h = support::Harness::generic("session", 4, 60, 30).await;
+        let mut backend = Config::load(&h.config).unwrap().backend;
+        backend.command = std::env::var("DEVTOOLS_NODE").unwrap().into();
+        backend.entrypoint = Some(std::env::var("PLAYWRIGHT_ENTRYPOINT").unwrap().into());
+        backend.version = "1.63.0-alpha-2026-08-31".into();
+        backend.args = vec![
+            "--isolated".into(),
+            "--browser".into(),
+            "chrome".into(),
+            "--headless".into(),
+        ];
+        if cfg!(windows) {
+            // Native hosted Windows runners can exceed Playwright's 5-second
+            // screenshot default. This explicit fixture option stays below the
+            // gateway call deadline; setup never changes a user's timeout.
+            backend
+                .args
+                .extend(["--timeout-action".into(), "30000".into()]);
+        }
+        backend.working_directory = Some(h.config.parent().unwrap().to_path_buf());
+        backend.directory_env = vec!["PLAYWRIGHT_MCP_OUTPUT_DIR".into()];
+        backend.working_directory_env = Some("PLAYWRIGHT_MCP_OUTPUT_DIR".into());
+        h.replace_backend(backend).await;
+        let path = h.config.clone();
+        owned = Some(h);
+        path
+    };
     let c = Config::load(&path).unwrap();
     assert!(c.ownership == Ownership::Session);
     assert_eq!(
@@ -121,13 +117,12 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     assert!(descendants(gateway_pid).is_empty());
     let mut a = NativeCodex::for_config(&path).await;
     assert_eq!(a.discover().await, 24);
-    let aid = ids(&health(&c).await).pop_first().unwrap();
+    let aid = discovery_sessions(&path, 1).await.pop_first().unwrap();
     let mut b = NativeCodex::for_config(&path).await;
     assert_eq!(b.discover().await, 24);
-    let bid = ids(&health(&c).await)
-        .into_iter()
-        .find(|id| *id != aid)
-        .unwrap();
+    let both_ids = discovery_sessions(&path, 2).await;
+    assert!(both_ids.contains(&aid), "First client session changed");
+    let bid = both_ids.into_iter().find(|id| *id != aid).unwrap();
     assert_eq!(health(&c).await["workers"], 0, "Discovery must stay lazy");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
@@ -148,6 +143,7 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     assert_eq!(health(&c).await["workers"], 1);
     let a_pids = descendants(gateway_pid);
     assert!(a_pids.len() >= 3, "Expected Node and real browser children");
+    let a_processes = track(&a_pids);
     text(&b.call("browser_navigate", json!({"url":url})).await);
     assert_eq!(health(&c).await["workers"], 2);
     text(&a.call("browser_evaluate", json!({"function":"() => { window.name='A'; localStorage.setItem('fixture','A'); document.cookie='fixture=A;path=/'; document.body.style.background='red'; return 'ok'; }"})).await);
@@ -197,9 +193,10 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
         "Independent pages must produce different images"
     );
     let all_pids = descendants(gateway_pid);
+    let all_processes = track(&all_pids);
     delete(&c, &aid, 1).await;
     assert!(
-        a_pids.iter().all(|p| !support::alive(*p)),
+        a_processes.iter().all(|p| !p.running()),
         "A's browser process tree must be reaped"
     );
     assert!(
@@ -214,7 +211,7 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     );
     delete(&c, &bid, 0).await;
     assert!(
-        all_pids.iter().all(|p| !support::alive(*p)),
+        all_processes.iter().all(|p| !p.running()),
         "Browser cleanup must not leave orphans"
     );
     assert!(descendants(gateway_pid).is_empty());
@@ -225,4 +222,7 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     a.close().await;
     b.close().await;
     pages.abort();
+    if let Some(h) = &mut owned {
+        h.stop();
+    }
 }

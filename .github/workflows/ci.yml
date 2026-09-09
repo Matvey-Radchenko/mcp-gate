@@ -1,6 +1,7 @@
 name: Native checks
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -10,7 +11,33 @@ concurrency:
   group: native-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  docker-intel:
+    name: Docker on macOS Intel
+    uses: ./.github/workflows/docker-intel.yml
+  docker-windows:
+    name: Docker on Windows
+    uses: ./.github/workflows/docker-windows.yml
+  launcher:
+    name: Shared npm launcher
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare one launcher for all native installations
+        run: |
+          node packaging/launcher.mjs
+          cd dist
+          npm pack ./mcp-gate --ignore-scripts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shared-npm-launcher
+          path: dist/mcp-gate-*.tgz
+          if-no-files-found: error
   native:
+    needs: launcher
     name: ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -35,6 +62,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Release script checks
+        run: |
+          for file in packaging/*.mjs npm/mcp-gate/bin/*.cjs tests/support/*.cjs; do node --check "$file"; done
+          node --test packaging/*.test.mjs
+      - name: Verify production Task Scheduler XML before compilation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/check-task-scheduler.ps1
       - name: Install Rust checks
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy && rustup default 1.95.0
       - uses: actions/cache@v4
@@ -48,6 +83,7 @@ jobs:
       - name: Repository harness
         run: cargo xtask check
       - name: Temporary user service lifecycle
+        timeout-minutes: 10
         run: cargo test --locked --all-features --test installer --test installer_recovery -- --ignored
       - name: Install pinned native clients
         run: npm install --global @openai/codex@0.153.4 opencode-ai@1.14.23 @anthropic-ai/claude-code@2.1.160
@@ -60,22 +96,60 @@ jobs:
             if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$(cygpath -w "$binary.cmd")"; fi
             echo "$key=$binary" >> "$GITHUB_ENV"
           done
-      - name: Real clients with local MCP and model fixtures
-        run: cargo test --locked --all-features --test native_codex --test native_clients -- --ignored
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned uv tool runner
+        run: python -m pip install uv==0.11.3
+      - name: Locate wrapper commands
+        run: |
+          for pair in NPX_BINARY:npx UVX_BINARY:uvx PYTHON_BINARY:python; do
+            key="${pair%%:*}"
+            name="${pair#*:}"
+            binary="$(command -v "$name")"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              if [[ -f "$binary.cmd" ]]; then binary="$binary.cmd";
+              elif [[ -f "$binary.exe" ]]; then binary="$binary.exe"; fi
+              binary="$(cygpath -w "$binary")"
+            fi
+            echo "$key=$binary" >> "$GITHUB_ENV"
+          done
+      - name: Install pinned browser MCP fixtures
+        run: |
+          npm ci --prefix runtime --ignore-scripts --no-audit --no-fund
+          npm install --prefix "$RUNNER_TEMP/mcp-gate-browser-fixtures" --ignore-scripts --no-audit --no-fund @playwright/mcp@0.0.80
+          node -e 'const fs = require("node:fs"); const path = require("node:path"); fs.appendFileSync(process.env.GITHUB_ENV, `DEVTOOLS_NODE=${process.execPath}\nPLAYWRIGHT_ENTRYPOINT=${path.join(process.env.RUNNER_TEMP, "mcp-gate-browser-fixtures/node_modules/@playwright/mcp/cli.js")}\n`);'
+      - name: Real clients, offline wrappers and browser lifecycle
+        timeout-minutes: 10
+        run: cargo test --locked --all-features --no-fail-fast --test native_codex --test native_clients --test wrappers --test native_chrome --test live_playwright -- --ignored
       - name: Build release binary
-        run: cargo build --locked --release --bin mcp-gate
+        run: node packaging/compile.mjs
+      - name: Verify standalone Windows runtime dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/check-windows-runtime.ps1
+      - name: Build unpublished version compatibility fixture
+        run: |
+          node packaging/compat-build.mjs
+          node -e 'const fs = require("node:fs"); const path = require("node:path"); const win = process.platform === "win32"; fs.appendFileSync(process.env.GITHUB_ENV, `MCP_GATE_RELEASE_BINARY=${path.resolve("target/release", win ? "mcp-gate.exe" : "mcp-gate")}\nMCP_GATE_COMPAT_BINARY=${path.resolve("target/compatibility", win ? "x86_64-pc-windows-msvc/release/mcp-gate.exe" : "release/mcp-gate")}\n`);'
+      - name: Actual release update and compatible downgrade
+        timeout-minutes: 5
+        run: cargo test --locked --all-features --test installer_versions -- --ignored
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-npm-launcher
+          path: dist
       - name: Prepare and inspect npm archives
         run: |
           node packaging/build.mjs
           cd dist
-          npm pack ./mcp-gate-${{ matrix.target }} --ignore-scripts
-          npm pack ./mcp-gate --ignore-scripts
+          npm pack ./mcp-gate-bin-${{ matrix.target }} --ignore-scripts
       - name: Clean archive installation
         run: npm exec -- node packaging/smoke.mjs
       - name: Download archive
         run: |
           version=$(node -p "require('./npm/mcp-gate/package.json').version")
-          cd dist/mcp-gate-${{ matrix.target }}
+          cd dist/mcp-gate-bin-${{ matrix.target }}
           tar -czf "../mcp-gate-$version-${{ matrix.target }}.tar.gz" bin LICENSE README.md
       - uses: actions/upload-artifact@v4
         with:
@@ -85,3 +159,28 @@ jobs:
             dist/*.tar.gz
             dist/*.sha256
           if-no-files-found: error
+      - name: Retain compilation cache after a failed acceptance check
+        if: failure()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-1.95.0-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+  archives:
+    name: Combined release archives
+    needs: native
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts
+      - name: Verify all seven archives and shared launcher identity
+        run: node packaging/checksums.mjs artifacts

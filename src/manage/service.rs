@@ -20,10 +20,44 @@ fn run(command: &mut Command) -> Result<()> {
     let output = command.output().context("Cannot run service manager")?;
     ensure!(
         output.status.success(),
-        "Service manager failed ({}); inspect status before retrying",
-        output.status
+        // These commands contain only owned service names/file paths, never
+        // backend arguments, environment values or authentication credentials.
+        "Service manager failed ({}): {} {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim(),
+        String::from_utf8_lossy(&output.stdout).trim()
     );
     Ok(())
+}
+
+/// Only service state/error codes are returned; command lines and environments
+/// from the service manager's verbose response never reach user diagnostics.
+pub fn diagnostics(record: &Record) -> String {
+    #[cfg(target_os = "macos")]
+    if let Ok(output) = Command::new("launchctl")
+        .args(["print", &format!("{}/{}", domain(), record.label)])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let fields: Vec<_> = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| {
+                line.starts_with("state =")
+                    || line.starts_with("last exit code =")
+                    || line.starts_with("last terminating signal =")
+                    || line.starts_with("runs =")
+            })
+            .collect();
+        if !fields.is_empty() {
+            return fields.join("; ");
+        }
+    }
+    if installed(record).unwrap_or(false) {
+        "service registered; runtime health unavailable".into()
+    } else {
+        "service is not registered".into()
+    }
 }
 pub fn register(record: &Record) -> Result<()> {
     #[cfg(target_os = "macos")]
@@ -55,11 +89,19 @@ pub fn register(record: &Record) -> Result<()> {
     #[cfg(windows)]
     {
         let task = record.release.join("task.xml");
-        super::store::atomic(&task, windows_xml(record)?.as_bytes())?;
+        // schtasks imports task definitions as Unicode XML. Match both its
+        // encoding declaration and byte-order marker, including non-ASCII paths.
+        let bytes: Vec<u8> = std::iter::once(0xfeff)
+            .chain(windows_xml(record)?.encode_utf16())
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        super::store::atomic(&task, &bytes)?;
         run(Command::new("schtasks.exe")
             .args(["/Create", "/TN", &record.label, "/XML"])
-            .arg(&task))?;
-        run(Command::new("schtasks.exe").args(["/Run", "/TN", &record.label]))?;
+            .arg(&task))
+        .context("Task Scheduler registration failed")?;
+        run(Command::new("schtasks.exe").args(["/Run", "/TN", &record.label]))
+            .context("Task Scheduler start failed")?;
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     anyhow::bail!("Unsupported service platform: {}", record.label);
@@ -69,9 +111,15 @@ pub fn unregister(record: &Record) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let target = format!("{}/{}", domain(), record.label);
-        if installed(record)? {
-            run(Command::new("launchctl").args(["bootout", &target]))?;
-        }
+        // Address our label even while launchd is transitioning it between
+        // registered/running states; a preceding query is not a stop operation.
+        let stopped = Command::new("launchctl")
+            .args(["bootout", &target])
+            .output()?;
+        ensure!(
+            stopped.status.success() || !installed(record)?,
+            "Service manager could not unregister the gateway"
+        );
         let path = agent_path(record)?;
         if path.exists() {
             std::fs::remove_file(path)?;
@@ -89,7 +137,15 @@ pub fn unregister(record: &Record) -> Result<()> {
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     anyhow::bail!("Unsupported service platform: {}", record.label);
-    Ok(())
+    // The registry can briefly retain an exited job after the stop command has
+    // returned. Replacement must not race that asynchronous removal.
+    for _ in 0..100 {
+        if !installed(record)? {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    anyhow::bail!("Service removal is still pending in the user service manager")
 }
 pub fn installed(record: &Record) -> Result<bool> {
     #[cfg(target_os = "macos")]
@@ -118,14 +174,10 @@ fn windows_xml(record: &Record) -> Result<String> {
     let xml = crate::install::xml;
     let binary = &record.binary;
     Ok(format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-<Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers>
-<Principals><Principal id="User"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
-<Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure></Settings>
-<Actions Context="User"><Exec><Command>{binary}</Command><Arguments>serve --config &quot;{config}&quot;</Arguments><WorkingDirectory>{cwd}</WorkingDirectory></Exec></Actions></Task>"#,
+        include_str!("windows-task.xml"),
         user = xml(user.trim()),
         binary = xml(&binary.to_string_lossy()),
-        config = xml(&record.config().to_string_lossy()),
+        arguments = xml(&format!("serve --config \"{}\"", record.config().display())),
         cwd = xml(&record.release.to_string_lossy())
     ))
 }

@@ -19,7 +19,7 @@ impl Installation {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("project space Юникод");
         fs::create_dir(&project).unwrap();
-        let project = project.canonicalize().unwrap();
+        let project = mcp_gate::platform::project_path(&project).unwrap();
         let personal = directory.path().join("claude");
         fs::create_dir(&personal).unwrap();
         let backend = directory.path().join(if cfg!(windows) {
@@ -29,7 +29,7 @@ impl Installation {
         });
         fs::copy(env!("CARGO_BIN_EXE_mock-backend"), &backend).unwrap();
         mcp_gate::platform::executable(&backend).unwrap();
-        let original = serde_json::to_vec(&json!({"projects":{project.to_str().unwrap():{
+        let original = serde_json::to_vec(&json!({"projects":{mcp_gate::clients::claude_project_key(&project).unwrap():{
             "mcpServers":{"fixture":{"type":"stdio","command":backend,"args":[],"env":{"FIXTURE_SECRET":"never-print-fixture-secret"}}},
             "allowedTools":[],"deniedTools":["mcp__fixture__danger"]}}})).unwrap();
         let settings = personal.join(".claude.json");
@@ -45,7 +45,10 @@ impl Installation {
         }
     }
     pub fn command(&self, action: &str) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_mcp-gate"));
+        self.command_with(std::path::Path::new(env!("CARGO_BIN_EXE_mcp-gate")), action)
+    }
+    pub fn command_with(&self, binary: &std::path::Path, action: &str) -> Command {
+        let mut c = Command::new(binary);
         c.arg(action)
             .arg("--json")
             .env("CLAUDE_CONFIG_DIR", self.settings.parent().unwrap())

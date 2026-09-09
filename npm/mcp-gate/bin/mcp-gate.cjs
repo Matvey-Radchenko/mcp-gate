@@ -8,7 +8,7 @@ if (!['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(target)) {
 }
 let binary;
 try {
-  binary = require.resolve(`mcp-gate-${target}/bin/mcp-gate${process.platform === 'win32' ? '.exe' : ''}`);
+  binary = require.resolve(`mcp-gate-bin-${target}/bin/mcp-gate${process.platform === 'win32' ? '.exe' : ''}`);
 } catch {
   console.error('The native mcp-gate package is missing. Reinstall with optional dependencies enabled, or download the matching GitHub Release binary.');
   process.exit(1);

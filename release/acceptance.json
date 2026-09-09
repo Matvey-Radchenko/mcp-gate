@@ -1,13 +1,89 @@
 {
   "version": "0.1.0",
   "checks": [
-    {"id":"native-matrix","status":"pending","evidence":[]},
-    {"id":"clean-service-login","status":"pending","evidence":[]},
-    {"id":"safe-update-downgrade","status":"pending","evidence":[]},
-    {"id":"failure-recovery-and-concurrent-edits","status":"pending","evidence":[]},
-    {"id":"multi-client-remove","status":"pending","evidence":[]},
-    {"id":"browser-isolation-artifacts-cleanup","status":"pending","evidence":[]},
-    {"id":"windows-cmd-npx-uvx-docker","status":"pending","evidence":[]},
-    {"id":"source-history-and-archive-inspection","status":"pending","evidence":[]}
+    {
+      "id": "native-matrix",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: all real clients, offline npx/uvx and Chrome DevTools passed on three platforms; macOS ARM64 passed through archive installation",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: all three native jobs passed with per-thread MCP startup readiness, real clients, wrappers, services and separately versioned releases",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965: all five jobs passed, including native local/global npm command execution and combined release archive verification",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34338316908: Windows and Intel passed; ARM64 exposed an immediate session-count assertion racing Codex inventory probe teardown before any tool call",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS jobs passed; repeated Codex inventory cleanup passed on all three platforms. Windows exposed browser termination, Claude first-query readiness and a Codex startup timeout",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587: all five jobs passed at ad36a4a, including Windows full Job Object drain, real clients, repeated inventory, browser identity/cleanup, release updates and combined archives",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008: ARM64 and Windows native suites passed; Intel exposed early gateway shutdown before the signal handler was guaranteed to be registered. Shutdown registration now precedes listener binding; local regression and full harness passed",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34351749071: all seven jobs passed at 66cb8e9, including all three native platforms, synchronous shutdown registration, real clients/browsers, release update/downgrade, native Intel/Windows Docker, clean archive installation and combined archive verification"
+      ]
+    },
+    {
+      "id": "clean-service-login",
+      "status": "pending",
+      "evidence": [
+        "release/arm64-reboot-2026-09-09.json: actual macOS 26.6.2 ARM64 reboot with an isolated fixture in an existing account; inspected production binary autostarted without setup/manual start, zero sessions/workers, unchanged persistent files and action timestamps, rejected old session, fresh empty backend state and verified fixture removal. This is not protected-folder or clean-account acceptance"
+      ],
+      "remaining": "Actual new OS login on macOS Intel and Windows x64 and macOS protected-folder access before/after the owner grants OS permission; registration/manual start in CI is insufficient. ARM64 existing-account scope and procedure: docs/native-acceptance.md"
+    },
+    {
+      "id": "safe-update-downgrade",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: busy update deferred and idle update retains credentials on three native platforms",
+        "2026-09-09 local macOS ARM64: installer_versions passed with production release builds 0.1.0 and unpublished 0.1.0-compat-fixture; busy deferral, upgrade, downgrade, state/permission retention and no replay",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: separately versioned production release update/downgrade passed on Windows and Intel; the same format-compatible fixture passed locally on ARM64",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: production release update and compatible downgrade passed on all three native platforms"
+      ]
+    },
+    {
+      "id": "failure-recovery-and-concurrent-edits",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: native management tests reject later edits and future formats; installer_recovery covers five installation and three update faults, plus unavailable previous backend"
+      ]
+    },
+    {
+      "id": "multi-client-remove",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: removing_one_client_keeps_other_connection_and_service passed on all three platforms"
+      ]
+    },
+    {
+      "id": "browser-isolation-artifacts-cleanup",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Chrome DevTools 1.8.0 with real Codex passed on three platforms",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829: Playwright 0.0.80 passed on both macOS platforms",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows Playwright with explicit 30-second fixture action timeout passed; all pinned browser scenarios have native evidence",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: Chrome DevTools 1.8.0 and Playwright 0.0.80 passed on all three native platforms with real Codex; independent browsers, retained artifacts and owned-process cleanup",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS browser suites passed; Windows Playwright observed a running PID after workers reached zero",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587: all five jobs passed at ad36a4a, including Windows full Job Object drain, real clients, repeated inventory, browser identity/cleanup, release updates and combined archives",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34351749071: pinned real client/browser checks passed again on all three native platforms with the synchronous shutdown registration change"
+      ]
+    },
+    {
+      "id": "windows-cmd-npx-uvx-docker",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Windows command/Job Object tests and real offline npx/uvx passed",
+        "2026-09-09 local macOS ARM64: real Docker Engine 28.3.2 ownership, independent connections, crash/no-replay and cleanup passed with the pinned Node image documented in docs/native-acceptance.md",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008: native macOS Intel Docker ownership/isolation/crash/no-replay/cleanup passed with Colima 0.10.3, Docker CLI 29.7.2, engine 29.5.2 and Node 24.20.0; the dedicated VM was removed successfully",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34349203746: Windows Docker CLI reached the WSL2 engine and pulled the pinned image; the endpoint disappeared after the owning CI step exited, before the gateway fixture started",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34350068276: the owned Windows/WSL engine stayed available, but the standalone Node preflight returned no output; this matches the documented Docker/WSL stdin-EOF limitation (docker/cli#6220), before any gateway test ran",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34351749071: native Windows Docker ownership/isolation/crash/no-replay/cleanup passed with Docker CLI 29.1.5, WSL 2.7.12, Ubuntu 24.04.4 engine 29.1.3 and Node 24.20.0; the owned distribution was removed successfully. The preflight holds stdin open as MCP does"
+      ]
+    },
+    {
+      "id": "source-history-and-archive-inspection",
+      "status": "passed",
+      "evidence": [
+        "release/source-audit.md: reviewed history, retained CI logs and artifacts before making source public",
+        "2026-09-09 Gitleaks scan through 008a5a2: 14 public commits, no leaks; current macOS ARM64 npm archives each contain four expected files and pass build-path inspection and clean installation",
+        "2026-09-09: six macOS archives from run 34328519829 and three Windows archives from run 34330557175 passed exact file lists, architecture, binary SHA-256 and known private-path/token signature inspection; cross-platform launcher tar identity was not established by those separate inspections",
+        "2026-09-09: final combined inspection of run 34333009537 found different launcher tar executable modes on Windows and macOS despite identical file contents; CI now prepares one common launcher for native installation tests and checks the combined archive set",
+        "release/source-audit.md: a624d6e public history (17 commits), 112 CI log entries and all nine archive copies (seven unique archives) inspected; expected files, native architectures, binary hashes and shared launcher identity confirmed; no known private-path/token signatures or test hooks found",
+        "release/source-audit.md: 66cb8e9 public history (24 commits), 135 CI log entries and all nine archive copies (seven unique archives) inspected; exact files, native architectures, binary hashes and shared launcher identity confirmed; no known private-path/token signatures or production test hooks found"
+      ]
+    }
   ]
 }

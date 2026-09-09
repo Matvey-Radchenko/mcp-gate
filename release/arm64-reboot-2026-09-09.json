@@ -1,0 +1,38 @@
+{
+  "format_version": 1,
+  "version": "0.1.0",
+  "source_commit": "66cb8e98579a887e2206de0fb51f63d711cfbef2",
+  "artifact_source": "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34351749071",
+  "archive_sha256": "ecec31672eb8c7cbe16a99d96fb2d7d8e5e254c9373e169fc2d0ecc72e6238ef",
+  "binary_sha256": "e382ad8150ec249316629f34354c72b08e957bdb79d49e9aa0f45b11077ae75b",
+  "backend_sha256": "b7d3727becc4784048117beb0073fc2eedbe97342f39bceedd3521434528f72d",
+  "platform": { "os": "macOS", "version": "26.6.2", "build": "25G83", "architecture": "arm64" },
+  "scope": "Isolated fixture in an existing user account; not a clean-account or protected-folder permission-grant test",
+  "client": { "name": "mcp-gate-reboot-acceptance", "version": "1", "transport": "Streamable HTTP" },
+  "backend": { "name": "mock", "version": "mock-1", "ownership": "session" },
+  "prepared_at": "2026-09-09T14:02:40.155Z",
+  "verified_at": "2026-09-09T14:15:19.906Z",
+  "removed_at": "2026-09-09T14:16:06.019Z",
+  "checks": {
+    "actual_boot_uuid_changed": true,
+    "manual_service_start_after_boot": false,
+    "active_sessions_before_reboot": 1,
+    "active_workers_before_reboot": 1,
+    "passive_sessions_after_login": 0,
+    "passive_workers_after_login": 0,
+    "passive_diagnostic_issues": [],
+    "persistent_binary_config_catalog_token_registry_client_project_plist_unchanged": true,
+    "backend_context_and_action_artifact_hashes_and_timestamps_unchanged_before_first_call": true,
+    "old_session_http_status": 404,
+    "fresh_backend_state": null,
+    "fixture_service_and_registration_removed": true,
+    "direct_configuration_and_permissions_restored": true,
+    "shared_project_file_byte_unchanged": true,
+    "retained_artifact_preserved": true
+  },
+  "evidence_handling": "Sanitized summary of local assertions; raw checkpoints, credentials and user paths remain private",
+  "remaining": [
+    "Actual login acceptance on macOS Intel and Windows x64",
+    "macOS protected-folder access before and after an owner-approved privacy grant"
+  ]
+}
