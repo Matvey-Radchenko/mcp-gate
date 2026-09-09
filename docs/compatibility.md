@@ -19,7 +19,7 @@ this evidence does not substitute for desktop Windows login acceptance.
 | Clean npm archive install | Passed locally and in CI | Passed in CI | Passed in CI |
 | Busy update deferred; idle update retains credentials | Passed locally and in CI | Passed in CI | Passed in CI |
 | Unavailable old backend permits later repair | Passed locally and in CI | Passed in CI | Passed in CI |
-| Actual update/downgrade between separately versioned release builds | Passed locally with unpublished compatibility fixture | Passed in CI | Passed in CI |
+| Actual update/downgrade between separately versioned release builds | Passed locally and in CI with unpublished compatibility fixture | Passed in CI | Passed in CI |
 | Autostart after an actual new login | Pending | Pending | Pending |
 | Background access to macOS protected folders | Separate OS permission needed; acceptance pending | Pending | N/A |
 | Chrome DevTools 1.8.0 browser independence and owned cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI |
@@ -29,21 +29,21 @@ this evidence does not substitute for desktop Windows login acceptance.
 | Docker container ownership and cleanup | Passed locally with Docker Engine 28.3.2 | Pending | Pending |
 
 The repository became public on 2026-09-09; GitHub Actions now starts successfully.
-[Run 34330557175](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175),
-commit `78d8d63`, passed the full Windows and Intel checks, including independently
-built release versions and clean archive installation. Windows DLL inspection
-confirmed that the executable does not need a separate Visual C++ redistributable.
-Windows Playwright uses the explicit fixture option `--timeout-action 30000`;
-setup does not alter user MCP commands or timeouts.
+[Run 34333009537](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537),
+commit `11d69b0`, passed all three native jobs, including real clients, browser
+ownership, services, independently built release versions and archive installation.
+Windows DLL inspection confirmed that the executable does not need a separate
+Visual C++ redistributable. Windows Playwright uses the explicit fixture option
+`--timeout-action 30000`; setup does not alter user commands or timeouts.
+The Codex fixture waits for each thread's MCP startup event and connected runtime
+status before checking inventory and connection counts.
 
-The ARM64 job of
-[run 34328519829](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829)
-passed through clean archive installation. The subsequent ARM64 browser checks
-exposed an inventory/startup race in the test client before browser tools ran.
-The fixture now waits for Codex's per-thread MCP startup event and verifies
-`runtimeStatus: connected` before counting connections. Local real-browser tests
-and three repeated real Codex shared/session checks passed; the final native
-matrix with that fixture change remains required.
+The combined archive inspection then found different executable tar modes in the
+Windows and macOS launcher packages, despite identical file contents. CI now builds
+one launcher archive and installs those exact bytes on every native platform, tests
+local/global command links, and verifies all seven archives together. That packaging
+change still requires its final native CI and artifact inspection; successful
+individual platform checks alone do not establish a consistent release archive set.
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.

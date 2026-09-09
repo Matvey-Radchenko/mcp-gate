@@ -3,12 +3,12 @@
   "checks": [
     {
       "id": "native-matrix",
-      "status": "pending",
+      "status": "passed",
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: all real clients, offline npx/uvx and Chrome DevTools passed on three platforms; macOS ARM64 passed through archive installation",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation"
-      ],
-      "remaining": "Final complete matrix with per-thread Codex startup readiness; the preceding ARM64 browser fixture raced inventory against connection startup"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: all three native jobs passed with per-thread MCP startup readiness, real clients, wrappers, services and separately versioned releases"
+      ]
     },
     {
       "id": "clean-service-login",
@@ -22,7 +22,8 @@
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: busy update deferred and idle update retains credentials on three native platforms",
         "2026-09-09 local macOS ARM64: installer_versions passed with production release builds 0.1.0 and unpublished 0.1.0-compat-fixture; busy deferral, upgrade, downgrade, state/permission retention and no replay",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: separately versioned production release update/downgrade passed on Windows and Intel; the same format-compatible fixture passed locally on ARM64"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: separately versioned production release update/downgrade passed on Windows and Intel; the same format-compatible fixture passed locally on ARM64",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: production release update and compatible downgrade passed on all three native platforms"
       ]
     },
     {
@@ -41,13 +42,13 @@
     },
     {
       "id": "browser-isolation-artifacts-cleanup",
-      "status": "pending",
+      "status": "passed",
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Chrome DevTools 1.8.0 with real Codex passed on three platforms",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829: Playwright 0.0.80 passed on both macOS platforms",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows Playwright with explicit 30-second fixture action timeout passed; all pinned browser scenarios have native evidence"
-      ],
-      "remaining": "Final complete matrix with the corrected per-thread startup wait, so connection counting no longer races client initialization"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows Playwright with explicit 30-second fixture action timeout passed; all pinned browser scenarios have native evidence",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: Chrome DevTools 1.8.0 and Playwright 0.0.80 passed on all three native platforms with real Codex; independent browsers, retained artifacts and owned-process cleanup"
+      ]
     },
     {
       "id": "windows-cmd-npx-uvx-docker",
@@ -64,9 +65,10 @@
       "evidence": [
         "release/source-audit.md: reviewed history, retained CI logs and artifacts before making source public",
         "2026-09-09 Gitleaks scan through 008a5a2: 14 public commits, no leaks; current macOS ARM64 npm archives each contain four expected files and pass build-path inspection and clean installation",
-        "2026-09-09: six macOS archives from run 34328519829 and three Windows archives from run 34330557175 passed exact file lists, architecture, binary SHA-256, identical launcher bytes and known private-path/token signature inspection"
+        "2026-09-09: six macOS archives from run 34328519829 and three Windows archives from run 34330557175 passed exact file lists, architecture, binary SHA-256 and known private-path/token signature inspection; cross-platform launcher tar identity was not established by those separate inspections",
+        "2026-09-09: final combined inspection of run 34333009537 found different launcher tar executable modes on Windows and macOS despite identical file contents; CI now prepares one common launcher for native installation tests and checks the combined archive set"
       ],
-      "remaining": "Inspect final native archives on all platforms and the final reviewed history; signature scanning is not an exhaustive secret audit"
+      "remaining": "Verify the shared-launcher change in native CI, inspect its final archives and reviewed history; signature scanning is not an exhaustive secret audit"
     }
   ]
 }

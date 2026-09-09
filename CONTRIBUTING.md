@@ -26,6 +26,12 @@ publication has a separate evidence gate.
 Build distributable binaries with `node packaging/compile.mjs`. It remaps home and
 workspace paths in compiled diagnostics before `packaging/build.mjs` stages the
 npm archives. A normal local Cargo build can retain the developer's absolute paths.
+CI prepares the common launcher once with `node packaging/launcher.mjs` and
+`npm pack ./dist/mcp-gate --ignore-scripts --pack-destination dist`. All three native
+jobs install that exact archive together with their native package. This avoids
+platform-specific tar permission differences. Clean installation checks exercise
+the actual local and global commands; a final combined job verifies all seven
+release archives, including identical launcher bytes across the three artifacts.
 Windows releases statically link the C runtime; CI inspects DLL imports to reject
 an accidental dependency on a separate Visual C++ redistributable. See
 [Rust linkage](https://doc.rust-lang.org/stable/reference/linkage.html).

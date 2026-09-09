@@ -11,7 +11,27 @@ concurrency:
   group: native-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  launcher:
+    name: Shared npm launcher
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare one launcher for all native installations
+        run: |
+          node packaging/launcher.mjs
+          cd dist
+          npm pack ./mcp-gate --ignore-scripts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shared-npm-launcher
+          path: dist/mcp-gate-*.tgz
+          if-no-files-found: error
   native:
+    needs: launcher
     name: ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -109,12 +129,15 @@ jobs:
       - name: Actual release update and compatible downgrade
         timeout-minutes: 5
         run: cargo test --locked --all-features --test installer_versions -- --ignored
+      - uses: actions/download-artifact@v4
+        with:
+          name: shared-npm-launcher
+          path: dist
       - name: Prepare and inspect npm archives
         run: |
           node packaging/build.mjs
           cd dist
           npm pack ./mcp-gate-bin-${{ matrix.target }} --ignore-scripts
-          npm pack ./mcp-gate --ignore-scripts
       - name: Clean archive installation
         run: npm exec -- node packaging/smoke.mjs
       - name: Download archive
@@ -139,3 +162,19 @@ jobs:
             ~/.cargo/git
             target
           key: rust-1.95.0-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+  archives:
+    name: Combined release archives
+    needs: native
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts
+      - name: Verify all seven archives and shared launcher identity
+        run: node packaging/checksums.mjs artifacts

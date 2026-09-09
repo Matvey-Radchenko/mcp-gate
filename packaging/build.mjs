@@ -26,13 +26,8 @@ writeFileSync(join(native, 'package.json'), JSON.stringify({
   license: manifest.license, repository: manifest.repository, os: [process.platform], cpu: [process.arch],
   files: ['bin/', 'LICENSE', 'README.md'],
 }, null, 2) + '\n');
-const launcher = join(output, 'mcp-gate');
-cpSync('npm/mcp-gate', launcher, { recursive: true });
-chmodSync(join(launcher, 'bin/mcp-gate.cjs'), 0o755);
-for (const folder of [native, launcher]) {
-  cpSync('LICENSE', join(folder, 'LICENSE'));
-  cpSync('npm/README.md', join(folder, 'README.md'));
-}
+cpSync('LICENSE', join(native, 'LICENSE'));
+cpSync('npm/README.md', join(native, 'README.md'));
 const hash = createHash('sha256').update(readFileSync(join(native, 'bin', executable))).digest('hex');
 writeFileSync(join(output, `${target}.sha256`), `${hash}  ${executable}\n`);
 console.log(`Prepared ${target} ${manifest.version}`);
