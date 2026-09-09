@@ -8,15 +8,21 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout},
 };
+#[cfg(windows)]
+#[path = "../../src/platform/windows_job.rs"]
+mod windows_job;
 
 pub(crate) struct NativeCodex {
     _home: TempDir,
     child: Child,
+    #[cfg(windows)]
+    job: windows_job::Job,
     input: Option<ChildStdin>,
     output: Lines<BufReader<ChildStdout>>,
     next: u64,
     request_timeout: Duration,
     ready_threads: BTreeSet<String>,
+    last_event: Option<String>,
     pub thread: String,
 }
 impl NativeCodex {
@@ -58,9 +64,20 @@ tool_timeout_sec = {tool_timeout}
         std::fs::write(home.path().join("config.toml"), text).unwrap();
         let binary =
             PathBuf::from(std::env::var_os("CODEX_BINARY").expect("Set app-bundled Codex"));
-        let mut check = std::process::Command::new(&binary);
-        check.env("CODEX_HOME", home.path()).current_dir(&cwd);
-        let checked = check.args(["mcp", "list", "--json"]).output().unwrap();
+        // Concurrent client startup must not block the async runtime while the
+        // other client's RPC deadline is already running.
+        let checked = tokio::time::timeout(
+            Duration::from_secs(60),
+            tokio::process::Command::new(&binary)
+                .env("CODEX_HOME", home.path())
+                .current_dir(&cwd)
+                .kill_on_drop(true)
+                .args(["mcp", "list", "--json"])
+                .output(),
+        )
+        .await
+        .expect("Native isolated config inventory timed out")
+        .unwrap();
         assert!(checked.status.success(), "Isolated configuration rejected");
         let inventory: Value = serde_json::from_slice(&checked.stdout).unwrap();
         let enabled: Vec<_> = inventory
@@ -75,26 +92,35 @@ tool_timeout_sec = {tool_timeout}
             vec!["gateway-probe"],
             "Refusing unrelated MCP startup"
         );
-        let mut child = tokio::process::Command::new(&binary)
+        let mut command = tokio::process::Command::new(&binary);
+        command
             .env("CODEX_HOME", home.path())
             .current_dir(&cwd)
             .args(["app-server", "--stdio"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+            .kill_on_drop(true);
+        // The Windows npm command is a .cmd -> Node -> Codex process tree.
+        // Killing only its shell would leave the actual test client running.
+        #[cfg(windows)]
+        command.creation_flags(0x00000004 | 0x08000000);
+        let mut child = command.spawn().unwrap();
+        #[cfg(windows)]
+        let job = windows_job::Job::assign(&child).unwrap();
         let input = child.stdin.take();
         let output = BufReader::new(child.stdout.take().unwrap()).lines();
         let mut client = Self {
             _home: home,
             child,
+            #[cfg(windows)]
+            job,
             input,
             output,
             next: 1,
             request_timeout: Duration::from_secs(tool_timeout.saturating_add(10)),
             ready_threads: BTreeSet::new(),
+            last_event: None,
             thread: String::new(),
         };
         client
@@ -147,7 +173,14 @@ tool_timeout_sec = {tool_timeout}
             }
         })
         .await
-        .expect("Native test RPC timed out")
+        .unwrap_or_else(|_| {
+            panic!(
+                "Native RPC {method} timed out; process={:?}, last event={:?}, ready threads={}",
+                self.child.try_wait(),
+                self.last_event,
+                self.ready_threads.len()
+            )
+        })
     }
     async fn next_message(&mut self) -> Value {
         let line = self
@@ -157,6 +190,10 @@ tool_timeout_sec = {tool_timeout}
             .unwrap()
             .expect("Native Codex exited while waiting for a response or startup event");
         let value: Value = serde_json::from_str(&line).unwrap();
+        if let Some(method) = value["method"].as_str() {
+            // Lifecycle metadata only: never emit payloads or helper output.
+            self.last_event = Some(method.to_owned());
+        }
         // No approval or model interactions are expected in this fixture.
         assert!(
             value.get("id").is_none() || value.get("method").is_none(),
@@ -231,8 +268,19 @@ tool_timeout_sec = {tool_timeout}
             .await
             .is_err()
         {
+            #[cfg(windows)]
+            self.job.terminate().unwrap();
+            #[cfg(not(windows))]
             self.child.kill().await.unwrap();
-            self.child.wait().await.unwrap();
+            tokio::time::timeout(Duration::from_secs(10), self.child.wait())
+                .await
+                .expect("Native client did not exit after termination")
+                .unwrap();
+        }
+        #[cfg(windows)]
+        {
+            self.job.terminate().unwrap();
+            self.job.wait_empty().await.unwrap();
         }
     }
 }

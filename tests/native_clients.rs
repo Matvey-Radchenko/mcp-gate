@@ -77,6 +77,9 @@ async fn claude_calls_mock_tool_via_gateway_using_private_headers_helper() {
             .env("ANTHROPIC_BASE_URL", base)
             .env("ANTHROPIC_API_KEY", "offline-fixture-only")
             .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+            // Since 2.1.142 the first model request can precede MCP readiness.
+            // This one-turn model fixture explicitly needs tools on its first query.
+            .env("MCP_CONNECTION_NONBLOCKING", "0")
             .arg("--debug-file")
             .arg(&debug)
             .args(["--bare", "--strict-mcp-config", "--mcp-config"])
@@ -109,6 +112,10 @@ async fn claude_calls_mock_tool_via_gateway_using_private_headers_helper() {
         fixture_mcp_diagnostics(&debug)
     );
     assert_eq!(fs::read_to_string(marker).unwrap(), "offline-model-fixture");
+    assert!(
+        String::from_utf8_lossy(&result.stdout).contains("fixture complete"),
+        "Claude did not return the fixture tool result to the local model"
+    );
     h.stop();
 }
 #[tokio::test]

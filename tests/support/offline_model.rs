@@ -5,13 +5,11 @@ fn event(kind: &str, value: Value) -> String {
     format!("event: {kind}\ndata: {value}\n\n")
 }
 async fn messages(Json(request): Json<Value>) -> impl IntoResponse {
-    let done = request["messages"].as_array().is_some_and(|messages| {
-        messages.iter().any(|m| {
-            m["content"]
-                .as_array()
-                .is_some_and(|content| content.iter().any(|c| c["type"] == "tool_result"))
-        })
-    });
+    ([("content-type", "text/event-stream")], response(&request))
+}
+fn response(request: &Value) -> String {
+    let result = tool_result(request);
+    let done = result.is_some_and(|result| result["is_error"] != true);
     let name = request["tools"].as_array().and_then(|tools| {
         tools.iter().find_map(|tool| {
             tool["name"]
@@ -25,7 +23,7 @@ async fn messages(Json(request): Json<Value>) -> impl IntoResponse {
         "id":"msg_fixture","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-5",
         "stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}),
     );
-    let tool = !done && name.is_some();
+    let tool = result.is_none() && name.is_some();
     if tool {
         body += &event(
             "content_block_start",
@@ -44,7 +42,10 @@ async fn messages(Json(request): Json<Value>) -> impl IntoResponse {
         );
         body += &event(
             "content_block_delta",
-            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"fixture complete"}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta",
+                "text":if done { "fixture complete" } else if result.is_some() {
+                    "fixture tool failed; no replay"
+                } else { "fixture MCP tool is not available" }}}),
         );
     }
     body += &event(
@@ -56,7 +57,45 @@ async fn messages(Json(request): Json<Value>) -> impl IntoResponse {
         json!({"type":"message_delta","delta":{"stop_reason":if tool {"tool_use"} else {"end_turn"},"stop_sequence":null},"usage":{"output_tokens":1}}),
     );
     body += &event("message_stop", json!({"type":"message_stop"}));
-    ([("content-type", "text/event-stream")], body)
+    body
+}
+fn tool_result(request: &Value) -> Option<&Value> {
+    for message in request["messages"].as_array()? {
+        if let Some(content) = message["content"].as_array()
+            && let Some(result) = content
+                .iter()
+                .find(|c| c["type"] == "tool_result" && c["tool_use_id"] == "tool_fixture")
+        {
+            return Some(result);
+        }
+    }
+    None
+}
+
+#[test]
+fn fixture_never_reports_success_without_its_tool_result() {
+    assert!(response(&json!({})).contains("fixture MCP tool is not available"));
+    for result in [
+        json!({"type":"tool_result","tool_use_id":"unrelated"}),
+        json!({"type":"tool_result","tool_use_id":"tool_fixture","is_error":true}),
+    ] {
+        assert!(
+            !response(&json!({"messages":[{"content":[result]}]})).contains("fixture complete")
+        );
+    }
+    assert!(
+        response(&json!({"messages":[{"content":[{
+            "type":"tool_result","tool_use_id":"tool_fixture","content":"fixture response"
+        }]}]}))
+        .contains("fixture complete")
+    );
+    let failed = response(
+        &json!({"tools":[{"name":"mcp__fixture__state"}],"messages":[{"content":[{
+            "type":"tool_result","tool_use_id":"tool_fixture","is_error":true
+        }]}]}),
+    );
+    assert!(failed.contains("fixture tool failed; no replay"));
+    assert!(!failed.contains("\"type\":\"tool_use\""));
 }
 pub async fn start() -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

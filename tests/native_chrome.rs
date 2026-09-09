@@ -5,11 +5,11 @@
 mod support;
 use mcp_gate::config::{Config, Ownership};
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 use support::{
-    Harness, alive,
+    Harness,
     native_codex::{NativeCodex, discovery_sessions},
-    process_tree::descendants,
+    process_tree::{descendants, track},
 };
 
 struct Probe {
@@ -153,10 +153,12 @@ async fn two_threads_real_browsers_and_lifecycle() {
     text(&c.call_in(&a, "list_pages", json!({})).await);
     probe.workers(1).await;
     let a_pids = descendants(gateway_pid);
+    let a_processes = track(&a_pids);
     text(&c.call_in(&b, "list_pages", json!({})).await);
     probe.workers(2).await;
     let all_pids = descendants(gateway_pid);
     assert!(a_pids.len() >= 3 && all_pids.len() > a_pids.len());
+    let mut all_processes = track(&all_pids);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());
     let pages = tokio::spawn(async move {
@@ -174,10 +176,7 @@ async fn two_threads_real_browsers_and_lifecycle() {
     });
     browser_isolation(&mut c, &a, &b, &url).await;
     // Include renderers created by navigation and the extra tab, not only startup PIDs.
-    let all_pids: BTreeSet<_> = all_pids
-        .into_iter()
-        .chain(descendants(gateway_pid))
-        .collect();
+    all_processes.extend(track(&descendants(gateway_pid)));
     tokio::time::sleep(Duration::from_secs(3)).await;
     let preserved = c.call_in(&a,"evaluate_script",json!({"pageId":1,"function":"() => window.name === 'native-A' && localStorage.getItem('gateway') === 'A' && document.cookie.includes('gateway=A')"})).await;
     assert!(
@@ -198,7 +197,7 @@ async fn two_threads_real_browsers_and_lifecycle() {
     probe.delete(first_ids.first().unwrap()).await;
     probe.workers(1).await;
     assert!(
-        a_pids.iter().all(|p| !alive(*p)),
+        a_processes.iter().all(|p| !p.running()),
         "A's original browser tree must be gone while B survives"
     );
     let surviving = c
@@ -213,7 +212,7 @@ async fn two_threads_real_browsers_and_lifecycle() {
     c.close().await;
     probe.workers(0).await;
     tokio::time::timeout(Duration::from_secs(15), async {
-        while all_pids.iter().any(|p| alive(*p)) {
+        while all_processes.iter().any(|p| p.running()) {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     })

@@ -9,9 +9,10 @@
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: all three native jobs passed with per-thread MCP startup readiness, real clients, wrappers, services and separately versioned releases",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965: all five jobs passed, including native local/global npm command execution and combined release archive verification",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34338316908: Windows and Intel passed; ARM64 exposed an immediate session-count assertion racing Codex inventory probe teardown before any tool call"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34338316908: Windows and Intel passed; ARM64 exposed an immediate session-count assertion racing Codex inventory probe teardown before any tool call",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS jobs passed; repeated Codex inventory cleanup passed on all three platforms. Windows exposed browser termination, Claude first-query readiness and a Codex startup timeout"
       ],
-      "remaining": "Native matrix with bounded inventory-probe cleanup and repeated real Codex discovery; persistent extra sessions must still fail and discovery must remain lazy"
+      "remaining": "Native verification of full Windows Job Object drain, process-identity cleanup assertions, explicit Claude fixture readiness and owned Codex client cleanup; startup RPC diagnostics retained"
     },
     {
       "id": "clean-service-login",
@@ -45,13 +46,15 @@
     },
     {
       "id": "browser-isolation-artifacts-cleanup",
-      "status": "passed",
+      "status": "pending",
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Chrome DevTools 1.8.0 with real Codex passed on three platforms",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829: Playwright 0.0.80 passed on both macOS platforms",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows Playwright with explicit 30-second fixture action timeout passed; all pinned browser scenarios have native evidence",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: Chrome DevTools 1.8.0 and Playwright 0.0.80 passed on all three native platforms with real Codex; independent browsers, retained artifacts and owned-process cleanup"
-      ]
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: Chrome DevTools 1.8.0 and Playwright 0.0.80 passed on all three native platforms with real Codex; independent browsers, retained artifacts and owned-process cleanup",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS browser suites passed; Windows Playwright observed a running PID after workers reached zero"
+      ],
+      "remaining": "Native Windows verification that the entire owned job exits before workers reaches zero; track process creation time to distinguish PID reuse"
     },
     {
       "id": "windows-cmd-npx-uvx-docker",

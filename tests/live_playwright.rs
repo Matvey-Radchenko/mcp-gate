@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 use support::{
     native_codex::{NativeCodex, discovery_sessions},
-    process_tree::descendants,
+    process_tree::{descendants, track},
 };
 
 async fn health(c: &Config) -> Value {
@@ -143,6 +143,7 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     assert_eq!(health(&c).await["workers"], 1);
     let a_pids = descendants(gateway_pid);
     assert!(a_pids.len() >= 3, "Expected Node and real browser children");
+    let a_processes = track(&a_pids);
     text(&b.call("browser_navigate", json!({"url":url})).await);
     assert_eq!(health(&c).await["workers"], 2);
     text(&a.call("browser_evaluate", json!({"function":"() => { window.name='A'; localStorage.setItem('fixture','A'); document.cookie='fixture=A;path=/'; document.body.style.background='red'; return 'ok'; }"})).await);
@@ -192,9 +193,10 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
         "Independent pages must produce different images"
     );
     let all_pids = descendants(gateway_pid);
+    let all_processes = track(&all_pids);
     delete(&c, &aid, 1).await;
     assert!(
-        a_pids.iter().all(|p| !support::alive(*p)),
+        a_processes.iter().all(|p| !p.running()),
         "A's browser process tree must be reaped"
     );
     assert!(
@@ -209,7 +211,7 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     );
     delete(&c, &bid, 0).await;
     assert!(
-        all_pids.iter().all(|p| !support::alive(*p)),
+        all_processes.iter().all(|p| !p.running()),
         "Browser cleanup must not leave orphans"
     );
     assert!(descendants(gateway_pid).is_empty());
