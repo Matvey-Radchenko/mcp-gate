@@ -24,6 +24,9 @@ clean npm archive installation; publication has a separate evidence gate.
 Build distributable binaries with `node packaging/compile.mjs`. It remaps home and
 workspace paths in compiled diagnostics before `packaging/build.mjs` stages the
 npm archives. A normal local Cargo build can retain the developer's absolute paths.
+Windows releases statically link the C runtime; CI inspects DLL imports to reject
+an accidental dependency on a separate Visual C++ redistributable. See
+[Rust linkage](https://doc.rust-lang.org/stable/reference/linkage.html).
 CI also checks JavaScript syntax and runs `node --test packaging/*.test.mjs` for
 the release scripts, including rejection of conflicting published archive bytes.
 

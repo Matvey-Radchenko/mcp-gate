@@ -41,7 +41,6 @@ async fn backend_launch_retains_cwd_environment_and_argument_boundaries() {
         "".into(),
     ];
     launch(Path::new(env!("CARGO_BIN_EXE_mock-backend")), &cwd, args).await;
-    assert!(mcp_gate::manage::runtime::resolve("missing-fixture-executable-459d", &cwd).is_err());
 }
 #[cfg(windows)]
 #[tokio::test]

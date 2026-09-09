@@ -1,14 +1,11 @@
-use super::store::Record;
+use super::{launch, store::Record};
 use crate::{
     clients::{Binding, Candidate, Client},
     config::Config,
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 
 pub fn http() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
@@ -47,29 +44,6 @@ pub async fn maintenance(record: &Record, enable: bool) -> Result<bool> {
     Ok(true)
 }
 
-pub fn resolve(command: &str, cwd: &Path) -> Result<PathBuf> {
-    let p = Path::new(command);
-    if p.is_absolute() || p.components().count() > 1 {
-        let path = cwd.join(p);
-        ensure!(path.is_file(), "MCP executable not found");
-        return Ok(path);
-    }
-    let paths = std::env::var_os("PATH").context("PATH is not set")?;
-    for directory in std::env::split_paths(&paths) {
-        for suffix in if cfg!(windows) {
-            vec!["", ".exe", ".cmd", ".bat"]
-        } else {
-            vec![""]
-        } {
-            let path = directory.join(format!("{command}{suffix}"));
-            if path.is_file() {
-                return Ok(path);
-            }
-        }
-    }
-    anyhow::bail!("MCP executable is not on PATH; install it first")
-}
-
 pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     let id = uuid::Uuid::new_v4().to_string();
     let release = root.join("releases").join(&id);
@@ -81,14 +55,8 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     let port = std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?
         .port();
-    let command = resolve(
-        candidate
-            .command
-            .first()
-            .context("Missing backend command")?,
-        &candidate.cwd,
-    )?;
-    let environment = launch_environment(candidate)?;
+    let environment = launch::environment(candidate)?;
+    let command = launch::executable(candidate, &environment)?;
     let mode = candidate
         .recipe
         .as_ref()
@@ -222,7 +190,7 @@ pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result
         }
         let config = Config::load(&record.config())?;
         if config.ownership != crate::config::Ownership::Shared
-            || config.backend.env != launch_environment(candidate)?
+            || config.backend.env != launch::environment(candidate)?
             || config.backend.working_directory.as_ref() != Some(&candidate.cwd)
             || config.backend.env_files != candidate.env_files
             || config.backend.inherit_env != candidate.inherit_env
@@ -237,40 +205,6 @@ pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result
         return Ok(Some(reused));
     }
     Ok(None)
-}
-
-fn launch_environment(candidate: &Candidate) -> Result<std::collections::BTreeMap<String, String>> {
-    let mut values = std::collections::BTreeMap::new();
-    for name in [
-        "PATH",
-        "HOME",
-        "TMPDIR",
-        "LANG",
-        "LC_ALL",
-        "SystemRoot",
-        "USERPROFILE",
-        "TEMP",
-        "TMP",
-        "COMSPEC",
-        "PATHEXT",
-    ] {
-        if let Ok(value) = std::env::var(name) {
-            values.insert(name.into(), value);
-        }
-    }
-    for name in &candidate.inherit_env {
-        let value = std::env::var(name).with_context(|| {
-            format!(
-                "Declared inherited environment variable {name} is unavailable in the setup process"
-            )
-        })?;
-        values.insert(name.clone(), value);
-    }
-    values.extend(candidate.env.clone());
-    for key in candidate.env_files.keys() {
-        values.remove(key);
-    }
-    Ok(values)
 }
 
 /// A live maintenance barrier or the daemon's exclusive state lock prevents a

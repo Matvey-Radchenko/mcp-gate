@@ -98,6 +98,10 @@ jobs:
         run: cargo test --locked --all-features --no-fail-fast --test native_codex --test native_clients --test wrappers --test native_chrome --test live_playwright -- --ignored
       - name: Build release binary
         run: node packaging/compile.mjs
+      - name: Verify standalone Windows runtime dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/check-windows-runtime.ps1
       - name: Prepare and inspect npm archives
         run: |
           node packaging/build.mjs

@@ -1,3 +1,4 @@
+pub mod launch;
 mod preview;
 mod recovery;
 mod remove;

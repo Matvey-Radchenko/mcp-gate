@@ -70,7 +70,7 @@ async fn npx_preserves_original_stdio_launch_context() {
         .prefix("npx space Юникод ")
         .tempdir()
         .unwrap();
-    // cmd.exe does not accept Rust's verbatim-prefix cwd as a normal local path.
+    // Use setup's native path spelling for npm, without Rust's verbatim prefix.
     let root = mcp_gate::platform::project_path(dir.path()).unwrap();
     let package = root.join("package");
     fs::create_dir(&package).unwrap();

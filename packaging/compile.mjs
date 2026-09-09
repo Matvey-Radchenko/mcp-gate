@@ -1,5 +1,5 @@
 // Keep developer home/workspace paths out of distributed panic locations.
-import { realpathSync } from 'node:fs';
+import { copyFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
@@ -20,9 +20,20 @@ for (const [source, destination] of mappings) {
     }
   }
 }
-const result = spawnSync('cargo', ['build', '--locked', '--release', '--bin', 'mcp-gate'], {
+const args = ['build', '--locked', '--release', '--bin', 'mcp-gate', '--target-dir', 'target'];
+if (process.platform === 'win32') {
+  // Keep the downloadable executable independent of a separately installed VC
+  // redistributable. --target keeps this flag away from host proc-macro DLLs.
+  args.push('--target', 'x86_64-pc-windows-msvc');
+  flags.push('-Ctarget-feature=+crt-static');
+}
+const result = spawnSync('cargo', args, {
   stdio: 'inherit',
   env: { ...process.env, CARGO_ENCODED_RUSTFLAGS: flags.join('\x1f') },
 });
 if (result.error) console.error(result.error.message);
+if (result.status === 0 && process.platform === 'win32') {
+  mkdirSync('target/release', { recursive: true });
+  copyFileSync('target/x86_64-pc-windows-msvc/release/mcp-gate.exe', 'target/release/mcp-gate.exe');
+}
 process.exitCode = result.status ?? 1;
