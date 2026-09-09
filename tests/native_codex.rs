@@ -23,6 +23,7 @@ async fn native_codex_shared_and_session_calls() {
         let (mut a, mut b) = tokio::join!(NativeCodex::start(&h), NativeCodex::start(&h));
         let (ac, bc) = tokio::join!(a.discover(), b.discover());
         assert_eq!((ac, bc), (4, 4));
+        assert_eq!(h.health().await.unwrap()["sessions"], 2);
         h.workers(0).await;
         let (av, bv) = tokio::join!(
             a.call("state", json!({"value":"A"})),

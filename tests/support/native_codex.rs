@@ -2,7 +2,7 @@
 //! a model turn or copies account credentials. Only the fixture MCP is enabled.
 use super::Harness;
 use serde_json::{Value, json};
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{collections::BTreeSet, path::PathBuf, process::Stdio, time::Duration};
 use tempfile::TempDir;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
@@ -16,6 +16,7 @@ pub(crate) struct NativeCodex {
     output: Lines<BufReader<ChildStdout>>,
     next: u64,
     request_timeout: Duration,
+    ready_threads: BTreeSet<String>,
     pub thread: String,
 }
 impl NativeCodex {
@@ -93,6 +94,7 @@ tool_timeout_sec = {tool_timeout}
             output,
             next: 1,
             request_timeout: Duration::from_secs(tool_timeout.saturating_add(10)),
+            ready_threads: BTreeSet::new(),
             thread: String::new(),
         };
         client
@@ -132,8 +134,8 @@ tool_timeout_sec = {tool_timeout}
         self.send(json!({"id":id,"method":method,"params":params}))
             .await;
         tokio::time::timeout(self.request_timeout, async {
-            while let Some(line) = self.output.next_line().await.unwrap() {
-                let value: Value = serde_json::from_str(&line).unwrap();
+            loop {
+                let value = self.next_message().await;
                 if value["id"] == id && value.get("method").is_none() {
                     assert!(
                         value.get("error").is_none(),
@@ -142,20 +144,58 @@ tool_timeout_sec = {tool_timeout}
                     );
                     return value["result"].clone();
                 }
-                // No approval or model interactions are expected in this fixture.
-                if value.get("id").is_some() && value.get("method").is_some() {
-                    panic!("Unexpected native client request: {}", value["method"]);
-                }
             }
-            panic!("Native Codex exited during {method}")
         })
         .await
         .expect("Native test RPC timed out")
+    }
+    async fn next_message(&mut self) -> Value {
+        let line = self
+            .output
+            .next_line()
+            .await
+            .unwrap()
+            .expect("Native Codex exited while waiting for a response or startup event");
+        let value: Value = serde_json::from_str(&line).unwrap();
+        // No approval or model interactions are expected in this fixture.
+        assert!(
+            value.get("id").is_none() || value.get("method").is_none(),
+            "Unexpected native client request: {}",
+            value["method"]
+        );
+        if value["method"] == "mcpServer/startupStatus/updated"
+            && value["params"]["name"] == "gateway-probe"
+            && let Some(thread) = value["params"]["threadId"].as_str()
+        {
+            match value["params"]["status"].as_str().unwrap() {
+                "ready" => {
+                    self.ready_threads.insert(thread.into());
+                }
+                "starting" => {
+                    self.ready_threads.remove(thread);
+                }
+                status => panic!("Fixture MCP startup ended with status {status}"),
+            }
+        }
+        value
+    }
+    async fn ready(&mut self, thread: &str) {
+        // thread/start and inventory alone do not establish that the thread's
+        // transport is ready. Wait for its documented startup event before
+        // querying runtime inventory or counting gateway sessions.
+        tokio::time::timeout(self.request_timeout, async {
+            while !self.ready_threads.contains(thread) {
+                self.next_message().await;
+            }
+        })
+        .await
+        .expect("Native thread MCP startup did not complete");
     }
     pub async fn discover(&mut self) -> usize {
         self.discover_in(&self.thread.clone()).await
     }
     pub async fn discover_in(&mut self, thread: &str) -> usize {
+        self.ready(thread).await;
         let result = self
             .request(
                 "mcpServerStatus/list",
@@ -165,6 +205,7 @@ tool_timeout_sec = {tool_timeout}
             .await;
         let data = result["data"].as_array().unwrap();
         let server = data.iter().find(|v| v["name"] == "gateway-probe").unwrap();
+        assert_eq!(server["runtimeStatus"], "connected");
         server["tools"]
             .as_object()
             .map(|v| v.len())

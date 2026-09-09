@@ -2,6 +2,8 @@
 
 The npm 0.1.0 release is **not published**. This table is evidence, not a promise
 that all combinations have been tested. Update it only from completed checks.
+CI uses macOS 15 and Windows Server 2025. Local ARM64 checks use macOS 26.6.2;
+this evidence does not substitute for desktop Windows login acceptance.
 
 | Check | macOS ARM64 | macOS Intel | Windows x64 |
 | --- | --- | --- | --- |
@@ -14,32 +16,34 @@ that all combinations have been tested. Update it only from completed checks.
 | OpenCode 1.14.23 tool call with a local model | Passed locally and in CI | Passed in CI | Passed in CI |
 | Claude Code 2.1.160 local model tool call and headers helper | Passed locally and in CI | Passed in CI | Passed in CI |
 | Claude local MCP precedence and physical project key | Passed with real CLI; shared file unchanged | Passed in CI | Passed in CI |
-| Clean npm archive install | Passed locally and in CI | Passed in CI | Pending |
+| Clean npm archive install | Passed locally and in CI | Passed in CI | Passed in CI |
 | Busy update deferred; idle update retains credentials | Passed locally and in CI | Passed in CI | Passed in CI |
 | Unavailable old backend permits later repair | Passed locally and in CI | Passed in CI | Passed in CI |
-| Actual update/downgrade between separately versioned release builds | Passed locally with unpublished compatibility fixture | Pending | Pending |
+| Actual update/downgrade between separately versioned release builds | Passed locally with unpublished compatibility fixture | Passed in CI | Passed in CI |
 | Autostart after an actual new login | Pending | Pending | Pending |
 | Background access to macOS protected folders | Separate OS permission needed; acceptance pending | Pending | N/A |
 | Chrome DevTools 1.8.0 browser independence and owned cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI |
-| Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally and in CI with Codex | Passed in CI | Pending |
+| Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI with explicit 30s action timeout |
 | Real npx/uvx with local offline fixture packages | Passed locally and in CI | Passed in CI | Passed in CI |
 | Windows Job Objects and native private-file ACLs | N/A | N/A | Passed in native ordinary tests |
 | Docker container ownership and cleanup | Passed locally with Docker Engine 28.3.2 | Pending | Pending |
 
 The repository became public on 2026-09-09; GitHub Actions now starts successfully.
-[Run 34326027974](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974),
-commit `89f0f8d`, passed all three pinned clients, offline npx/uvx and Chrome
-DevTools on all platforms. Its macOS ARM64 job also passed Playwright and clean
-archive installation. Intel Playwright exceeded the fixture client's cold-start
-deadline; Windows Playwright lacked inherited standard Chrome installation paths.
+[Run 34330557175](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175),
+commit `78d8d63`, passed the full Windows and Intel checks, including independently
+built release versions and clean archive installation. Windows DLL inspection
+confirmed that the executable does not need a separate Visual C++ redistributable.
+Windows Playwright uses the explicit fixture option `--timeout-action 30000`;
+setup does not alter user MCP commands or timeouts.
 
-Commit `01a19f2` restores those Windows environment paths and makes the fixture
-client's deadline cover gateway startup, queueing and execution. In
-[run 34328519829](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829),
-both macOS platforms passed through archive installation. Windows reached real Playwright
-navigation and isolation, then exceeded Playwright's own 5-second screenshot
-deadline. Its fixture now explicitly uses `--timeout-action 30000`; this change
-requires native verification and does not alter user MCP commands or timeouts.
+The ARM64 job of
+[run 34328519829](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829)
+passed through clean archive installation. The subsequent ARM64 browser checks
+exposed an inventory/startup race in the test client before browser tools ran.
+The fixture now waits for Codex's per-thread MCP startup event and verifies
+`runtimeStatus: connected` before counting connections. Local real-browser tests
+and three repeated real Codex shared/session checks passed; the final native
+matrix with that fixture change remains required.
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.

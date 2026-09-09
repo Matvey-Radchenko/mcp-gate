@@ -1,13 +1,72 @@
 {
   "version": "0.1.0",
   "checks": [
-    {"id":"native-matrix","status":"pending","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: all real clients, offline npx/uvx and Chrome DevTools passed on three platforms; macOS ARM64 passed through archive installation"],"remaining":"Complete final matrix including Windows standalone CRT inspection, Playwright and native archives; GitHub billing no longer blocks runners"},
-    {"id":"clean-service-login","status":"pending","evidence":[],"remaining":"Actual new OS login on all three platforms; registration/manual start in CI is insufficient. Procedure: docs/native-acceptance.md"},
-    {"id":"safe-update-downgrade","status":"pending","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: busy update deferred and idle update retains credentials on three native platforms","2026-09-09 local macOS ARM64: installer_versions passed with production release builds 0.1.0 and unpublished 0.1.0-compat-fixture; busy deferral, upgrade, downgrade, state/permission retention and no replay"],"remaining":"Run separately versioned release-binary acceptance on macOS Intel and Windows; fixture uses the same reviewed 0.1.0 formats, not a historical public release"},
-    {"id":"failure-recovery-and-concurrent-edits","status":"passed","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: native management tests reject later edits and future formats; installer_recovery covers five installation and three update faults, plus unavailable previous backend"]},
-    {"id":"multi-client-remove","status":"passed","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: removing_one_client_keeps_other_connection_and_service passed on all three platforms"]},
-    {"id":"browser-isolation-artifacts-cleanup","status":"pending","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Chrome DevTools 1.8.0 with real Codex passed on three platforms","https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829: Playwright 0.0.80 passed on both macOS platforms"],"remaining":"Complete Windows Playwright acceptance; its fixture explicitly raises its own action timeout to 30 seconds. Automatic recipes remain restricted to reviewed macOS ARM64 conditions"},
-    {"id":"windows-cmd-npx-uvx-docker","status":"pending","evidence":["https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Windows command/Job Object tests and real offline npx/uvx passed","2026-09-09 local macOS ARM64: real Docker Engine 28.3.2 ownership, independent connections, crash/no-replay and cleanup passed with the pinned Node image documented in docs/native-acceptance.md"],"remaining":"Actual Docker ownership/cleanup acceptance on Windows and macOS Intel"},
-    {"id":"source-history-and-archive-inspection","status":"pending","evidence":["release/source-audit.md: reviewed history, retained CI logs and artifacts before making source public","2026-09-09 Gitleaks scan through 008a5a2: 14 public commits, no leaks; current macOS ARM64 npm archives each contain four expected files and pass build-path inspection and clean installation"],"remaining":"Inspect final native archives on all platforms and the final reviewed history; signature scanning is not an exhaustive secret audit"}
+    {
+      "id": "native-matrix",
+      "status": "pending",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: all real clients, offline npx/uvx and Chrome DevTools passed on three platforms; macOS ARM64 passed through archive installation",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation"
+      ],
+      "remaining": "Final complete matrix with per-thread Codex startup readiness; the preceding ARM64 browser fixture raced inventory against connection startup"
+    },
+    {
+      "id": "clean-service-login",
+      "status": "pending",
+      "evidence": [],
+      "remaining": "Actual new OS login on all three platforms; registration/manual start in CI is insufficient. Procedure: docs/native-acceptance.md"
+    },
+    {
+      "id": "safe-update-downgrade",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: busy update deferred and idle update retains credentials on three native platforms",
+        "2026-09-09 local macOS ARM64: installer_versions passed with production release builds 0.1.0 and unpublished 0.1.0-compat-fixture; busy deferral, upgrade, downgrade, state/permission retention and no replay",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: separately versioned production release update/downgrade passed on Windows and Intel; the same format-compatible fixture passed locally on ARM64"
+      ]
+    },
+    {
+      "id": "failure-recovery-and-concurrent-edits",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: native management tests reject later edits and future formats; installer_recovery covers five installation and three update faults, plus unavailable previous backend"
+      ]
+    },
+    {
+      "id": "multi-client-remove",
+      "status": "passed",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34276867311: removing_one_client_keeps_other_connection_and_service passed on all three platforms"
+      ]
+    },
+    {
+      "id": "browser-isolation-artifacts-cleanup",
+      "status": "pending",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Chrome DevTools 1.8.0 with real Codex passed on three platforms",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829: Playwright 0.0.80 passed on both macOS platforms",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows Playwright with explicit 30-second fixture action timeout passed; all pinned browser scenarios have native evidence"
+      ],
+      "remaining": "Final complete matrix with the corrected per-thread startup wait, so connection counting no longer races client initialization"
+    },
+    {
+      "id": "windows-cmd-npx-uvx-docker",
+      "status": "pending",
+      "evidence": [
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Windows command/Job Object tests and real offline npx/uvx passed",
+        "2026-09-09 local macOS ARM64: real Docker Engine 28.3.2 ownership, independent connections, crash/no-replay and cleanup passed with the pinned Node image documented in docs/native-acceptance.md"
+      ],
+      "remaining": "Actual Docker ownership/cleanup acceptance on Windows and macOS Intel"
+    },
+    {
+      "id": "source-history-and-archive-inspection",
+      "status": "pending",
+      "evidence": [
+        "release/source-audit.md: reviewed history, retained CI logs and artifacts before making source public",
+        "2026-09-09 Gitleaks scan through 008a5a2: 14 public commits, no leaks; current macOS ARM64 npm archives each contain four expected files and pass build-path inspection and clean installation",
+        "2026-09-09: six macOS archives from run 34328519829 and three Windows archives from run 34330557175 passed exact file lists, architecture, binary SHA-256, identical launcher bytes and known private-path/token signature inspection"
+      ],
+      "remaining": "Inspect final native archives on all platforms and the final reviewed history; signature scanning is not an exhaustive secret audit"
+    }
   ]
 }
