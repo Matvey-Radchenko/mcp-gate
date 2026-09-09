@@ -3,7 +3,7 @@
   "checks": [
     {
       "id": "native-matrix",
-      "status": "passed",
+      "status": "pending",
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: all real clients, offline npx/uvx and Chrome DevTools passed on three platforms; macOS ARM64 passed through archive installation",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation",
@@ -11,8 +11,10 @@
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965: all five jobs passed, including native local/global npm command execution and combined release archive verification",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34338316908: Windows and Intel passed; ARM64 exposed an immediate session-count assertion racing Codex inventory probe teardown before any tool call",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS jobs passed; repeated Codex inventory cleanup passed on all three platforms. Windows exposed browser termination, Claude first-query readiness and a Codex startup timeout",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587: all five jobs passed at ad36a4a, including Windows full Job Object drain, real clients, repeated inventory, browser identity/cleanup, release updates and combined archives"
-      ]
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587: all five jobs passed at ad36a4a, including Windows full Job Object drain, real clients, repeated inventory, browser identity/cleanup, release updates and combined archives",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008: ARM64 and Windows native suites passed; Intel exposed early gateway shutdown before the signal handler was guaranteed to be registered. Shutdown registration now precedes listener binding; local regression and full harness passed"
+      ],
+      "remaining": "Repeat all native suites with synchronous shutdown registration; the preceding successful matrix is historical evidence, not proof for this change"
     },
     {
       "id": "clean-service-login",
@@ -61,9 +63,10 @@
       "status": "pending",
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Windows command/Job Object tests and real offline npx/uvx passed",
-        "2026-09-09 local macOS ARM64: real Docker Engine 28.3.2 ownership, independent connections, crash/no-replay and cleanup passed with the pinned Node image documented in docs/native-acceptance.md"
+        "2026-09-09 local macOS ARM64: real Docker Engine 28.3.2 ownership, independent connections, crash/no-replay and cleanup passed with the pinned Node image documented in docs/native-acceptance.md",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008: native macOS Intel Docker ownership/isolation/crash/no-replay/cleanup passed with Colima 0.10.3, Docker CLI 29.7.2, engine 29.5.2 and Node 24.20.0; the dedicated VM was removed successfully"
       ],
-      "remaining": "Actual native Docker jobs: Intel with isolated Colima, Windows docker.exe with owned WSL2 Linux engine; configured workflows are not yet passing evidence"
+      "remaining": "Native Windows Docker fixture: WSL2 and pinned Ubuntu booted, but the detached engine did not become reachable. Host-owned foreground WSL engine invocation awaits native verification"
     },
     {
       "id": "source-history-and-archive-inspection",

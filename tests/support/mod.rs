@@ -226,11 +226,22 @@ MOCK_CANCEL_FILE = {cancel_file:?}
     pub(crate) fn stop(&mut self) {
         #[cfg(unix)]
         {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "Gateway exited before fixture stop: {status}"
+                );
+                return;
+            }
             // SAFETY: the harness owns this unreaped child; kill takes only scalars.
             unsafe {
                 libc::kill(self.child.id() as i32, libc::SIGTERM);
             }
-            assert!(self.child.wait().unwrap().success());
+            let status = self.child.wait().unwrap();
+            assert!(
+                status.success(),
+                "Gateway failed during fixture stop: {status}"
+            );
         }
         #[cfg(windows)]
         {

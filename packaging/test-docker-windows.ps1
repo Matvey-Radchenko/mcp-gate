@@ -43,20 +43,31 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq docker.io
-service docker stop
-nohup dockerd --host unix:///var/run/docker.sock --host tcp://127.0.0.1:23759 --tls=false > /tmp/mcp-gate-dockerd.log 2>&1 < /dev/null &
+systemctl stop docker.service docker.socket
 '@
 $setup = $setup.Replace("`r`n", "`n")
 & wsl.exe --distribution $name --user root --exec sh -lc $setup
 if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare the owned Docker engine' }
+# Keep a foreground WSL invocation alive across steps. Detaching a Linux shell
+# job does not establish a durable host-owned engine/localhost-forwarding lifetime.
+$stderr = Join-Path $root 'dockerd-stderr.log'
+$stdout = Join-Path $root 'dockerd-stdout.log'
+$engine = Start-Process -FilePath 'wsl.exe' -ArgumentList @(
+    '--distribution', $name, '--user', 'root', '--exec', 'dockerd',
+    '--host=unix:///var/run/docker.sock', '--host=tcp://127.0.0.1:23759', '--tls=false'
+) -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
 # Only WSL localhost forwarding is used. Never expose this CI-only daemon on a LAN interface.
 $deadline = [DateTime]::UtcNow.AddSeconds(120)
 do {
+    if ($engine.HasExited) {
+        Get-Content -LiteralPath $stderr -Tail 40
+        throw "Owned Docker engine exited with status $($engine.ExitCode)"
+    }
     try {
         if ((Invoke-RestMethod -Uri 'http://127.0.0.1:23759/_ping' -TimeoutSec 2) -eq 'OK') { break }
     } catch { }
     if ([DateTime]::UtcNow -ge $deadline) {
-        & wsl.exe --distribution $name --user root --exec tail -40 /tmp/mcp-gate-dockerd.log
+        Get-Content -LiteralPath $stderr -Tail 40
         throw 'WSL Docker engine did not become reachable through localhost'
     }
     Start-Sleep -Milliseconds 250

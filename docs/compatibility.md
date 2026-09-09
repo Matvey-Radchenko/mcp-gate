@@ -26,7 +26,7 @@ this evidence does not substitute for desktop Windows login acceptance.
 | Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI with full job drain and process identity checks |
 | Real npx/uvx with local offline fixture packages | Passed locally and in CI | Passed in CI | Passed in CI |
 | Windows Job Objects and native private-file ACLs | N/A | N/A | Passed in native ordinary tests |
-| Docker container ownership and cleanup | Passed locally with Docker Engine 28.3.2 | Pending | Pending |
+| Docker container ownership and cleanup | Passed locally with Docker Engine 28.3.2 | Passed in CI with Colima 0.10.3 / engine 29.5.2 | Pending |
 
 The repository became public on 2026-09-09; GitHub Actions now starts successfully.
 [Run 34333009537](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537),
@@ -80,8 +80,22 @@ another client is waiting for an RPC response. The exact cause of the preceding
 Codex startup timeout remains unproven.
 [Run 34344798587](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587),
 commit `ad36a4a`, subsequently passed all five jobs, including these corrections on
-all three native platforms and the combined release archives. Docker on Intel and
-Windows is being added as separate native CI jobs; those checks remain pending.
+all three native platforms and the combined release archives.
+
+[Run 34347193008](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008)
+passed the additional native Intel Docker job and both ARM64/Windows native suites.
+Intel's ordinary tests exposed an early shutdown failure. Previously, the async
+signal function installed handlers only on its first poll, after the HTTP task
+could already return readiness. Both Unix shutdown handlers and the Windows
+console handler are now installed before binding the listener. A regression sends
+signals before polling the receiver; it and the local full harness passed. The
+native matrix must be repeated for this production change.
+
+The Windows Docker runner successfully booted WSL2 and installed the engine in the
+pinned Ubuntu distribution, but its detached Linux daemon did not become reachable.
+The CI fixture now retains a foreground, host-owned WSL engine invocation and
+stops both the distribution's Docker service and socket first. This infrastructure
+correction still requires native verification.
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.

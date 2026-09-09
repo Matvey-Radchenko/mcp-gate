@@ -195,6 +195,7 @@ async fn serve(config: PathBuf) -> Result<()> {
         .open(config.state_dir.join("gateway.lock"))?;
     lock.try_lock_exclusive()
         .context("Another gateway owns this state directory")?;
+    let mut shutdown = mcp_gate::platform::ShutdownSignal::new()?;
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .context("Cannot bind gateway listener")?;
@@ -209,7 +210,7 @@ async fn serve(config: PathBuf) -> Result<()> {
             .await
     });
     let failure = tokio::select! {
-        signal = mcp_gate::platform::shutdown_signal() => { signal?; None },
+        signal = shutdown.wait() => { signal?; None },
         result = &mut http => Some(result),
     };
     tracing::info!("gateway shutting down");

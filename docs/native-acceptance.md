@@ -52,20 +52,24 @@ and environment. Its Linux container does not establish Linux host support.
 
 Local macOS ARM64 evidence on 2026-09-09 used Docker Engine 28.3.2 and Node 24.20.0
 from `node@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf`.
-The test passed; Windows and macOS Intel Docker acceptance remains outstanding.
+The test passed; Windows Docker acceptance remains outstanding.
 
 The native CI matrix also calls `docker-intel.yml`, using a dedicated Colima
 profile on `macos-15-intel`, the same reviewed Node image and the same Docker test.
 The profile explicitly shares the temporary fixture directory and is removed after
 the check. Versions are printed in the run log; this is test infrastructure, not
 software installed by mcp-gate. Colima's own [native macOS integration](https://github.com/abiosoft/colima/blob/main/.github/workflows/macos-integration.yml)
-uses this runner. A configured workflow is not passing evidence: Intel remains
-pending until this job completes successfully.
+uses this runner. [Run 34347193008](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34347193008)
+passed this check on Intel with Colima 0.10.3, Docker CLI 29.7.2, engine 29.5.2 and
+Node 24.20.0. The independent-container baseline survived; both owned containers
+and the dedicated VM were cleaned up.
 
 `docker-windows.yml` exercises the native Windows gateway and `docker.exe` with a
 dedicated WSL2 Linux engine. Its Ubuntu 24.04.4 image is checksum-pinned to the
 [Microsoft WSL registry](https://github.com/microsoft/WSL/blob/master/distributions/DistributionInfo.json).
-Only a new, recorded CI distribution is created and removed. The engine listens
+Only a new, recorded CI distribution is created and removed. A foreground WSL
+invocation owns the engine lifetime, with captured startup errors; the distribution's
+Docker service and socket are stopped before this dedicated engine starts. The engine listens
 on WSL loopback and is reached through [localhost forwarding](https://learn.microsoft.com/en-us/windows/wsl/networking).
 The Node fixture is passed as literal `node -e` arguments in this test: standalone
 Docker CLI with WSL does not provide Docker Desktop's Windows drive translation.
