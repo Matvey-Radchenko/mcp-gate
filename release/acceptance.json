@@ -7,7 +7,8 @@
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: all real clients, offline npx/uvx and Chrome DevTools passed on three platforms; macOS ARM64 passed through archive installation",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: all three native jobs passed with per-thread MCP startup readiness, real clients, wrappers, services and separately versioned releases"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: all three native jobs passed with per-thread MCP startup readiness, real clients, wrappers, services and separately versioned releases",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965: all five jobs passed, including native local/global npm command execution and combined release archive verification"
       ]
     },
     {
@@ -61,14 +62,14 @@
     },
     {
       "id": "source-history-and-archive-inspection",
-      "status": "pending",
+      "status": "passed",
       "evidence": [
         "release/source-audit.md: reviewed history, retained CI logs and artifacts before making source public",
         "2026-09-09 Gitleaks scan through 008a5a2: 14 public commits, no leaks; current macOS ARM64 npm archives each contain four expected files and pass build-path inspection and clean installation",
         "2026-09-09: six macOS archives from run 34328519829 and three Windows archives from run 34330557175 passed exact file lists, architecture, binary SHA-256 and known private-path/token signature inspection; cross-platform launcher tar identity was not established by those separate inspections",
-        "2026-09-09: final combined inspection of run 34333009537 found different launcher tar executable modes on Windows and macOS despite identical file contents; CI now prepares one common launcher for native installation tests and checks the combined archive set"
-      ],
-      "remaining": "Verify the shared-launcher change in native CI, inspect its final archives and reviewed history; signature scanning is not an exhaustive secret audit"
+        "2026-09-09: final combined inspection of run 34333009537 found different launcher tar executable modes on Windows and macOS despite identical file contents; CI now prepares one common launcher for native installation tests and checks the combined archive set",
+        "release/source-audit.md: a624d6e public history (17 commits), 112 CI log entries and all nine archive copies (seven unique archives) inspected; expected files, native architectures, binary hashes and shared launcher identity confirmed; no known private-path/token signatures or test hooks found"
+      ]
     }
   ]
 }

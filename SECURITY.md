@@ -14,9 +14,11 @@ This is a trusted-user, local-only service, not a multi-tenant browser sandbox.
 - HTTP session IDs prevent accidental state collisions, not hostile access between
   clients sharing the same token. Such clients can see session IDs via authenticated
   status and explicitly close those sessions.
-- Browser user-data directories are temporary and per backend. No existing personal
-  Chrome is attached. Upstream roots restrictions are forwarded, not bypassed with
-  `--allow-unrestricted-paths`.
+- Reviewed browser recipes and the legacy Chrome profile use independent browsers
+  with temporary per-backend user-data directories; they do not attach personal
+  Chrome. Other configured commands retain their own browser/profile behavior:
+  `session` isolates the MCP connection, not arbitrary external resources. Upstream
+  roots restrictions are forwarded, not bypassed with `--allow-unrestricted-paths`.
 - Managed stdio backends receive the recorded launch context, a small base process
   environment, and explicitly configured values or private file references. The
   legacy Chrome profile inherits its launch environment except NODE_OPTIONS and

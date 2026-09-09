@@ -25,3 +25,28 @@ history are not reachable from the published refs.
 
 These are inspection results, not a guarantee that pattern matching detects every
 secret. Final release artifacts and subsequent commits still require inspection.
+
+## Follow-up acceptance and archive inspection
+
+The 17 public commits through `a624d6e5db32ccfdad2736d7b17a8d87adfd5269` were
+scanned with Gitleaks on 2026-09-09; no leaks were found. The original private
+snapshot remains separate from the public history. The subsequent documentation
+update records this evidence and clarifies that arbitrary configured commands
+retain their own browser/profile behavior; it changes no release executable.
+
+[Run 34336206965](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965)
+passed all three native jobs, the shared-launcher build and combined-archive check.
+All nine downloaded archive copies (seven unique archives) were inspected:
+expected regular files only, native ARM64/x64/AMD64 architectures, binary SHA-256,
+identical common launcher archives with executable mode, and no production test
+root/failure hooks or unpublished compatibility binary. Known private home paths,
+private-key blocks and npm/GitHub/API token signatures were absent. The 112 CI log
+entries, approximately 737 KB of text, also passed the Gitleaks scan.
+
+The earlier separate-platform archives had identical launcher file contents but
+different executable tar modes on Windows and macOS. They are not the release
+candidate. The common archive is now built once and its exact bytes are installed
+on every native runner. Local/global command execution and the final combined
+checksum check passed. A fresh release run still requires inspection of its own
+artifacts before owner approval; this audit does not waive login, Docker or npm
+owner-authorization gates.

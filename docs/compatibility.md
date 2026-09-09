@@ -38,12 +38,14 @@ Visual C++ redistributable. Windows Playwright uses the explicit fixture option
 The Codex fixture waits for each thread's MCP startup event and connected runtime
 status before checking inventory and connection counts.
 
-The combined archive inspection then found different executable tar modes in the
-Windows and macOS launcher packages, despite identical file contents. CI now builds
-one launcher archive and installs those exact bytes on every native platform, tests
-local/global command links, and verifies all seven archives together. That packaging
-change still requires its final native CI and artifact inspection; successful
-individual platform checks alone do not establish a consistent release archive set.
+[Run 34336206965](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965),
+commit `a624d6e`, also passed all five jobs. It builds one common npm launcher and
+installs those exact bytes on all three native platforms, exercises actual local
+and global command links, and verifies all seven release archives together.
+The downloaded archives passed file-list, native-architecture, binary-hash,
+shared-launcher and known private-path/token signature inspection. This resolves
+the different launcher tar permissions found in the earlier separate-platform
+builds. See the [source and archive audit](../release/source-audit.md).
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.
