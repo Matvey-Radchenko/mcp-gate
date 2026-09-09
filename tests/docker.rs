@@ -132,15 +132,29 @@ async fn owned_containers_are_lazy_isolated_and_never_replayed_after_crash() {
         "--pull=never".into(),
         "--label".into(),
         docker.label.clone(),
-        "--mount".into(),
-        format!(
-            "type=bind,src={},dst=/fixture.cjs,readonly",
-            script.display()
-        ),
-        image,
-        "node".into(),
-        "/fixture.cjs".into(),
     ];
+    if std::env::var_os("MCP_GATE_DOCKER_INLINE_FIXTURE").is_some() {
+        // The standalone Windows CLI talking to our WSL daemon has no Docker
+        // Desktop drive translator. Inline code avoids pretending it can mount
+        // C:\ paths in that Linux VM; this also checks literal argv forwarding.
+        backend.args.extend([
+            image,
+            "node".into(),
+            "-e".into(),
+            include_str!("support/docker_backend.cjs").into(),
+        ]);
+    } else {
+        backend.args.extend([
+            "--mount".into(),
+            format!(
+                "type=bind,src={},dst=/fixture.cjs,readonly",
+                script.display()
+            ),
+            image,
+            "node".into(),
+            "/fixture.cjs".into(),
+        ]);
+    }
     for name in [
         "DOCKER_HOST",
         "DOCKER_CONTEXT",

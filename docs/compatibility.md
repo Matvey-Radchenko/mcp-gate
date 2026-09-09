@@ -11,10 +11,10 @@ this evidence does not substitute for desktop Windows login acceptance.
 | User service setup, repeat setup, remove | Passed locally and in CI | Passed in CI | Passed in CI |
 | Recovery at five installation and three update stages | Passed locally and in CI | Passed in CI | Passed in CI |
 | Remove one client while retaining another | Passed locally and in CI | Passed in CI | Passed in CI |
-| Codex 0.153.4 shared/session tool calls | Passed locally and in CI | Passed in CI | Earlier pass; latest startup timeout under investigation |
+| Codex 0.153.4 shared/session tool calls | Passed locally and in CI | Passed in CI | Passed in CI with owned client cleanup and asynchronous preflight |
 | OpenCode 1.14.23 private header and lazy discovery | Passed locally and in CI | Passed in CI | Passed in CI |
 | OpenCode 1.14.23 tool call with a local model | Passed locally and in CI | Passed in CI | Passed in CI |
-| Claude Code 2.1.160 local model tool call and headers helper | Passed locally and in CI | Passed in CI | First-query readiness fix awaiting native verification |
+| Claude Code 2.1.160 local model tool call and headers helper | Passed locally and in CI | Passed in CI | Passed in CI with explicit fixture startup wait |
 | Claude local MCP precedence and physical project key | Passed with real CLI; shared file unchanged | Passed in CI | Passed in CI |
 | Clean npm archive install | Passed locally and in CI | Passed in CI | Passed in CI |
 | Busy update deferred; idle update retains credentials | Passed locally and in CI | Passed in CI | Passed in CI |
@@ -23,7 +23,7 @@ this evidence does not substitute for desktop Windows login acceptance.
 | Autostart after an actual new login | Pending | Pending | Pending |
 | Background access to macOS protected folders | Separate OS permission needed; acceptance pending | Pending | N/A |
 | Chrome DevTools 1.8.0 browser independence and owned cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI |
-| Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally and in CI with Codex | Passed in CI | Job cleanup fix awaiting native verification |
+| Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI with full job drain and process identity checks |
 | Real npx/uvx with local offline fixture packages | Passed locally and in CI | Passed in CI | Passed in CI |
 | Windows Job Objects and native private-file ACLs | N/A | N/A | Passed in native ordinary tests |
 | Docker container ownership and cleanup | Passed locally with Docker Engine 28.3.2 | Pending | Pending |
@@ -76,8 +76,12 @@ The Codex fixture owns its Windows npm shell/Node/native process tree in a Job
 Object, so forced fixture shutdown also cleans up descendants. Startup timeouts
 include the RPC method and last lifecycle event. Its configuration preflight now
 awaits the subprocess with a deadline, instead of blocking the async runtime while
-another client is waiting for an RPC response. These changes need a new native
-matrix; the exact cause of the preceding Codex startup timeout remains unproven.
+another client is waiting for an RPC response. The exact cause of the preceding
+Codex startup timeout remains unproven.
+[Run 34344798587](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587),
+commit `ad36a4a`, subsequently passed all five jobs, including these corrections on
+all three native platforms and the combined release archives. Docker on Intel and
+Windows is being added as separate native CI jobs; those checks remain pending.
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.

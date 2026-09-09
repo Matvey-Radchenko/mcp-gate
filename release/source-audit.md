@@ -50,3 +50,14 @@ on every native runner. Local/global command execution and the final combined
 checksum check passed. A fresh release run still requires inspection of its own
 artifacts before owner approval; this audit does not waive login, Docker or npm
 owner-authorization gates.
+
+## Windows cleanup candidate
+
+[Run 34344798587](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587)
+passed all five jobs at `ad36a4af72714a6c5f9b793fbaacebdc64b54e98`.
+Its 20 reachable public commits and 112 CI log entries (approximately 742 KB)
+passed Gitleaks inspection. All nine archive copies were inspected again with the
+same exact file-list, architecture, binary-hash, shared-launcher and private-path
+checks; no findings or production test hooks were found. Seven unique archives
+passed the combined SHA-256 check. This candidate includes the Windows process
+termination fix; it is still unpublished and does not waive the remaining gates.

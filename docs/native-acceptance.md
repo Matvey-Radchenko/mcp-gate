@@ -54,6 +54,24 @@ Local macOS ARM64 evidence on 2026-09-09 used Docker Engine 28.3.2 and Node 24.2
 from `node@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf`.
 The test passed; Windows and macOS Intel Docker acceptance remains outstanding.
 
+The native CI matrix also calls `docker-intel.yml`, using a dedicated Colima
+profile on `macos-15-intel`, the same reviewed Node image and the same Docker test.
+The profile explicitly shares the temporary fixture directory and is removed after
+the check. Versions are printed in the run log; this is test infrastructure, not
+software installed by mcp-gate. Colima's own [native macOS integration](https://github.com/abiosoft/colima/blob/main/.github/workflows/macos-integration.yml)
+uses this runner. A configured workflow is not passing evidence: Intel remains
+pending until this job completes successfully.
+
+`docker-windows.yml` exercises the native Windows gateway and `docker.exe` with a
+dedicated WSL2 Linux engine. Its Ubuntu 24.04.4 image is checksum-pinned to the
+[Microsoft WSL registry](https://github.com/microsoft/WSL/blob/master/distributions/DistributionInfo.json).
+Only a new, recorded CI distribution is created and removed. The engine listens
+on WSL loopback and is reached through [localhost forwarding](https://learn.microsoft.com/en-us/windows/wsl/networking).
+The Node fixture is passed as literal `node -e` arguments in this test: standalone
+Docker CLI with WSL does not provide Docker Desktop's Windows drive translation.
+This checks native process/argument/container ownership, not Desktop installation
+or bind-mount translation. It remains pending until that native job passes.
+
 ## Actual login and protected-folder acceptance
 
 This gate requires an actual new OS login on each supported platform. A workflow

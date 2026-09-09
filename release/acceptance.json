@@ -3,16 +3,16 @@
   "checks": [
     {
       "id": "native-matrix",
-      "status": "pending",
+      "status": "passed",
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: all real clients, offline npx/uvx and Chrome DevTools passed on three platforms; macOS ARM64 passed through archive installation",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: all three native jobs passed with per-thread MCP startup readiness, real clients, wrappers, services and separately versioned releases",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965: all five jobs passed, including native local/global npm command execution and combined release archive verification",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34338316908: Windows and Intel passed; ARM64 exposed an immediate session-count assertion racing Codex inventory probe teardown before any tool call",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS jobs passed; repeated Codex inventory cleanup passed on all three platforms. Windows exposed browser termination, Claude first-query readiness and a Codex startup timeout"
-      ],
-      "remaining": "Native verification of full Windows Job Object drain, process-identity cleanup assertions, explicit Claude fixture readiness and owned Codex client cleanup; startup RPC diagnostics retained"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS jobs passed; repeated Codex inventory cleanup passed on all three platforms. Windows exposed browser termination, Claude first-query readiness and a Codex startup timeout",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587: all five jobs passed at ad36a4a, including Windows full Job Object drain, real clients, repeated inventory, browser identity/cleanup, release updates and combined archives"
+      ]
     },
     {
       "id": "clean-service-login",
@@ -46,15 +46,15 @@
     },
     {
       "id": "browser-isolation-artifacts-cleanup",
-      "status": "pending",
+      "status": "passed",
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Chrome DevTools 1.8.0 with real Codex passed on three platforms",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34328519829: Playwright 0.0.80 passed on both macOS platforms",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows Playwright with explicit 30-second fixture action timeout passed; all pinned browser scenarios have native evidence",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: Chrome DevTools 1.8.0 and Playwright 0.0.80 passed on all three native platforms with real Codex; independent browsers, retained artifacts and owned-process cleanup",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS browser suites passed; Windows Playwright observed a running PID after workers reached zero"
-      ],
-      "remaining": "Native Windows verification that the entire owned job exits before workers reaches zero; track process creation time to distinguish PID reuse"
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34341463558: both macOS browser suites passed; Windows Playwright observed a running PID after workers reached zero",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34344798587: all five jobs passed at ad36a4a, including Windows full Job Object drain, real clients, repeated inventory, browser identity/cleanup, release updates and combined archives"
+      ]
     },
     {
       "id": "windows-cmd-npx-uvx-docker",
@@ -63,7 +63,7 @@
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: Windows command/Job Object tests and real offline npx/uvx passed",
         "2026-09-09 local macOS ARM64: real Docker Engine 28.3.2 ownership, independent connections, crash/no-replay and cleanup passed with the pinned Node image documented in docs/native-acceptance.md"
       ],
-      "remaining": "Actual Docker ownership/cleanup acceptance on Windows and macOS Intel"
+      "remaining": "Actual native Docker jobs: Intel with isolated Colima, Windows docker.exe with owned WSL2 Linux engine; configured workflows are not yet passing evidence"
     },
     {
       "id": "source-history-and-archive-inspection",
