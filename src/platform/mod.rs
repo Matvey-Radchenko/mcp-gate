@@ -7,6 +7,31 @@ mod windows_acl;
 #[cfg(windows)]
 pub(crate) mod windows_job;
 
+/// OS paths and locale needed by ordinary runtimes and installed-program lookup.
+/// Application credentials remain explicit backend configuration.
+pub const BASE_ENVIRONMENT: &[&str] = &[
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "SystemRoot",
+    "SystemDrive",
+    "WINDIR",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "TEMP",
+    "TMP",
+    "COMSPEC",
+    "PATHEXT",
+];
+
 pub async fn shutdown_signal() -> std::io::Result<()> {
     #[cfg(unix)]
     {

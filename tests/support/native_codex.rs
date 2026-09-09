@@ -15,6 +15,7 @@ pub(crate) struct NativeCodex {
     input: Option<ChildStdin>,
     output: Lines<BufReader<ChildStdout>>,
     next: u64,
+    request_timeout: Duration,
     pub thread: String,
 }
 impl NativeCodex {
@@ -27,6 +28,12 @@ impl NativeCodex {
         let cwd = home.path().join("work");
         std::fs::create_dir(&cwd).unwrap();
         let config = mcp_gate::config::Config::load(config_path).unwrap();
+        // A first tool call includes lazy backend/browser startup. Do not have
+        // this fixture cancel it before the gateway's own configured deadlines.
+        let tool_timeout = config
+            .startup_timeout_seconds
+            .saturating_add(config.queue_timeout_seconds)
+            .saturating_add(config.call_timeout_seconds);
         let helper = mcp_gate::manage::runtime::headers_helper(
             std::path::Path::new(env!("CARGO_BIN_EXE_mcp-gate")),
             config_path,
@@ -43,7 +50,7 @@ requires_openai_auth = false
 url = {url:?}
 http_headers_helper = {helper:?}
 startup_timeout_sec = 20
-tool_timeout_sec = 20
+tool_timeout_sec = {tool_timeout}
 "#,
             url = format!("http://{}/mcp", config.listen)
         );
@@ -85,6 +92,7 @@ tool_timeout_sec = 20
             input,
             output,
             next: 1,
+            request_timeout: Duration::from_secs(tool_timeout.saturating_add(10)),
             thread: String::new(),
         };
         client
@@ -123,7 +131,7 @@ tool_timeout_sec = 20
         self.next += 1;
         self.send(json!({"id":id,"method":method,"params":params}))
             .await;
-        tokio::time::timeout(Duration::from_secs(60), async {
+        tokio::time::timeout(self.request_timeout, async {
             while let Some(line) = self.output.next_line().await.unwrap() {
                 let value: Value = serde_json::from_str(&line).unwrap();
                 if value["id"] == id && value.get("method").is_none() {

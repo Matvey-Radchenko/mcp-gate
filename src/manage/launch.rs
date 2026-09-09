@@ -13,19 +13,7 @@ fn key(name: &str) -> String {
 
 pub fn environment(candidate: &Candidate) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
-    for name in [
-        "PATH",
-        "HOME",
-        "TMPDIR",
-        "LANG",
-        "LC_ALL",
-        "SystemRoot",
-        "USERPROFILE",
-        "TEMP",
-        "TMP",
-        "COMSPEC",
-        "PATHEXT",
-    ] {
+    for &name in crate::platform::BASE_ENVIRONMENT {
         if let Ok(value) = std::env::var(name) {
             values.insert(key(name), value);
         }

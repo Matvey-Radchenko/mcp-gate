@@ -33,6 +33,7 @@ pub struct Container {
     executable: PathBuf,
     cidfile: PathBuf,
     environment: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    working_directory: Option<PathBuf>,
 }
 impl Container {
     pub fn prepare(command: &mut Command, directory: &Path) -> Result<Self> {
@@ -44,6 +45,7 @@ impl Container {
         validate(&args)?;
         let cidfile = directory.join(format!("container-{}.cid", uuid::Uuid::new_v4()));
         let executable = PathBuf::from(command.as_std().get_program());
+        let working_directory = command.as_std().get_current_dir().map(Path::to_path_buf);
         let environment = command
             .as_std()
             .get_envs()
@@ -69,23 +71,20 @@ impl Container {
             executable,
             cidfile,
             environment,
+            working_directory,
         })
     }
     pub async fn stop(self) {
         if let Ok(value) = std::fs::read_to_string(&self.cidfile) {
             let id = value.trim();
             if id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()) {
-                let mut command = Command::new(&self.executable);
+                let mut command = self.command();
                 command
                     .args(["stop", "--time", "5", id])
-                    .env_clear()
-                    .envs(self.environment)
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .kill_on_drop(true);
+                    .stdout(std::process::Stdio::null());
                 let stopped = tokio::time::timeout(Duration::from_secs(12), command.status()).await;
-                if !matches!(stopped,Ok(Ok(status)) if status.success()) {
+                if !matches!(stopped,Ok(Ok(status)) if status.success()) && !self.removed(id).await
+                {
                     tracing::error!(
                         "Owned Docker container cleanup failed; private cidfile retained for recovery"
                     );
@@ -94,5 +93,36 @@ impl Container {
             }
         }
         let _ = std::fs::remove_file(self.cidfile);
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        command
+            .env_clear()
+            .envs(self.environment.iter().map(|(key, value)| (key, value)))
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+        if let Some(cwd) = &self.working_directory {
+            command.current_dir(cwd);
+        }
+        command
+    }
+
+    async fn removed(&self, id: &str) -> bool {
+        // --rm may delete a crashed container before cleanup reaches `stop`.
+        // Only a successful query in the same Docker context proves its absence;
+        // daemon/connection failures keep the private recovery file intact.
+        let mut command = self.command();
+        command.args([
+            "ps",
+            "--all",
+            "--quiet",
+            "--no-trunc",
+            "--filter",
+            &format!("id={id}"),
+        ]);
+        matches!(tokio::time::timeout(Duration::from_secs(5), command.output()).await,
+            Ok(Ok(output)) if output.status.success() && output.stdout.iter().all(u8::is_ascii_whitespace))
     }
 }
