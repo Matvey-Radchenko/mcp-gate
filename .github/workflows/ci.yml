@@ -70,8 +70,6 @@ jobs:
             if [[ "$RUNNER_OS" == "Windows" ]]; then binary="$(cygpath -w "$binary.cmd")"; fi
             echo "$key=$binary" >> "$GITHUB_ENV"
           done
-      - name: Real clients with local MCP and model fixtures
-        run: cargo test --locked --all-features --no-fail-fast --test native_codex --test native_clients -- --ignored
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
@@ -90,8 +88,14 @@ jobs:
             fi
             echo "$key=$binary" >> "$GITHUB_ENV"
           done
-      - name: Offline npx and uvx launch contexts
-        run: cargo test --locked --all-features --test wrappers -- --ignored
+      - name: Install pinned browser MCP fixtures
+        run: |
+          npm ci --prefix runtime --ignore-scripts --no-audit --no-fund
+          npm install --prefix "$RUNNER_TEMP/mcp-gate-browser-fixtures" --ignore-scripts --no-audit --no-fund @playwright/mcp@0.0.80
+          node -e 'const fs = require("node:fs"); const path = require("node:path"); fs.appendFileSync(process.env.GITHUB_ENV, `DEVTOOLS_NODE=${process.execPath}\nPLAYWRIGHT_ENTRYPOINT=${path.join(process.env.RUNNER_TEMP, "mcp-gate-browser-fixtures/node_modules/@playwright/mcp/cli.js")}\n`);'
+      - name: Real clients, offline wrappers and browser lifecycle
+        timeout-minutes: 10
+        run: cargo test --locked --all-features --no-fail-fast --test native_codex --test native_clients --test wrappers --test native_chrome --test live_playwright -- --ignored
       - name: Build release binary
         run: node packaging/compile.mjs
       - name: Prepare and inspect npm archives

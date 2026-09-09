@@ -1,6 +1,11 @@
 #![cfg(feature = "test-backend")]
 use serde_json::json;
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::Path,
+    process::{Command, Stdio},
+    time::Duration,
+};
 
 async fn discover(command: &Path, args: Vec<String>, root: &Path, cwd: &Path) {
     let output = root.join("context.json");
@@ -13,7 +18,29 @@ async fn discover(command: &Path, args: Vec<String>, root: &Path, cwd: &Path) {
                 "UV_CACHE_DIR":root.join("uv-cache"),"UV_NO_PROGRESS":"1","npm_config_update_notifier":"false"}}
     })).unwrap();
     c.validate().unwrap();
-    mcp_gate::install::discover_and_pin(&mut c).await.unwrap();
+    if let Err(error) = mcp_gate::install::discover_and_pin(&mut c).await {
+        // This dependency-free fixture cannot execute a user action. A bounded
+        // EOF invocation reveals wrapper startup errors hidden by runtime logs.
+        let diagnostic = tokio::time::timeout(
+            Duration::from_secs(15),
+            c.backend
+                .command()
+                .unwrap()
+                .current_dir(cwd)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await;
+        let stderr = diagnostic
+            .ok()
+            .and_then(Result::ok)
+            .map(|out| String::from_utf8_lossy(&out.stderr).into_owned())
+            .unwrap_or_else(|| "Fixture diagnostics unavailable".into());
+        panic!("Offline fixture initialization failed: {error}; wrapper stderr: {stderr}");
+    }
     let context: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
     assert_eq!(
         context["args"],
@@ -43,7 +70,8 @@ async fn npx_preserves_original_stdio_launch_context() {
         .prefix("npx space Юникод ")
         .tempdir()
         .unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    // cmd.exe does not accept Rust's verbatim-prefix cwd as a normal local path.
+    let root = mcp_gate::platform::project_path(dir.path()).unwrap();
     let package = root.join("package");
     fs::create_dir(&package).unwrap();
     fs::write(package.join("package.json"),json!({"name":"mcp-gate-wrapper-fixture","version":"1.0.0","bin":{"mcp-gate-wrapper-fixture":"cli.cjs"}}).to_string()).unwrap();
@@ -74,7 +102,7 @@ async fn uvx_preserves_original_stdio_launch_context() {
         .prefix("uvx space Юникод ")
         .tempdir()
         .unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = mcp_gate::platform::project_path(dir.path()).unwrap();
     let wheel = root.join("mcp_gate_wrapper_fixture-1.0.0-py3-none-any.whl");
     let python = std::env::var("PYTHON_BINARY").unwrap();
     let output = Command::new(&python).args(["-c",r#"

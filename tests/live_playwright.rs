@@ -5,36 +5,7 @@ mod support;
 use mcp_gate::config::{Config, Ownership};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
-use support::native_codex::NativeCodex;
-
-fn descendants(root: u32) -> BTreeSet<u32> {
-    let output = std::process::Command::new("ps")
-        .args(["-axo", "pid=,ppid="])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let rows: Vec<(u32, u32)> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
-        })
-        .collect();
-    let mut found = BTreeSet::from([root]);
-    loop {
-        let next: Vec<_> = rows
-            .iter()
-            .filter(|(pid, parent)| found.contains(parent) && !found.contains(pid))
-            .map(|(pid, _)| *pid)
-            .collect();
-        if next.is_empty() {
-            break;
-        }
-        found.extend(next);
-    }
-    found.remove(&root);
-    found
-}
+use support::{native_codex::NativeCodex, process_tree::descendants};
 
 async fn health(c: &Config) -> Value {
     reqwest::Client::builder()

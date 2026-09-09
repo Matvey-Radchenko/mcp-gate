@@ -5,8 +5,8 @@
 mod support;
 use mcp_gate::config::{Config, Ownership};
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, path::PathBuf, process::Command, time::Duration};
-use support::{Harness, alive, native_codex::NativeCodex};
+use std::{collections::BTreeSet, path::PathBuf, time::Duration};
+use support::{Harness, alive, native_codex::NativeCodex, process_tree::descendants};
 
 struct Probe {
     config: Config,
@@ -64,35 +64,6 @@ fn text(result: &Value) -> &str {
     );
     result["content"][0]["text"].as_str().expect("Tool text")
 }
-fn descendants(root: u32) -> Vec<u32> {
-    let output = Command::new("ps")
-        .args(["-axo", "pid=,ppid="])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let rows: Vec<(u32, u32)> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut f = line.split_whitespace();
-            Some((f.next()?.parse().ok()?, f.next()?.parse().ok()?))
-        })
-        .collect();
-    let mut result = vec![root];
-    loop {
-        let next: Vec<_> = rows
-            .iter()
-            .filter(|(pid, ppid)| result.contains(ppid) && !result.contains(pid))
-            .map(|(pid, _)| *pid)
-            .collect();
-        if next.is_empty() {
-            break;
-        }
-        result.extend(next);
-    }
-    result.remove(0);
-    result
-}
-
 async fn browser_isolation(c: &mut NativeCodex, a: &str, b: &str, url: &str) {
     for (thread, name) in [(a, "A"), (b, "B")] {
         text(

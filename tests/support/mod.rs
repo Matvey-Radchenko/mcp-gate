@@ -12,6 +12,7 @@ use std::{
 };
 use tempfile::TempDir;
 pub(crate) mod native_codex;
+pub(crate) mod process_tree;
 pub(crate) const TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 pub(crate) struct Harness {
