@@ -114,3 +114,20 @@ separate; the installer must not change TCC or move the backend to bypass it.
 
 Retain sanitized results with the tested binary hashes. Until these checks have
 actually been completed, their release evidence stays pending.
+
+The [2026-09-09 ARM64 evidence](../release/arm64-reboot-2026-09-09.json) records an
+owner-performed reboot and login on macOS 26.6.2. This run used a separate fixture
+project and Claude configuration in the existing user account, with a dedicated
+protocol test client. It did not change personal MCP connections or OS privacy
+grants. The inspected production binary registered its own LaunchAgent and used
+the normal permanent state directory. The fixture backend was outside protected
+Documents, so this run does not replace the protected-folder procedure above.
+
+A changed boot UUID preceded the first passive status check; no setup, active
+probe or manual service start ran after login. Status reported zero sessions and
+workers. File hashes and timestamps, including backend-start and tool-action
+artifacts, matched the pre-reboot checkpoint. The old session returned HTTP 404;
+the first fresh tool call returned empty state. Removal restored direct settings
+and permissions, left the shared project bytes and retained artifact intact, and
+removed only the fixture service and registration. Raw checkpoints and credentials
+stay private. Intel/Windows login and macOS privacy-grant evidence remain pending.

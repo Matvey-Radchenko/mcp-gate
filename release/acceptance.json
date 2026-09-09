@@ -19,8 +19,10 @@
     {
       "id": "clean-service-login",
       "status": "pending",
-      "evidence": [],
-      "remaining": "Actual new OS login on all three platforms and macOS protected-folder access before/after the owner grants OS permission; registration/manual start in CI is insufficient. Procedure: docs/native-acceptance.md"
+      "evidence": [
+        "release/arm64-reboot-2026-09-09.json: actual macOS 26.6.2 ARM64 reboot with an isolated fixture in an existing account; inspected production binary autostarted without setup/manual start, zero sessions/workers, unchanged persistent files and action timestamps, rejected old session, fresh empty backend state and verified fixture removal. This is not protected-folder or clean-account acceptance"
+      ],
+      "remaining": "Actual new OS login on macOS Intel and Windows x64 and macOS protected-folder access before/after the owner grants OS permission; registration/manual start in CI is insufficient. ARM64 existing-account scope and procedure: docs/native-acceptance.md"
     },
     {
       "id": "safe-update-downgrade",

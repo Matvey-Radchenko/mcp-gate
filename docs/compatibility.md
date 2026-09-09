@@ -20,7 +20,7 @@ this evidence does not substitute for desktop Windows login acceptance.
 | Busy update deferred; idle update retains credentials | Passed locally and in CI | Passed in CI | Passed in CI |
 | Unavailable old backend permits later repair | Passed locally and in CI | Passed in CI | Passed in CI |
 | Actual update/downgrade between separately versioned release builds | Passed locally and in CI with unpublished compatibility fixture | Passed in CI | Passed in CI |
-| Autostart after an actual new login | Pending | Pending | Pending |
+| Autostart after an actual new login | Passed after actual reboot with an isolated fixture in an existing account | Pending | Pending |
 | Background access to macOS protected folders | Separate OS permission needed; acceptance pending | Pending | N/A |
 | Chrome DevTools 1.8.0 browser independence and owned cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI |
 | Playwright 0.0.80 independent browsers, retained artifacts and cleanup | Passed locally and in CI with Codex | Passed in CI | Passed in CI with full job drain and process identity checks |
@@ -68,7 +68,14 @@ signals before polling the receiver; the local harness and real-client/browser
 checks passed, followed by the complete seven-job native run linked above.
 
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
-two-version fixtures, and the outstanding actual-login and protected-folder gates.
+two-version fixtures, and the outstanding Intel/Windows actual-login and macOS
+protected-folder gates. The [ARM64 reboot evidence](../release/arm64-reboot-2026-09-09.json)
+records an actual reboot on macOS 26.6.2 using the inspected production binary.
+Before any active call, the service was reachable with zero sessions/workers and
+unchanged persistent files and action timestamps. The old session was rejected;
+a fresh backend had empty state. Fixture removal restored its direct settings and
+retained its artifact. This used a protocol test client and an isolated project in
+an existing account; it does not establish clean-account or privacy-grant behavior.
 The unpublished compatibility fixture is built from the same reviewed 0.1.0 tree;
 it does not establish compatibility with any future release's changed formats.
 
