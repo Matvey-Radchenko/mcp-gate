@@ -236,3 +236,52 @@ tool_timeout_sec = {tool_timeout}
         }
     }
 }
+
+pub(crate) async fn discovery_sessions(
+    config_path: &std::path::Path,
+    expected: usize,
+) -> BTreeSet<String> {
+    // Codex 0.153.4 mcpServerStatus/list builds a separate, threadless connection
+    // set even with threadId. The returned snapshot precedes transport teardown
+    // and potentially our disconnect grace. Count only after those probes close;
+    // persistent extra sessions still fail, and discovery must never start workers.
+    let config = mcp_gate::config::Config::load(config_path).unwrap();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_secs(config.disconnect_grace_seconds.saturating_add(10));
+    loop {
+        let health: Value = client
+            .get(format!("http://{}/health", config.listen))
+            .bearer_auth(config.token().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            health["workers"], 0,
+            "Discovery started a backend: {health}"
+        );
+        let ids: BTreeSet<_> = health["session_details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|session| session["id"].as_str().unwrap().to_owned())
+            .collect();
+        if ids.len() == expected && health["sessions"] == expected {
+            return ids;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Expected {expected} persistent sessions after discovery cleanup: {health}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}

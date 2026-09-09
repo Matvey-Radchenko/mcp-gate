@@ -47,6 +47,18 @@ shared-launcher and known private-path/token signature inspection. This resolves
 the different launcher tar permissions found in the earlier separate-platform
 builds. See the [source and archive audit](../release/source-audit.md).
 
+A subsequent repeat of the same implementation exposed one remaining test race:
+[run 34338316908](https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34338316908)
+passed Windows and Intel, but ARM64 counted a third session immediately after
+Codex inventory. In [Codex 0.153.4's implementation](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/codex-mcp/src/mcp/mod.rs#L468),
+`mcpServerStatus/list` creates a separate connection set even with `threadId`, then
+cancels its startup after collecting inventory. The test now waits within a bounded
+deadline for these probes to close before counting persistent sessions or choosing
+session IDs for browser cleanup. It still requires the exact session count and
+zero workers, and repeatedly checks that discovery preserves the thread's session
+and leaves none after client exit. Final native verification of this change is
+pending; the gateway's production connection lifetime is unchanged.
+
 The [native acceptance procedures](native-acceptance.md) describe the Docker and
 two-version fixtures, and the outstanding actual-login and protected-folder gates.
 The unpublished compatibility fixture is built from the same reviewed 0.1.0 tree;

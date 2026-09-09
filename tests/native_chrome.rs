@@ -6,7 +6,11 @@ mod support;
 use mcp_gate::config::{Config, Ownership};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
-use support::{Harness, alive, native_codex::NativeCodex, process_tree::descendants};
+use support::{
+    Harness, alive,
+    native_codex::{NativeCodex, discovery_sessions},
+    process_tree::descendants,
+};
 
 struct Probe {
     config: Config,
@@ -48,14 +52,6 @@ impl Probe {
             .error_for_status()
             .unwrap();
     }
-}
-fn session_ids(health: &Value) -> BTreeSet<String> {
-    health["session_details"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| s["id"].as_str().unwrap().to_owned())
-        .collect()
 }
 fn text(result: &Value) -> &str {
     assert_ne!(
@@ -138,14 +134,17 @@ async fn two_threads_real_browsers_and_lifecycle() {
     let mut c = NativeCodex::for_config(config_path).await;
     let a = c.thread.clone();
     assert_eq!(c.discover().await, 29);
-    let first_ids = session_ids(&probe.health().await);
-    assert_eq!(first_ids.len(), 1);
+    let first_ids = discovery_sessions(config_path, 1).await;
     let cwd = tempfile::tempdir().unwrap();
     let second = c.request("thread/start",json!({"cwd":cwd.path(),"ephemeral":true,"approvalPolicy":"never","sandbox":"read-only"})).await;
     assert_eq!(second["thread"]["ephemeral"], true);
     let b = second["thread"]["id"].as_str().unwrap().to_owned();
     assert_eq!(c.discover_in(&b).await, 29);
-    assert_eq!(probe.health().await["sessions"], 2);
+    let both_ids = discovery_sessions(config_path, 2).await;
+    assert!(
+        first_ids.is_subset(&both_ids),
+        "First thread session changed"
+    );
     probe.workers(0).await;
     assert!(
         descendants(gateway_pid).is_empty(),

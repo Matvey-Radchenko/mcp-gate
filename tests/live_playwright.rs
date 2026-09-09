@@ -5,7 +5,10 @@ mod support;
 use mcp_gate::config::{Config, Ownership};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
-use support::{native_codex::NativeCodex, process_tree::descendants};
+use support::{
+    native_codex::{NativeCodex, discovery_sessions},
+    process_tree::descendants,
+};
 
 async fn health(c: &Config) -> Value {
     reqwest::Client::builder()
@@ -22,14 +25,6 @@ async fn health(c: &Config) -> Value {
         .json()
         .await
         .unwrap()
-}
-fn ids(h: &Value) -> BTreeSet<String> {
-    h["session_details"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| s["id"].as_str().unwrap().to_owned())
-        .collect()
 }
 fn text(v: &Value) -> String {
     assert_ne!(v["isError"], true, "Local fixture failed: {v}");
@@ -122,13 +117,12 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     assert!(descendants(gateway_pid).is_empty());
     let mut a = NativeCodex::for_config(&path).await;
     assert_eq!(a.discover().await, 24);
-    let aid = ids(&health(&c).await).pop_first().unwrap();
+    let aid = discovery_sessions(&path, 1).await.pop_first().unwrap();
     let mut b = NativeCodex::for_config(&path).await;
     assert_eq!(b.discover().await, 24);
-    let bid = ids(&health(&c).await)
-        .into_iter()
-        .find(|id| *id != aid)
-        .unwrap();
+    let both_ids = discovery_sessions(&path, 2).await;
+    assert!(both_ids.contains(&aid), "First client session changed");
+    let bid = both_ids.into_iter().find(|id| *id != aid).unwrap();
     assert_eq!(health(&c).await["workers"], 0, "Discovery must stay lazy");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/", listener.local_addr().unwrap());

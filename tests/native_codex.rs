@@ -5,7 +5,10 @@
 )]
 mod support;
 use serde_json::{Value, json};
-use support::{Harness, native_codex::NativeCodex};
+use support::{
+    Harness,
+    native_codex::{NativeCodex, discovery_sessions},
+};
 
 fn payload(response: &Value) -> Value {
     assert_ne!(response["isError"], true, "Native tool failed: {response}");
@@ -23,7 +26,7 @@ async fn native_codex_shared_and_session_calls() {
         let (mut a, mut b) = tokio::join!(NativeCodex::start(&h), NativeCodex::start(&h));
         let (ac, bc) = tokio::join!(a.discover(), b.discover());
         assert_eq!((ac, bc), (4, 4));
-        assert_eq!(h.health().await.unwrap()["sessions"], 2);
+        discovery_sessions(&h.config, 2).await;
         h.workers(0).await;
         let (av, bv) = tokio::join!(
             a.call("state", json!({"value":"A"})),
@@ -51,4 +54,20 @@ async fn native_codex_shared_and_session_calls() {
         );
         h.stop();
     }
+}
+
+#[tokio::test]
+#[ignore = "Requires CODEX_BINARY; isolated inventory probes without model/API calls"]
+async fn native_inventory_probe_cleanup() {
+    let mut h = Harness::generic("session", 4, 20, 10).await;
+    let mut client = NativeCodex::start(&h).await;
+    assert_eq!(client.discover().await, 4);
+    let thread_session = discovery_sessions(&h.config, 1).await;
+    for _ in 0..40 {
+        assert_eq!(client.discover().await, 4);
+        assert_eq!(discovery_sessions(&h.config, 1).await, thread_session);
+    }
+    client.close().await;
+    discovery_sessions(&h.config, 0).await;
+    h.stop();
 }

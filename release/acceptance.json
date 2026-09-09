@@ -3,13 +3,15 @@
   "checks": [
     {
       "id": "native-matrix",
-      "status": "passed",
+      "status": "pending",
       "evidence": [
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34326027974: all real clients, offline npx/uvx and Chrome DevTools passed on three platforms; macOS ARM64 passed through archive installation",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34330557175: Windows and Intel passed all checks, including standalone CRT inspection on Windows, release versions and clean archive installation",
         "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34333009537: all three native jobs passed with per-thread MCP startup readiness, real clients, wrappers, services and separately versioned releases",
-        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965: all five jobs passed, including native local/global npm command execution and combined release archive verification"
-      ]
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34336206965: all five jobs passed, including native local/global npm command execution and combined release archive verification",
+        "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/34338316908: Windows and Intel passed; ARM64 exposed an immediate session-count assertion racing Codex inventory probe teardown before any tool call"
+      ],
+      "remaining": "Native matrix with bounded inventory-probe cleanup and repeated real Codex discovery; persistent extra sessions must still fail and discovery must remain lazy"
     },
     {
       "id": "clean-service-login",
