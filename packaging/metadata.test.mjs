@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { assertReleaseManifest, platformPackage } from './manifest.mjs';
 
@@ -12,6 +12,33 @@ const manifest = JSON.parse(readFileSync('npm/mcp-gate/package.json', 'utf8'));
 const cargoToml = readFileSync('Cargo.toml', 'utf8');
 const launcherSource = readFileSync('npm/mcp-gate/bin/mcp-gate.cjs', 'utf8');
 const { packageVersion, unsupportedMessage } = require('../npm/mcp-gate/bin/mcp-gate.cjs');
+
+function npmCli() {
+  const fromEnv = process.env.npm_execpath;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const root = dirname(process.execPath);
+  const candidates = [
+    join(root, 'node_modules/npm/bin/npm-cli.js'),
+    join(root, '../lib/node_modules/npm/bin/npm-cli.js'),
+  ];
+  return candidates.find(path => existsSync(path));
+}
+
+function runNpm(args, options = {}) {
+  const cli = npmCli();
+  // Windows registers npm as npm.cmd. spawn cannot execute that without a shell,
+  // so prefer the CLI script next to node and only then fall back to the command.
+  const result = cli
+    ? spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', windowsHide: true, ...options })
+    : spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
+      encoding: 'utf8',
+      windowsHide: true,
+      shell: process.platform === 'win32',
+      ...options,
+    });
+  assert.equal(result.error, undefined, result.error?.message);
+  return result;
+}
 
 test('launcher version comes from package.json and matches Cargo and optional packages', () => {
   assert.equal(manifest.author, 'Matvey Radchenko');
@@ -78,7 +105,7 @@ test('source tree refuses npm pack until README and LICENSE are staged', () => {
   assert.equal(blocked.status, 1);
   assert.match(blocked.stderr, /Refusing to pack mcp-gate without README\.md and LICENSE/);
 
-  const packed = spawnSync('npm', ['pack', '--dry-run', '--json', './npm/mcp-gate'], { encoding: 'utf8' });
+  const packed = runNpm(['pack', '--dry-run', '--json', './npm/mcp-gate']);
   assert.notEqual(packed.status, 0);
   assert.match(`${packed.stderr}\n${packed.stdout}`, /Refusing to pack mcp-gate without README\.md and LICENSE/);
 
@@ -92,7 +119,7 @@ test('source tree refuses npm pack until README and LICENSE are staged', () => {
     for (const ignore of [false, true]) {
       const args = ['pack', '--dry-run', '--json', './mcp-gate'];
       if (ignore) args.push('--ignore-scripts');
-      const result = spawnSync('npm', args, { cwd: root, encoding: 'utf8' });
+      const result = runNpm(args, { cwd: root });
       assert.equal(result.status, 0, result.stderr);
       const names = JSON.parse(result.stdout)[0].files.map(file => file.path);
       assert.ok(names.includes('README.md'));
