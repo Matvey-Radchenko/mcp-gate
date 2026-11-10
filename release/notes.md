@@ -8,6 +8,7 @@ Setup registers user autostart services and preserves client permission settings
 MCP packages remain user-managed. Remove restores direct connections without
 deleting packages or user data. Sessions and actions are never replayed after restart.
 
-The attached SHA256SUMS covers the native archives and npm packages produced by
-this release run. Environment and owner-side npm trusted publisher configuration
-must be completed before this workflow can publish.
+The attached SHA256SUMS covers the native archives attached to this Release.
+npm packages are on the registry and are not Release assets. Environment and
+owner-side npm trusted publisher configuration is required before a later
+workflow-driven publish.

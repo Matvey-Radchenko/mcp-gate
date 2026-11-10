@@ -29,9 +29,13 @@ npm archives. A normal local Cargo build can retain the developer's absolute pat
 CI prepares the common launcher once with `node packaging/launcher.mjs` and
 `npm pack ./dist/mcp-gate --ignore-scripts --pack-destination dist`. All three native
 jobs install that exact archive together with their native package. This avoids
-platform-specific tar permission differences. Clean installation checks exercise
+platform-specific tar permission differences. `npm pack` in `npm/mcp-gate` runs a
+prepack check that refuses to continue without README.md and LICENSE.
+`launcher.mjs` copies both into `dist/mcp-gate` before that pack; `--ignore-scripts`
+skips prepack only for the already staged tree. Clean installation checks exercise
 the actual local and global commands; a final combined job verifies all seven
 release archives, including identical launcher bytes across the three artifacts.
+`SHA256SUMS` lists the three native archives a GitHub Release attaches.
 Windows releases statically link the C runtime; CI inspects DLL imports to reject
 an accidental dependency on a separate Visual C++ redistributable. See
 [Rust linkage](https://doc.rust-lang.org/stable/reference/linkage.html).

@@ -9,6 +9,10 @@
 - Personal client adapters, private transaction journals and safe deferred service cleanup.
 - Permanent native binaries with user LaunchAgents and Windows logon tasks.
 - Native GitHub CI matrix and npm launcher/platform archives.
+- npm launcher version read from package.json, with homepage, bugs, keywords, and author on the meta and platform packages.
+- Packing the meta package fails unless README and LICENSE are beside package.json.
+- GitHub Release checksums list the attached native archives.
+- Release process for current npm trusted publishing, plus an optional Homebrew tap formula.
 
 Public release remains gated on the [compatibility checks](docs/compatibility.md).
 Existing private `mcp-session-gateway` installations retain their historical names
