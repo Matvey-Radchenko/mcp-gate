@@ -225,6 +225,10 @@ fn legacy_health_fixture(runtime: Value, expected: &str) {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if let Ok((mut stream, _)) = listener.accept() {
+                // The accepted socket stays nonblocking. Reading immediately
+                // returns WouldBlock on macOS Intel and the health check then
+                // reports the gateway as unavailable.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
@@ -261,7 +265,12 @@ fn legacy_health_fixture(runtime: Value, expected: &str) {
     assert!(output.status.success());
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["connections"][0]["kind"], "external");
-    assert_eq!(result["connections"][0]["state"], expected);
+    assert_eq!(
+        result["connections"][0]["state"].as_str(),
+        Some(expected),
+        "status stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     assert!(!String::from_utf8_lossy(&output.stdout).contains("never-print-this-token"));
     assert_eq!(result["gateways"], json!([]));
     server.join().unwrap();
