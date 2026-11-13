@@ -10,7 +10,9 @@ The terminal UI, shared connection inventory, LaunchAgent listing and `adopt`
 command are part of this release. They are covered by local CLI tests. Those
 tests do not claim a native Intel or Windows terminal acceptance run. An agent
 drives the same commands with `--json` and without a TTY; see
-[docs/agents.md](agents.md).
+[docs/agents.md](agents.md). `status --json` is one compact object.
+`connections[].kind` uses `external` for a gateway this installation did not set
+up. The registry does not store that label, so `format_version` stays 1.
 
 | Check | macOS ARM64 | macOS Intel | Windows x64 |
 | --- | --- | --- | --- |

@@ -15,7 +15,9 @@ and JSON fields are in `docs/agents.md`.
 - Never invent a server name. Read `services` and `connections` from `mcp-gate status --json` first.
 - `adopt` records an existing `local.mcp-gate.<name>` LaunchAgent. Preview with `mcp-gate adopt NAME --dry-run` before `mcp-gate adopt NAME --json`.
 - `setup` has no `--all`. Apply only with `mcp-gate setup --client CLIENT --server NAME --yes --json`.
-- `remove NAME --dry-run` previews one connection. `remove --all --yes --json` restores every managed connection in scope.
+- `remove NAME --dry-run` previews one managed connection. If `kind` is `external`, remove cannot restore the original command; inspect `status --details` or `adopt` the LaunchAgent name.
+- `remove --all --yes --json` restores every managed connection in scope.
+- A parse error with `--json` has a one-line `error`, for example `unrecognized subcommand 'bogus'`.
 - Exit 0 means the command finished. Exit 1 is an operation failure. Exit 2 is bad arguments. Both failures with `--json` use `{"format_version":1,"phase":"failed","error":"..."}`.
 - Gateway health does not mean the user's application has reconnected. Say that when you report status.
 

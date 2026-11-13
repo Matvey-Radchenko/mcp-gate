@@ -72,6 +72,12 @@ fn default_empty_commands_are_readable_and_do_not_require_flags() {
         } else {
             "No MCP connections found"
         }));
+        if command == "status" {
+            let detailed = fixture.run(&["status", "--details"]);
+            let detailed = String::from_utf8(detailed.stdout).unwrap();
+            assert!(detailed.contains("Configure: mcp-gate setup"));
+            assert!(!detailed.contains("status --details"));
+        }
     }
 }
 
@@ -253,13 +259,19 @@ fn legacy_health_fixture(runtime: Value, expected: &str) {
     let output = fixture.run(&["status", "--json"]);
     assert!(output.status.success());
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["connections"][0]["kind"], "legacy");
+    assert_eq!(result["connections"][0]["kind"], "external");
     assert_eq!(result["connections"][0]["state"], expected);
     assert!(!String::from_utf8_lossy(&output.stdout).contains("never-print-this-token"));
     assert_eq!(result["gateways"], json!([]));
     server.join().unwrap();
-    let output = fixture.run(&["remove"]);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Found 1 legacy gateway connections"));
+    let output = fixture.run(&["remove", "existing", "--dry-run"]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.starts_with(
+        "existing is connected through an external gateway (not set up by this installation)."
+    ));
+    assert!(!text.contains("Nothing to remove"));
+    assert!(text.contains("mcp-gate adopt <name>"));
+    assert!(text.contains("status --details"));
     assert!(!root.join("unused-state").exists());
 }
 
@@ -423,5 +435,12 @@ fn running_launchagents_are_listed_and_adoption_can_be_previewed() {
     assert!(!bad.status.success());
     let parsed: Value = serde_json::from_slice(&bad.stdout).unwrap();
     assert_eq!(parsed["phase"], "failed");
+    assert!(!parsed["error"].as_str().unwrap().contains('\n'));
     assert!(bad.stderr.is_empty());
+    let bogus = fixture.command(&["bogus", "--json"]).output().unwrap();
+    assert_eq!(bogus.status.code(), Some(2));
+    let parsed: Value = serde_json::from_slice(&bogus.stdout).unwrap();
+    assert_eq!(parsed["error"], "unrecognized subcommand 'bogus'");
+    assert!(!parsed["error"].as_str().unwrap().contains('\n'));
+    assert!(bogus.stderr.is_empty());
 }

@@ -62,7 +62,7 @@ or Docker may download their own dependencies. Arbitrary shell dependency trees
 are not analyzed or copied. Reviewed recipes use narrow version and invocation
 conditions; names alone never select shared mode.
 
-`status` performs passive diagnostics. `status --probe` explicitly requests
+`status` lists connections and LaunchAgents. A connection kind of `external` means the client already uses a gateway this installation did not set up, so setup and remove do not own it. `status --json` prints one compact JSON object. `status --probe` explicitly requests
 backend initialization when the gateway can safely enter maintenance and has no
 existing backend. Busy gateways are deferred. `remove` restores direct connections
 without deleting MCP packages, user data, logs, browser artifacts or old releases.
@@ -84,5 +84,6 @@ tests. GitHub CI runs native checks on all three release platforms and verifies
 clean npm archive installation. Client/service/browser acceptance is tracked
 separately; a workflow definition is not evidence that its runs passed.
 
-MIT licensed. Old `mcp-session-gateway` configurations remain readable. Existing
-legacy installations are recognized but are not adopted or renamed automatically.
+MIT licensed. Old `mcp-session-gateway` configurations remain readable. Connections
+that already route through a gateway this installation did not set up are reported
+as `external` and are not adopted or renamed automatically.

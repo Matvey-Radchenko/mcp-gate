@@ -148,12 +148,20 @@ async fn display(
             .iter()
             .filter(|c| c.kind == "managed")
             .count();
-        let legacy = inventory
+        let external = inventory
             .connections
             .iter()
-            .filter(|c| c.kind == "legacy")
+            .filter(|c| super::inventory::is_external(c.kind))
             .count();
-        println!("\n{managed} managed connections · {legacy} legacy gateway connections");
+        println!(
+            "\n{} · {}",
+            super::ui::counted(managed, "managed connection", "managed connections"),
+            super::ui::counted(
+                external,
+                "external gateway connection",
+                "external gateway connections"
+            )
+        );
         let attention = results
             .iter()
             .filter(|r| r["issues"].as_array().is_some_and(|i| !i.is_empty()))
@@ -163,13 +171,19 @@ async fn display(
                 "{attention} managed gateways need attention. Run status --details for the reasons."
             );
         }
-        if legacy > 0 {
-            println!("Legacy gateways remain outside setup/remove ownership.");
+        if external > 0 {
+            println!(
+                "External gateways were not set up by this installation, so setup and remove do not own them."
+            );
         }
         println!(
             "Application switch is not confirmed by gateway health. Direct/other HTTP backends are not checked."
         );
-        println!("Details: mcp-gate status --details · Configure: mcp-gate setup");
+        if options.details {
+            println!("Configure: mcp-gate setup");
+        } else {
+            println!("Details: mcp-gate status --details · Configure: mcp-gate setup");
+        }
         for operation in operations {
             println!(
                 "{}: {}. Journal: {}",

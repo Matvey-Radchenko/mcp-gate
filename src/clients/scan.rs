@@ -248,7 +248,8 @@ pub(super) fn candidate(
                 issue = Some(error.to_string());
             }
         } else if executable == "mcp-session-gateway" {
-            issue = Some("Legacy gateway is recognized but is not owned by this installer".into());
+            issue =
+                Some("External gateway is recognized but is not owned by this installation".into());
         }
     }
     if config.get("enabled") == Some(&Value::Bool(false))

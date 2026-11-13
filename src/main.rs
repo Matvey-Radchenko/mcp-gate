@@ -112,10 +112,7 @@ async fn main() -> std::process::ExitCode {
         Ok(cli) => cli.command,
         Err(error) => {
             if error.use_stderr() && std::env::args().any(|arg| arg == "--json") {
-                println!(
-                    "{}",
-                    serde_json::json!({"format_version":1,"phase":"failed","error":plain(&error.to_string())})
-                );
+                println!("{}", json_parse_error(&error));
                 std::process::exit(2);
             }
             error.exit();
@@ -296,6 +293,37 @@ async fn serve(config: PathBuf) -> Result<()> {
     }
     drop(lock);
     Ok(())
+}
+
+fn json_parse_error(error: &clap::error::Error) -> String {
+    let rendered = plain(&error.to_string());
+    let mut lines = rendered
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let summary = lines.next().unwrap_or("invalid arguments");
+    let summary = summary
+        .strip_prefix("error:")
+        .unwrap_or(summary)
+        .trim()
+        .to_string();
+    let mut usage = None;
+    let mut hint = None;
+    for line in lines {
+        if let Some(text) = line.strip_prefix("Usage:") {
+            usage = Some(text.trim().to_string());
+        } else if hint.is_none() {
+            hint = Some(line.to_string());
+        }
+    }
+    let mut value = serde_json::json!({"format_version":1,"phase":"failed","error":summary});
+    if let Some(usage) = usage {
+        value["usage"] = serde_json::json!(usage);
+    }
+    if let Some(hint) = hint {
+        value["hint"] = serde_json::json!(hint);
+    }
+    value.to_string()
 }
 
 fn plain(text: &str) -> String {

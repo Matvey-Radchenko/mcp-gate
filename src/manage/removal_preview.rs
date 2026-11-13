@@ -16,33 +16,7 @@ pub async fn choose(options: &Selection, registry: &Registry) -> Result<Vec<(Str
         .collect();
     if available.is_empty() {
         let inventory = inventory::read(options, registry, false).await?;
-        let legacy = inventory
-            .connections
-            .iter()
-            .filter(|c| c.kind == "legacy")
-            .count();
-        if options.json {
-            println!(
-                "{}",
-                json!({"format_version":1,"phase":"unchanged","connections":[],
-                "discovered_connections":inventory.connections,"source_issues":inventory.issues,"packages_and_data":"retained"})
-            );
-        } else {
-            println!(
-                "Nothing to remove: no connections managed by this installation match this scope."
-            );
-            if legacy > 0 {
-                println!(
-                    "Found {legacy} legacy gateway connections. Their original settings were not saved by this installer, so they cannot be restored automatically."
-                );
-            }
-            println!(
-                "Inspect connections with mcp-gate status --details. Packages and data are unchanged."
-            );
-            if options.details {
-                inventory::overview(&inventory, true);
-            }
-        }
+        explain_nothing_to_remove(options, &inventory)?;
         return Ok(vec![]);
     }
     let interactive = ui::interactive(options);
@@ -143,8 +117,8 @@ pub async fn choose(options: &Selection, registry: &Registry) -> Result<Vec<(Str
 
 fn display(selected: &[(String, Binding)], registry: &Registry, diff: bool) -> Result<()> {
     println!(
-        "\nRemove preview — restore {} direct connections",
-        selected.len()
+        "\nRemove preview — restore {}",
+        ui::counted(selected.len(), "direct connection", "direct connections")
     );
     for (_, b) in selected {
         println!(
@@ -181,4 +155,78 @@ fn display(selected: &[(String, Binding)], registry: &Registry, diff: bool) -> R
         "MCP packages, permissions, user data and artifacts are retained. Restart each affected application once."
     );
     Ok(())
+}
+
+fn explain_nothing_to_remove(options: &Selection, inventory: &inventory::Inventory) -> Result<()> {
+    let names: Vec<String> = inventory
+        .connections
+        .iter()
+        .filter(|connection| {
+            inventory::is_external(connection.kind)
+                && (options.server.is_empty()
+                    || options.server.iter().any(|name| name == &connection.name))
+                && (options.client.is_empty() || options.client.contains(&connection.client))
+        })
+        .map(|connection| connection.name.clone())
+        .collect();
+    let message = external_remove_message(&names);
+    if options.json {
+        let mut value = json!({"format_version":1,"phase":"unchanged","connections":[],
+            "discovered_connections":inventory.connections,"source_issues":inventory.issues,"packages_and_data":"retained"});
+        if let Some(message) = &message {
+            value["message"] = json!(message);
+        }
+        println!("{value}");
+    } else if let Some(message) = message {
+        println!("{message}");
+        println!("Inspect it with: mcp-gate status --details");
+        println!("To record that gateway in this installation: mcp-gate adopt <name>");
+    } else {
+        println!(
+            "Nothing to remove: no connections managed by this installation match this scope."
+        );
+        println!(
+            "Inspect connections with mcp-gate status --details. Packages and data are unchanged."
+        );
+    }
+    if options.details && !options.json {
+        inventory::overview(inventory, true);
+    }
+    Ok(())
+}
+
+fn external_remove_message(names: &[String]) -> Option<String> {
+    let unique = unique_names(names);
+    match unique.as_slice() {
+        [] => None,
+        [name] => Some(format!(
+            "{name} is connected through an external gateway (not set up by this installation). Its original direct settings were not saved, so remove cannot restore them automatically."
+        )),
+        names => Some(format!(
+            "{} are connected through external gateways (not set up by this installation). Their original direct settings were not saved, so remove cannot restore them automatically.",
+            join_names(names)
+        )),
+    }
+}
+
+fn unique_names(names: &[String]) -> Vec<String> {
+    let mut unique = Vec::new();
+    for name in names {
+        if !unique.contains(name) {
+            unique.push(name.clone());
+        }
+    }
+    unique
+}
+
+fn join_names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        names => {
+            let last = names.last().map(String::as_str).unwrap_or("");
+            format!("{}, and {last}", names[..names.len() - 1].join(", "))
+        }
+    }
 }

@@ -19,6 +19,13 @@ pub fn interactive(options: &Selection) -> bool {
 pub fn terminal() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
+pub fn counted(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
+}
 pub fn safe(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_control() { ' ' } else { c })

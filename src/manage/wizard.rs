@@ -250,10 +250,10 @@ fn empty(inventory: &inventory::Inventory, options: &Selection) {
             "plan":{"servers":[],"managed":[],"connections":inventory.connections,"source_issues":inventory.issues}})
         );
     } else {
-        let legacy = inventory
+        let external = inventory
             .connections
             .iter()
-            .filter(|c| c.kind == "legacy")
+            .filter(|c| super::inventory::is_external(c.kind))
             .count();
         let http = inventory
             .connections
@@ -261,7 +261,13 @@ fn empty(inventory: &inventory::Inventory, options: &Selection) {
             .filter(|c| c.kind == "http")
             .count();
         println!(
-            "No setup changes available in this scope. {legacy} legacy gateway connections; {http} other HTTP connections remain as configured."
+            "No setup changes available in this scope. {}; {} remain as configured.",
+            super::ui::counted(
+                external,
+                "external gateway connection",
+                "external gateway connections"
+            ),
+            super::ui::counted(http, "other HTTP connection", "other HTTP connections")
         );
         println!(
             "Use setup --details for source files and next steps. For a Claude Code connection tied to a project, use setup --project <directory>."

@@ -10,7 +10,7 @@ the user has already chosen the exact clients and servers.
 | --- | --- |
 | 0 | The command finished. A canceled wizard also exits 0 and changes nothing. |
 | 1 | The operation failed. With `--json`, stdout is one object whose `phase` is `failed`. The same plain error is also written to stderr. |
-| 2 | The arguments could not be parsed. With `--json` anywhere in the arguments, stdout is the same failure object and stderr is empty. |
+| 2 | The arguments could not be parsed. With `--json` anywhere in the arguments, stdout is one JSON object and stderr is empty. `error` is a single line, such as `unrecognized subcommand 'bogus'`. `usage` and `hint` may also be present. |
 
 `--help` and `--version` stay human text and exit 0.
 
@@ -20,11 +20,14 @@ the user has already chosen the exact clients and servers.
 mcp-gate status --json
 ```
 
-`services` lists LaunchAgents named `local.mcp-gate.<name>`. `ownership` is
-`managed` when this installation's registry records the agent, and `unmanaged`
+`status --json` is one compact JSON object, not pretty-printed. `format_version`
+stays 1. `services` lists LaunchAgents named `local.mcp-gate.<name>`. `ownership`
+is `managed` when this installation's registry records the agent, and `unmanaged`
 when it does not. `state` is `running` when the gateway's health endpoint
-answers. `connections` lists client MCP entries. Gateway health does not prove
-that an application has switched to the gateway.
+answers. `connections` lists client MCP entries. `kind` is `direct`, `http`,
+`managed`, or `external`. `external` means the client already uses a gateway this
+installation did not set up, so setup and remove do not own it. Gateway health
+does not prove that an application has switched to the gateway.
 
 ```sh
 mcp-gate status --details

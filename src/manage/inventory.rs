@@ -62,12 +62,8 @@ pub async fn read(
         });
         let kind = if managed.is_some() {
             "managed"
-        } else if old.is_some()
-            || c.issue
-                .as_deref()
-                .is_some_and(|i| i.starts_with("Legacy gateway"))
-        {
-            "legacy"
+        } else if old.is_some() || c.issue.as_deref().is_some_and(marks_external) {
+            "external"
         } else if !endpoint.is_empty() {
             "http"
         } else {
@@ -100,8 +96,8 @@ pub async fn read(
         };
         let reason = match kind {
             "managed" => None,
-            "legacy" => Some(format!(
-                "{}Existing gateway outside this installation. Original direct settings are not recorded here; setup/remove will not take ownership.",
+            "external" => Some(format!(
+                "{}This connection already uses a gateway that this installation did not set up. Original direct settings were not saved, so setup and remove will not change it.",
                 old.and_then(|l| l
                     .diagnostic
                     .map(str::to_owned)
@@ -155,6 +151,15 @@ pub async fn read(
     })
 }
 
+/// `legacy` was the pre-release name for a gateway this installation does not own.
+pub(super) fn is_external(kind: &str) -> bool {
+    kind == "external" || kind == "legacy"
+}
+
+fn marks_external(issue: &str) -> bool {
+    issue.starts_with("External gateway") || issue.starts_with("Legacy gateway")
+}
+
 pub fn health_state(health: Option<&serde_json::Value>) -> &'static str {
     super::health::state(health)
 }
@@ -170,7 +175,7 @@ pub fn overview(inventory: &Inventory, details: bool) {
             client = Some(c.client);
         }
         println!(
-            "  {:<22} {:<8} {}",
+            "  {:<22} {:<10} {}",
             super::ui::safe(&c.name),
             c.kind,
             c.state

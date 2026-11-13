@@ -17,6 +17,7 @@
 - Human-readable setup, status, remove and check output, with JSON only when `--json` is set.
 - `status` lists running `local.mcp-gate` LaunchAgents, and `adopt` records an unmanaged one.
 - Agent instructions in `docs/agents.md` and `skills/mcp-gate/SKILL.md`.
+- Connections through a gateway this installation did not set up are reported as `external`. `remove` names that situation instead of starting with "Nothing to remove".
 
 Public release records those limits in the [compatibility checks](docs/compatibility.md).
 Existing private `mcp-session-gateway` installations retain their historical names
