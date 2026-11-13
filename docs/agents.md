@@ -9,7 +9,7 @@ the user has already chosen the exact clients and servers.
 | Code | Meaning |
 | --- | --- |
 | 0 | The command finished. A canceled wizard also exits 0 and changes nothing. |
-| 1 | The operation failed. With `--json`, stdout is one object whose `phase` is `failed`. |
+| 1 | The operation failed. With `--json`, stdout is one object whose `phase` is `failed`. The same plain error is also written to stderr. |
 | 2 | The arguments could not be parsed. With `--json` anywhere in the arguments, stdout is the same failure object and stderr is empty. |
 
 `--help` and `--version` stay human text and exit 0.

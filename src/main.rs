@@ -162,9 +162,8 @@ async fn main() -> std::process::ExitCode {
                     "{}",
                     serde_json::json!({"format_version":1,"phase":"failed","error":message})
                 );
-            } else {
-                eprintln!("{message}");
             }
+            eprintln!("{message}");
             std::process::ExitCode::FAILURE
         }
     }

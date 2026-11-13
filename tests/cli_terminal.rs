@@ -22,20 +22,21 @@ impl Terminal {
     fn start(mut command: Command) -> Self {
         let mut master = -1;
         let mut slave = -1;
-        let size = libc::winsize {
+        let mut size = libc::winsize {
             ws_row: 40,
             ws_col: 120,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
         // SAFETY: output pointers and the window-size reference remain valid for openpty.
+        // addr_of_mut matches macOS (*mut winsize) and Linux (*const winsize).
         let opened = unsafe {
             libc::openpty(
                 &mut master,
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &size,
+                std::ptr::addr_of_mut!(size),
             )
         };
         assert_eq!(opened, 0);
