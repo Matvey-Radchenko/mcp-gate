@@ -262,7 +262,7 @@ fn terminal_remove_all_reviews_owned_connections_and_can_cancel() {
     let mut terminal = Terminal::start(command(root, "remove"));
     terminal.expect("Restore direct MCP connections:");
     terminal.next("\x1b[B\r", "Review removal:");
-    assert!(terminal.output.contains("restore 1 direct connections"));
+    assert!(terminal.output.contains("restore 1 direct connection"));
     terminal.next("\x1b[B\r", "<hidden>");
     terminal.expect("Review removal:");
     terminal.next("\x1b[B\x1b[B\x1b[B\r", "Canceled. No changes applied.");
