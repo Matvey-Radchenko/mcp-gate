@@ -1,5 +1,22 @@
 # Compatibility and release gates
 
+The unpublished shared-recovery revision is opt-in. On 2026-10-01, local macOS
+ARM64 passed `cargo xtask check` (75 ordinary tests, 27 opt-in tests skipped), plus
+the live Atlassian read-only smoke with two real Codex 0.159.2 clients. The 98-tool
+Atlassian backend (serverInfo 3.4.7) recovered after an isolated process crash;
+fresh native clients read Jira/Confluence successfully. The installed local release
+also passed the two-client smoke. Its network/VPN outage scenarios use controlled
+mock failures; actual VPN switching and native Intel/Windows recovery were not
+tested. Prior CI evidence below does not cover this revision. See
+[backend recovery](backend-recovery.md).
+
+The CLI UX revision is being tested locally before publication. Its terminal menus,
+shared connection inventory and macOS legacy-service detection have local ARM64
+coverage; the new menus have not yet run on native Windows or Intel macOS.
+The existing CI evidence below describes the preceding release-preparation builds,
+not acceptance of this unpublished UX revision. Windows cross-target Clippy is a
+compile/lint check, not a native terminal test.
+
 The npm 0.1.0 release is **not published**. This table is evidence, not a promise
 that all combinations have been tested. Update it only from completed checks.
 CI uses macOS 15 and Windows Server 2025. Local ARM64 checks use macOS 26.6.2;

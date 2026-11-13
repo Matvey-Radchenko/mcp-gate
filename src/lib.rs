@@ -14,4 +14,5 @@ mod ownership;
 pub mod platform;
 pub mod policy;
 mod process;
+mod recovery;
 pub mod worker;

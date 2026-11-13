@@ -85,27 +85,59 @@ enum Action {
     },
 }
 #[tokio::main(worker_threads = 2)]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
+    let action = Cli::parse().command;
+    let management = matches!(
+        action,
+        Action::Setup(_) | Action::Remove(_) | Action::Status(_)
+    );
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         // Dependency diagnostics can contain upstream RPC error payloads.
-        .with_env_filter("off,mcp_gate=info")
+        .with_env_filter(if management {
+            "off"
+        } else {
+            "off,mcp_gate=info"
+        })
         .with_target(false)
         .init();
-    let action = Cli::parse().command;
     let json = match &action {
         Action::Setup(options) | Action::Remove(options) => options.json,
         Action::Status(options) => options.json,
         _ => false,
     };
     let result = dispatch(action).await;
-    if json && let Err(error) = &result {
-        println!(
-            "{}",
-            serde_json::json!({"format_version":1,"phase":"failed","error":error.to_string()})
-        );
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            if manage::canceled(&error) {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"format_version":1,"phase":"canceled"})
+                    );
+                } else {
+                    println!("Canceled. No changes applied.");
+                }
+                return std::process::ExitCode::SUCCESS;
+            }
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"format_version":1,"phase":"failed","error":error.to_string()})
+                );
+            }
+            eprintln!(
+                "{}",
+                error
+                    .to_string()
+                    .chars()
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect::<String>()
+            );
+            std::process::ExitCode::FAILURE
+        }
     }
-    result
 }
 async fn dispatch(action: Action) -> Result<()> {
     match action {

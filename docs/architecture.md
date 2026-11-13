@@ -3,6 +3,10 @@
 The numbered decisions below describe the initial Chrome release. The current
 generic ownership/protocol contract is in [configurable-runtime.md](configurable-runtime.md),
 including shared backends and the later resource/prompt catalog support.
+The opt-in shared backend recovery contract is documented in
+[backend-recovery.md](backend-recovery.md). Existing configurations retain manual
+recovery; approved local API backends can discard a failed process generation
+without replaying the interrupted action.
 
 ## 001 — Один Rust gateway, ленивый Node на активную MCP-сессию
 

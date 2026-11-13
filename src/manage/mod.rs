@@ -1,22 +1,26 @@
+mod context;
+mod health;
+mod inventory;
 pub mod launch;
+mod legacy;
 mod preview;
 mod recovery;
+mod removal_preview;
 mod remove;
 pub mod runtime;
 pub mod service;
 mod setup;
 mod status;
 pub mod store;
+mod ui;
 mod upgrade;
+mod wizard;
 use crate::clients::Client;
 use anyhow::{Result, ensure};
 use clap::Args;
-use std::{
-    io::{self, IsTerminal, Write},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
-#[derive(Args, Default)]
+#[derive(Args, Default, Clone)]
 pub struct Selection {
     #[arg(long, value_enum)]
     pub client: Vec<Client>,
@@ -33,6 +37,12 @@ pub struct Selection {
     pub json: bool,
     #[arg(long)]
     pub yes: bool,
+    /// Remove all managed connections within the selected scope (remove only).
+    #[arg(long)]
+    pub all: bool,
+    /// Show source files and explanations, including connections that cannot be migrated.
+    #[arg(long)]
+    pub details: bool,
 }
 #[derive(Args)]
 pub struct Status {
@@ -44,6 +54,9 @@ pub struct Status {
     pub server: Vec<String>,
     #[arg(long)]
     pub json: bool,
+    /// Show source files and full diagnostic explanations.
+    #[arg(long)]
+    pub details: bool,
     /// Explicitly initialize configured backends for diagnosis; never calls their tools.
     #[arg(long)]
     pub probe: bool,
@@ -61,19 +74,15 @@ pub async fn remove(options: Selection) -> Result<()> {
     remove::run(options).await
 }
 
+pub fn canceled(error: &anyhow::Error) -> bool {
+    error.is::<ui::Canceled>()
+}
+
 pub(crate) fn confirm(message: &str, yes: bool) -> Result<bool> {
     if yes {
         return Ok(true);
     }
-    ensure!(
-        io::stdin().is_terminal(),
-        "Interactive confirmation required; select --client and --server explicitly with --yes"
-    );
-    eprint!("{message} [y/N] ");
-    io::stderr().flush()?;
-    let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
-    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
+    ui::confirm(message)
 }
 pub(crate) fn explicit(options: &Selection) -> Result<()> {
     ensure!(

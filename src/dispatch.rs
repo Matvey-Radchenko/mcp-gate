@@ -1,6 +1,7 @@
 //! Request-scoped forwarding: response IDs, progress and cancellation never cross clients.
 use crate::{
-    ownership::{BackendSlot, SharedCallGuard},
+    ownership::{BackendSlot, FailureGuard},
+    recovery::Reason,
     worker::Worker,
 };
 use rmcp::{
@@ -8,10 +9,7 @@ use rmcp::{
     model::*,
     service::{PeerRequestOptions, RequestContext},
 };
-use std::{
-    sync::{Arc, atomic::Ordering},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 // Covers both an explicit cancellation and a dropped handler future.
 struct CancelOnDrop {
@@ -23,12 +21,18 @@ impl Drop for CancelOnDrop {
         if let Some(id) = self.id.take() {
             let peer = self.peer.clone();
             tokio::spawn(async move {
-                let _ = peer
+                if peer
                     .notify_cancelled(CancelledNotificationParam::new(
                         Some(id),
                         Some("Gateway request cancelled".into()),
                     ))
-                    .await;
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Upstream cancellation notification could not be delivered; action outcome remains unknown"
+                    );
+                }
             });
         }
     }
@@ -43,7 +47,8 @@ pub(crate) async fn invoke(
 ) -> Result<ServerResult, ErrorData> {
     let is_tool = matches!(&request, ClientRequest::CallToolRequest(_));
     let peer = worker.peer();
-    let mut shared_guard = SharedCallGuard(shared.then(|| backend.clone()));
+    let mut shared_guard =
+        FailureGuard::new(shared.then(|| backend.clone()), Reason::HandlerDropped);
     let mut progress = worker.subscribe_progress();
     let downstream_progress: Option<ProgressToken> = context
         .meta
@@ -59,10 +64,10 @@ pub(crate) async fn invoke(
     {
         Ok(handle) => handle,
         Err(_) => {
-            backend.failed.store(true, Ordering::SeqCst);
+            backend.fail(Reason::TransportClosed);
             return failure(
                 is_tool,
-                "Backend connection lost; the action was NOT retried. Restart the gateway in shared mode. Reconnect in session mode.",
+                "Backend connection lost; the action was NOT retried and its outcome is unknown. Check status for recovery. Check network/VPN if required by the backend.",
             );
         }
     };
@@ -83,27 +88,35 @@ pub(crate) async fn invoke(
                         let _ = context.peer.notify_progress(notification).await;
                     }
             }
-            _ = context.ct.cancelled() => return failure(is_tool, "Request cancelled. An in-flight tool action may already have occurred; it was not retried."),
+            _ = context.ct.cancelled() => {
+                shared_guard.reason = Reason::Cancelled;
+                return failure(is_tool, "Request cancelled. An in-flight tool action may already have occurred; it was not retried. Check status for recovery.");
+            },
         }
     };
     if result.is_ok() || matches!(&result, Err(rmcp::service::ServiceError::McpError(_))) {
         cancel.id = None;
-        shared_guard.0 = None;
+        shared_guard.disarm();
     }
     match result {
         Ok(result) => Ok(result),
         Err(rmcp::service::ServiceError::McpError(error)) => Err(error),
         Err(error) => {
+            shared_guard.reason = match &error {
+                rmcp::service::ServiceError::Timeout { .. } => Reason::Timeout,
+                rmcp::service::ServiceError::Cancelled { .. } => Reason::Cancelled,
+                _ => Reason::TransportClosed,
+            };
             if matches!(
                 error,
                 rmcp::service::ServiceError::TransportClosed
                     | rmcp::service::ServiceError::TransportSend(_)
             ) {
-                backend.failed.store(true, Ordering::SeqCst);
+                backend.fail(Reason::TransportClosed);
             }
             failure(
                 is_tool,
-                "Backend request failed or timed out. An action may already have occurred; it was NOT retried.",
+                "Backend request failed or timed out. An action may already have occurred; it was NOT retried. Check status for recovery. Check network/VPN if required by the backend.",
             )
         }
     }

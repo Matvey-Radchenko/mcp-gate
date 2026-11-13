@@ -19,10 +19,19 @@ A global npm install or a GitHub Release binary provides the same three commands
 The npm package only launches the Rust executable: installing or updating the
 package does not switch existing connections.
 
-`setup --dry-run` previews selected settings without launching a backend or writing
-files. `--client`, `--server` and `--project` narrow the selection. `--yes` requires
-both an explicit client and server. `--diff` shows a structural diff with values
-hidden. `--json` produces a versioned result on stdout; diagnostics go to stderr.
+In a terminal, `setup` asks for the scope, lets you search and select MCP connections,
+then shows a preview with an optional redacted diff. Use arrows to move, Space to
+select, Enter to continue and Esc to go back. Ctrl-C cancels before application.
+Nothing is selected automatically. `remove` offers selected connections or all
+managed connections in the chosen scope, with a preview before restoration.
+
+`setup --dry-run` previews settings without launching a backend or writing files.
+`--client`, `--server` and `--project` narrow the selection; home is never a project.
+`--details` explains source files and unavailable choices. `--diff` shows a structural
+diff with values hidden. Automation uses `--yes` with explicit client and server,
+or `remove --all --yes`. `--json` produces one versioned result on stdout and never
+prompts. Without `--yes`, noninteractive setup/remove only report or preview; they
+do not apply changes. Existing HTTP and legacy connections are never adopted.
 
 Setup preserves names and client permission settings, records private recovery
 information, prepares the catalog, registers and starts user services, checks
@@ -32,8 +41,13 @@ a running application has switched to it.
 
 Project files intended for Git are left untouched. Claude local scope can override
 a selected project through personal settings. Other project entries without a
-verified local override are skipped. Commands with unresolved working directories
-or environment expansion are also skipped with a reason.
+verified local override are skipped. For a personal MCP without a fixed directory,
+the wizard can ask you to explicitly choose one. Its preview explains that this
+directory will apply across all projects. Choose it only when this matches the
+MCP's intended context; otherwise retain the direct connection or use a verified
+project-local scope. No unsupported `cwd` field is added to client settings.
+Unresolved environment references and missing dependencies remain blocked with
+an explanation; setup never changes another file's permissions silently.
 
 Setup copies the Rust binary into permanent versioned storage, independently of
 npx caches. macOS uses a LaunchAgent; Windows uses a user Task Scheduler logon task.
@@ -47,7 +61,13 @@ or Docker may download their own dependencies. Arbitrary shell dependency trees
 are not analyzed or copied. Reviewed recipes use narrow version and invocation
 conditions; names alone never select shared mode.
 
-`status` performs passive diagnostics. `status --probe` explicitly requests
+`status` lists direct, managed, legacy and other HTTP connections by client.
+Passive legacy health checks currently use verified literal launch arguments in
+macOS user LaunchAgents; an arbitrary local URL or executable helper is not proof
+of gateway ownership. Helpers are never executed by inventory discovery.
+`status --details` shows sources and diagnostic reasons. Gateway readiness,
+backend activity and confirmation of an application's new connection are separate.
+`status --probe` explicitly requests
 backend initialization when the gateway can safely enter maintenance and has no
 existing backend. Busy gateways are deferred. `remove` restores direct connections
 without deleting MCP packages, user data, logs, browser artifacts or old releases.

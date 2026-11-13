@@ -1,5 +1,5 @@
 use super::{
-    Selection, preview, recovery, runtime, service,
+    Selection, recovery, runtime, service,
     store::{self, Journal},
 };
 use crate::clients::{Binding, document};
@@ -9,38 +9,13 @@ use serde_json::json;
 use std::{collections::BTreeSet, fs, path::Path};
 
 pub async fn run(options: Selection) -> Result<()> {
-    super::explicit(&options)?;
+    if !options.all {
+        super::explicit(&options)?;
+    }
     let root = store::root()?;
     let registry = store::load(&root)?;
-    let mut selected = Vec::new();
-    for record in &registry.gateways {
-        for b in &record.bindings {
-            if super::matches_binding(&options, b)
-                && (options.dry_run
-                    || options.server.contains(&b.name)
-                    || super::confirm(
-                        &format!(
-                            "Restore {} / {} to its direct connection?",
-                            b.client, b.name
-                        ),
-                        false,
-                    )?)
-            {
-                selected.push((record.id.clone(), b.clone()));
-            }
-        }
-    }
-    let plan = json!({"format_version":1,"phase":"preview","connections":selected.iter().map(|(_,b)| {
-        let mut value=preview::target(b);
-        if options.diff { value["diff"]=json!({"before":preview::redact(&b.after),"after":preview::redact(&b.before)}); }
-        value
-    }).collect::<Vec<_>>(),"packages_and_data":"retained","restart":"each affected application once"});
-    if options.dry_run || selected.is_empty() {
-        println!("{plan}");
-        return Ok(());
-    }
-    eprintln!("{plan}");
-    if !super::confirm("Restore selected direct MCP connections?", options.yes)? {
+    let selected = super::removal_preview::choose(&options, &registry).await?;
+    if selected.is_empty() {
         return Ok(());
     }
     let lock = fs::OpenOptions::new()
@@ -58,7 +33,7 @@ pub async fn run(options: Selection) -> Result<()> {
     let mut pending = Vec::new();
     let mut keep = Vec::new();
     for record in registry.gateways {
-        if !record.removing {
+        if !record.removing || !selected.iter().any(|(id, _)| id == &record.id) {
             keep.push(record);
             continue;
         }
