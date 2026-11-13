@@ -1,9 +1,10 @@
 #![cfg(feature = "test-backend")]
 use mcp_gate::clients::{self, Client};
 use serde_json::{Value, json};
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
 use std::{
     fs,
-    path::PathBuf,
     process::{Command, Output},
 };
 
@@ -275,6 +276,7 @@ fn legacy_health_fixture(runtime: Value, expected: &str) {
     assert!(!root.join("unused-state").exists());
 }
 
+#[cfg(target_os = "macos")]
 fn health_port() -> u16 {
     use std::{
         io::{Read, Write},
@@ -288,6 +290,10 @@ fn health_port() -> u16 {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if let Ok((mut stream, _)) = listener.accept() {
+                // Accepted sockets stay nonblocking. One immediate read can
+                // return before the request arrives and make a live gateway
+                // look stopped. Wait for the bytes instead.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
@@ -317,6 +323,7 @@ fn health_port() -> u16 {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn running_launchagents_are_listed_and_adoption_can_be_previewed() {
     let fixture = Fixture::new();
     let root = fixture.directory.path();
@@ -395,8 +402,14 @@ fn running_launchagents_are_listed_and_adoption_can_be_previewed() {
         String::from_utf8_lossy(&status.stderr)
     );
     let text = String::from_utf8(status.stdout).unwrap();
-    assert!(text.contains("alpha") && text.contains("managed") && text.contains("running"));
-    assert!(text.contains("beta") && text.contains("unmanaged"));
+    assert!(
+        text.contains("alpha") && text.contains("managed") && text.contains("running"),
+        "status stdout:\n{text}"
+    );
+    assert!(
+        text.contains("beta") && text.contains("unmanaged"),
+        "status stdout:\n{text}"
+    );
     assert!(text.contains("mcp-gate adopt <name>"));
     assert!(!text.trim_start().starts_with('{'));
     let preview = fixture
@@ -424,6 +437,56 @@ fn running_launchagents_are_listed_and_adoption_can_be_previewed() {
     assert!(removal_text.contains("alpha"));
     assert!(removal_text.contains("Dry run"));
     assert!(!removal_text.trim_start().starts_with('{'));
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn launchagent_plists_are_not_discovered() {
+    let fixture = Fixture::new();
+    let root = fixture.directory.path();
+    let agents = root.join("Library/LaunchAgents");
+    fs::create_dir_all(&agents).unwrap();
+    let config = root.join("alpha/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "not-a-gateway").unwrap();
+    fs::write(
+        agents.join("local.mcp-gate.alpha.plist"),
+        serde_json::json!({
+            "Label": "local.mcp-gate.alpha",
+            "ProgramArguments": [
+                env!("CARGO_BIN_EXE_mcp-gate"),
+                "serve",
+                "--config",
+                config
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let status = fixture.run(&["status"]);
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let text = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        text.contains("No local.mcp-gate LaunchAgents found."),
+        "status stdout:\n{text}"
+    );
+    assert!(!text.contains("unmanaged"), "status stdout:\n{text}");
+    let adopt = fixture.run(&["adopt", "alpha", "--dry-run"]);
+    assert!(!adopt.status.success());
+    let err = String::from_utf8_lossy(&adopt.stderr);
+    assert!(
+        err.contains("No LaunchAgent local.mcp-gate.alpha with a readable definition was found"),
+        "{err}"
+    );
+}
+
+#[test]
+fn help_limits_all_to_remove_and_json_parse_errors_are_one_line() {
+    let fixture = Fixture::new();
     let setup_help = fixture.command(&["setup", "--help"]).output().unwrap();
     assert!(!String::from_utf8_lossy(&setup_help.stdout).contains("--all"));
     let remove_help = fixture.command(&["remove", "--help"]).output().unwrap();
