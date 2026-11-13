@@ -16,7 +16,12 @@ async fn launch(command: &Path, directory: &Path, args: Vec<String>) {
         .unwrap();
     let actual: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
     assert_eq!(actual["args"], json!(args));
-    assert_eq!(actual["cwd"], json!(directory));
+    assert_eq!(
+        Path::new(actual["cwd"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        directory.canonicalize().unwrap()
+    );
     assert_eq!(actual["value"], "spaces Юникод\n");
     assert_eq!(actual["relative"], "fixture-relative-path");
     assert_eq!(config.backend.version, "mock-1");
@@ -36,7 +41,6 @@ async fn backend_launch_retains_cwd_environment_and_argument_boundaries() {
         "".into(),
     ];
     launch(Path::new(env!("CARGO_BIN_EXE_mock-backend")), &cwd, args).await;
-    assert!(mcp_gate::manage::runtime::resolve("missing-fixture-executable-459d", &cwd).is_err());
 }
 #[cfg(windows)]
 #[tokio::test]

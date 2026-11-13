@@ -17,7 +17,26 @@ enum Action {
     /// Connect installed MCP servers through local gateways.
     Setup(manage::Selection),
     /// Restore selected direct MCP connections; keep packages and data.
-    Remove(manage::Selection),
+    Remove {
+        #[command(flatten)]
+        options: manage::Selection,
+        /// Restore every managed connection in the selected scope.
+        #[arg(long)]
+        all: bool,
+        /// Managed connection name. Equivalent to --server when that list is empty.
+        name: Option<String>,
+    },
+    /// Record an existing local.mcp-gate LaunchAgent in this installation.
+    Adopt {
+        /// Gateway name from the LaunchAgent label local.mcp-gate.<name>.
+        name: String,
+        /// Show the ownership change without writing the registry.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit one JSON document on stdout.
+        #[arg(long)]
+        json: bool,
+    },
     /// Stage a separate configured release. Does not load launchd or change any client.
     #[command(hide = true)]
     Stage {
@@ -76,6 +95,9 @@ enum Action {
     Check {
         #[arg(long)]
         config: PathBuf,
+        /// Emit one JSON document on stdout.
+        #[arg(long)]
+        json: bool,
     },
     /// Create a private random local client token. Never overwrites an existing file.
     #[command(hide = true)]
@@ -85,27 +107,63 @@ enum Action {
     },
 }
 #[tokio::main(worker_threads = 2)]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
+    let action = match Cli::try_parse() {
+        Ok(cli) => cli.command,
+        Err(error) => {
+            if error.use_stderr() && std::env::args().any(|arg| arg == "--json") {
+                println!("{}", json_parse_error(&error));
+                std::process::exit(2);
+            }
+            error.exit();
+        }
+    };
+    let management = matches!(
+        action,
+        Action::Setup(_) | Action::Remove { .. } | Action::Adopt { .. } | Action::Status(_)
+    );
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         // Dependency diagnostics can contain upstream RPC error payloads.
-        .with_env_filter("off,mcp_gate=info")
+        .with_env_filter(if management {
+            "off"
+        } else {
+            "off,mcp_gate=info"
+        })
         .with_target(false)
         .init();
-    let action = Cli::parse().command;
     let json = match &action {
-        Action::Setup(options) | Action::Remove(options) => options.json,
+        Action::Setup(options) | Action::Remove { options, .. } => options.json,
         Action::Status(options) => options.json,
+        Action::Adopt { json, .. } | Action::Check { json, .. } => *json,
         _ => false,
     };
     let result = dispatch(action).await;
-    if json && let Err(error) = &result {
-        println!(
-            "{}",
-            serde_json::json!({"format_version":1,"phase":"failed","error":error.to_string()})
-        );
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            if manage::canceled(&error) {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"format_version":1,"phase":"canceled"})
+                    );
+                } else {
+                    println!("Canceled. No changes applied.");
+                }
+                return std::process::ExitCode::SUCCESS;
+            }
+            let message = plain(&error.to_string());
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"format_version":1,"phase":"failed","error":message})
+                );
+            }
+            eprintln!("{message}");
+            std::process::ExitCode::FAILURE
+        }
     }
-    result
 }
 async fn dispatch(action: Action) -> Result<()> {
     match action {
@@ -125,7 +183,12 @@ async fn dispatch(action: Action) -> Result<()> {
             );
         }
         Action::Setup(options) => manage::setup(options).await?,
-        Action::Remove(options) => manage::remove(options).await?,
+        Action::Remove { options, all, name } => manage::remove(options, all, name).await?,
+        Action::Adopt {
+            name,
+            dry_run,
+            json,
+        } => manage::adopt(name, dry_run, json).await?,
         Action::Status(options) => manage::status(options).await?,
         Action::CloseSession { config, id } => {
             let config = Config::load(&config)?;
@@ -157,17 +220,24 @@ async fn dispatch(action: Action) -> Result<()> {
         Action::InitToken { output } => {
             install::init_token(&output)?;
         }
-        Action::Check { config } => {
+        Action::Check { config, json } => {
             let config = Config::load(&config)?;
             config.token()?;
             let catalog = Catalog::load(&config.catalog_file, &config.backend)?;
             config.tool_policy.validate_catalog(&catalog.tools)?;
-            println!(
-                "OK: backend {}, {} tools, max {} workers",
-                config.backend.version,
-                catalog.tools.len(),
-                config.max_workers
-            );
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"format_version":1,"phase":"ok","backend":config.backend.version,"tools":catalog.tools.len(),"max_workers":config.max_workers})
+                );
+            } else {
+                println!(
+                    "OK: backend {}, {} tools, max {} workers",
+                    config.backend.version,
+                    catalog.tools.len(),
+                    config.max_workers
+                );
+            }
         }
         Action::Catalog { config } => {
             let config = Config::load(&config)?;
@@ -195,6 +265,7 @@ async fn serve(config: PathBuf) -> Result<()> {
         .open(config.state_dir.join("gateway.lock"))?;
     lock.try_lock_exclusive()
         .context("Another gateway owns this state directory")?;
+    let mut shutdown = mcp_gate::platform::ShutdownSignal::new()?;
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .context("Cannot bind gateway listener")?;
@@ -209,7 +280,7 @@ async fn serve(config: PathBuf) -> Result<()> {
             .await
     });
     let failure = tokio::select! {
-        signal = mcp_gate::platform::shutdown_signal() => { signal?; None },
+        signal = shutdown.wait() => { signal?; None },
         result = &mut http => Some(result),
     };
     tracing::info!("gateway shutting down");
@@ -222,4 +293,57 @@ async fn serve(config: PathBuf) -> Result<()> {
     }
     drop(lock);
     Ok(())
+}
+
+fn json_parse_error(error: &clap::error::Error) -> String {
+    let rendered = plain(&error.to_string());
+    let mut lines = rendered
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let summary = lines.next().unwrap_or("invalid arguments");
+    let summary = summary
+        .strip_prefix("error:")
+        .unwrap_or(summary)
+        .trim()
+        .to_string();
+    let mut usage = None;
+    let mut hint = None;
+    for line in lines {
+        if let Some(text) = line.strip_prefix("Usage:") {
+            usage = Some(text.trim().to_string());
+        } else if hint.is_none() {
+            hint = Some(line.to_string());
+        }
+    }
+    let mut value = serde_json::json!({"format_version":1,"phase":"failed","error":summary});
+    if let Some(usage) = usage {
+        value["usage"] = serde_json::json!(usage);
+    }
+    if let Some(hint) = hint {
+        value["hint"] = serde_json::json!(hint);
+    }
+    value.to_string()
+}
+
+fn plain(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for next in chars.by_ref() {
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if !c.is_control() || c == '\n' || c == '\t' {
+            out.push(c);
+        }
+    }
+    out
 }

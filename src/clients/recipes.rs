@@ -7,6 +7,7 @@ use std::{
 };
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Recipe {
+    pub platforms: Vec<String>,
     pub id: String,
     pub mode: String,
     pub server_version: String,
@@ -18,6 +19,16 @@ pub struct Recipe {
     pub credential_keys: Vec<String>,
     pub disabled_tools: Vec<String>,
     pub conditions: String,
+    #[serde(default)]
+    pub directory_env: Vec<String>,
+    #[serde(default)]
+    pub working_directory_env: Option<String>,
+    #[serde(default)]
+    pub allowed_args: Option<Vec<String>>,
+    #[serde(default)]
+    pub required_options: BTreeMap<String, String>,
+    #[serde(default)]
+    pub allowed_env: Option<Vec<String>>,
 }
 pub fn all() -> Vec<Recipe> {
     serde_json::from_str(include_str!("../../recipes/verified.json"))
@@ -40,6 +51,10 @@ pub fn matching(candidate: &Candidate) -> Option<Recipe> {
     let hash = entry.as_ref().and_then(|p| crate::catalog::digest(p).ok());
     let package = entry.as_ref().and_then(|p| metadata(p));
     all().into_iter().find(|r| {
+        let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+        if !r.platforms.contains(&platform) {
+            return false;
+        }
         if r.artifact_sha256
             .as_ref()
             .is_some_and(|h| Some(h) != hash.as_ref())
@@ -62,6 +77,22 @@ pub fn matching(candidate: &Candidate) -> Option<Recipe> {
         r.required_args
             .iter()
             .all(|a| candidate.command.contains(a))
+            && r.allowed_env
+                .as_ref()
+                .is_none_or(|allowed| candidate.env.keys().all(|key| allowed.contains(key)))
+            && r.allowed_args.as_ref().is_none_or(|allowed| {
+                candidate
+                    .command
+                    .iter()
+                    .skip(2)
+                    .all(|a| allowed.contains(a))
+            })
+            && r.required_options.iter().all(|(key, value)| {
+                candidate
+                    .command
+                    .windows(2)
+                    .any(|args| args[0] == *key && args[1] == *value)
+            })
             && r.required_env
                 .iter()
                 .all(|(k, v)| candidate.env.get(k) == Some(v))

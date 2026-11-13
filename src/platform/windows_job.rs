@@ -1,5 +1,5 @@
 //! Assign the suspended child to a kill-on-close job before any backend code runs.
-use std::{io, mem::size_of, ptr};
+use std::{io, mem::size_of, ptr, time::Duration};
 use tokio::process::Child;
 use windows_sys::Win32::{
     Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE},
@@ -9,8 +9,9 @@ use windows_sys::Win32::{
         },
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, TerminateJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+            QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
         },
         Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
     },
@@ -63,10 +64,42 @@ impl Job {
             Ok(job)
         }
     }
-    pub fn terminate(&self) {
+    pub fn terminate(&self) -> io::Result<()> {
         // SAFETY: the job owns only processes launched by this worker.
         unsafe {
-            TerminateJobObject(self.0, 1);
+            if TerminateJobObject(self.0, 1) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+    pub async fn wait_empty(&self) -> io::Result<()> {
+        // Job termination, like TerminateProcess, is asynchronous. Keep its
+        // handle until all descendants have exited, including nested browser jobs.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while self.active_processes()? != 0 {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Owned job is still stopping"))?
+    }
+    fn active_processes(&self) -> io::Result<u32> {
+        // SAFETY: the owned job is valid and the output has the matching ABI size.
+        unsafe {
+            let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+            if QueryInformationJobObject(
+                self.0,
+                JobObjectBasicAccountingInformation,
+                &mut info as *mut _ as _,
+                size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                ptr::null_mut(),
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(info.ActiveProcesses)
         }
     }
 }

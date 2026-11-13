@@ -1,0 +1,51 @@
+name: Native Intel Docker acceptance
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  docker:
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    env:
+      DOCKER_IMAGE: node@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install 1.95.0 --profile minimal && rustup default 1.95.0
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-1.95.0-darwin-x64-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: rust-1.95.0-darwin-x64-${{ hashFiles('Cargo.lock') }}-
+      - name: Install isolated Docker test infrastructure
+        run: brew install colima docker
+      - name: Start a dedicated container engine
+        timeout-minutes: 8
+        run: |
+          colima start --profile mcp-gate-ci --runtime docker --vm-type vz --cpu 2 --memory 4 --disk 12 --mount "$RUNNER_TEMP:w"
+          docker --context colima-mcp-gate-ci info --format '{{.ServerVersion}} {{.OSType}} {{.Architecture}}'
+          colima version
+          docker --version
+          mkdir -p "$RUNNER_TEMP/mcp-gate-container-fixtures"
+          echo "TMPDIR=$RUNNER_TEMP/mcp-gate-container-fixtures" >> "$GITHUB_ENV"
+          echo 'DOCKER_CONTEXT=colima-mcp-gate-ci' >> "$GITHUB_ENV"
+          echo "DOCKER_BINARY=$(command -v docker)" >> "$GITHUB_ENV"
+      - name: Prepare the reviewed fixture image
+        timeout-minutes: 5
+        run: |
+          docker pull "$DOCKER_IMAGE"
+          docker run --rm --pull=never "$DOCKER_IMAGE" node --version
+      - name: Actual Docker ownership, independent state and no replay
+        timeout-minutes: 8
+        run: cargo test --locked --all-features --test docker -- --ignored
+      - name: Remove only the CI container engine
+        if: always()
+        timeout-minutes: 3
+        run: |
+          if command -v colima >/dev/null; then
+            colima delete --profile mcp-gate-ci --data --force
+          fi

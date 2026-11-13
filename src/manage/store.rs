@@ -50,6 +50,10 @@ pub fn root() -> Result<PathBuf> {
     anyhow::bail!("Automatic setup supports macOS and Windows only")
 }
 pub fn home() -> Result<PathBuf> {
+    #[cfg(feature = "test-backend")]
+    if let Some(home) = std::env::var_os("MCP_GATE_TEST_HOME") {
+        return Ok(PathBuf::from(home));
+    }
     Ok(PathBuf::from(
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             .context("User home directory is not set")?,
@@ -74,6 +78,7 @@ pub fn prepare(root: &Path) -> Result<()> {
     Ok(())
 }
 pub fn load(root: &Path) -> Result<Registry> {
+    validate_operations(root)?;
     let p = root.join("registry.json");
     if !p.exists() {
         return Ok(Registry {
@@ -89,6 +94,37 @@ pub fn load(root: &Path) -> Result<Registry> {
         "Unsupported registry version; use a compatible mcp-gate version"
     );
     Ok(registry)
+}
+fn validate_operations(root: &Path) -> Result<()> {
+    let directory = root.join("operations");
+    if !directory.exists() {
+        return Ok(());
+    }
+    for item in fs::read_dir(directory)? {
+        let path = item?.path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        crate::platform::validate_private(&path)?;
+        let journal: Journal = serde_json::from_slice(&fs::read(path)?)
+            .map_err(|_| anyhow::anyhow!("Unknown or invalid operation format; no changes made"))?;
+        ensure!(
+            journal.format_version == 1
+                && matches!(
+                    journal.phase.as_str(),
+                    "preparing"
+                        | "committing"
+                        | "removing"
+                        | "upgrading"
+                        | "complete"
+                        | "restored"
+                        | "needs-attention"
+                        | "restored-service-unavailable"
+                ),
+            "Unsupported operation version/phase; use a compatible installer"
+        );
+    }
+    Ok(())
 }
 pub fn save(root: &Path, registry: &Registry) -> Result<()> {
     atomic(
@@ -137,6 +173,7 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileChange {
     pub existed: bool,
     pub path: PathBuf,
@@ -144,6 +181,7 @@ pub struct FileChange {
     pub after: Vec<u8>,
 }
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Journal {
     pub format_version: u32,
     pub phase: String,

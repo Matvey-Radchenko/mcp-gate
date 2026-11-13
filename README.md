@@ -5,8 +5,23 @@ while backends start on demand. Verified stateless API servers can share a
 single serialized backend; session-owned servers keep independent MCP connections.
 Actions are never retried or replayed automatically.
 
-**0.1.0 is in release preparation and has not been published.** See the
-[compatibility and release gates](docs/compatibility.md) before relying on a scenario.
+**0.1.0 is in release preparation and has not been published.** Native login
+acceptance is macOS ARM64 only. The Intel x86_64 check under Rosetta 2 has not
+been run; Windows x64 was smoke-tested under Wine, not on a native Windows login.
+Stability on native Intel Macs and Windows is not guaranteed, and reports are
+welcome. See the [compatibility and release gates](docs/compatibility.md).
+
+In a terminal, `setup` and `remove` ask you to choose connections and show a
+preview before changing anything. Arrows move, Space selects, Enter continues,
+and Esc goes back. Nothing is selected automatically. Non-interactive use never
+prompts: pass `--json` for one JSON document on stdout, and `--dry-run` to
+preview. Applying changes from an agent requires explicit `--client` and
+`--server` with `--yes`, or `remove --all --yes`. `status` lists client
+connections and `local.mcp-gate.<name>` LaunchAgents. An unmanaged agent can be
+recorded with `adopt <name>`; `adopt <name> --dry-run` changes nothing.
+`--details` explains sources. Argument errors are JSON when `--json` is present.
+Agents should follow [docs/agents.md](docs/agents.md). A reusable skill is in
+[skills/mcp-gate/SKILL.md](skills/mcp-gate/SKILL.md).
 
 ```sh
 npx mcp-gate@latest setup
@@ -47,7 +62,7 @@ or Docker may download their own dependencies. Arbitrary shell dependency trees
 are not analyzed or copied. Reviewed recipes use narrow version and invocation
 conditions; names alone never select shared mode.
 
-`status` performs passive diagnostics. `status --probe` explicitly requests
+`status` lists connections and LaunchAgents. A connection kind of `external` means the client already uses a gateway this installation did not set up, so setup and remove do not own it. `status --json` prints one compact JSON object. `status --probe` explicitly requests
 backend initialization when the gateway can safely enter maintenance and has no
 existing backend. Busy gateways are deferred. `remove` restores direct connections
 without deleting MCP packages, user data, logs, browser artifacts or old releases.
@@ -69,5 +84,6 @@ tests. GitHub CI runs native checks on all three release platforms and verifies
 clean npm archive installation. Client/service/browser acceptance is tracked
 separately; a workflow definition is not evidence that its runs passed.
 
-MIT licensed. Old `mcp-session-gateway` configurations remain readable. Existing
-legacy installations are recognized but are not adopted or renamed automatically.
+MIT licensed. Old `mcp-session-gateway` configurations remain readable. Connections
+that already route through a gateway this installation did not set up are reported
+as `external` and are not adopted or renamed automatically.

@@ -161,21 +161,10 @@ impl Backend {
         if self.profile == Profile::Stdio {
             // Generic backends do not accidentally inherit unrelated credentials.
             command.env_clear();
-            for key in [
-                "PATH",
-                "HOME",
-                "TMPDIR",
-                "LANG",
-                "LC_ALL",
-                "SystemRoot",
-                "USERPROFILE",
-                "TEMP",
-                "TMP",
-                "COMSPEC",
-                "PATHEXT",
-            ]
-            .into_iter()
-            .chain(self.inherit_env.iter().map(String::as_str))
+            for key in crate::platform::BASE_ENVIRONMENT
+                .iter()
+                .copied()
+                .chain(self.inherit_env.iter().map(String::as_str))
             {
                 if let Some(value) = std::env::var_os(key) {
                     command.env(key, value);

@@ -237,10 +237,14 @@ impl Worker {
 }
 impl Resources {
     async fn close(mut self) {
-        let _ = self
+        if self
             .service
             .close_with_timeout(Duration::from_secs(2))
-            .await;
+            .await
+            .is_err()
+        {
+            tracing::warn!("Backend protocol shutdown incomplete; closing owned processes");
+        }
         self.process.close().await;
     }
 }

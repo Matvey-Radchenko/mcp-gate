@@ -1,0 +1,58 @@
+{
+  "format_version": 1,
+  "version": "0.1.0",
+  "source_commit": "0d1e4dce5ec2bfecab8b1be9cffcafdbadd3bf6f",
+  "artifact_source": "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/42873206494",
+  "archive_sha256": "d78928b40dff5055ab37005a351d05f28a044b31cbc0eb8ca412f5b402301e7c",
+  "binary_sha256": "e382ad8150ec249316629f34354c72b08e957bdb79d49e9aa0f45b11077ae75b",
+  "backend_sha256": "b7d3727becc4784048117beb0073fc2eedbe97342f39bceedd3521434528f72d",
+  "platform": {
+    "os": "macOS",
+    "version": "26.7.1",
+    "build": "25G241",
+    "architecture": "arm64"
+  },
+  "scope": "Isolated fixture in an existing user account. A LaunchAgent-run production binary started a mock backend placed under the account Documents folder and completed one tool call. This records already-granted Documents access; the first-prompt and deny paths were not observed. TCC was not reset.",
+  "client": {
+    "name": "mcp-gate-tcc-fixture-20261113",
+    "version": "1",
+    "transport": "Streamable HTTP"
+  },
+  "backend": {
+    "name": "mock",
+    "version": "mock-1",
+    "ownership": "session",
+    "location": "Documents/mcp-gate-acceptance-tcc/mock-backend"
+  },
+  "emulation": null,
+  "prepared_at": "2026-11-13T18:43:56+01:00",
+  "verified_at": "2026-11-13T18:45:00+01:00",
+  "checks": {
+    "gateway_label": "local.mcp-gate.8e1b3aeb-e7c0-4a2c-a59f-41924f17d45c",
+    "listen": "127.0.0.1:59553",
+    "passive_sessions_before_tool_call": 0,
+    "passive_workers_before_tool_call": 0,
+    "passive_diagnostic_issues": [],
+    "launchd_gateway_spawned_documents_backend": true,
+    "tool_call_ok": true,
+    "fresh_backend_state": null,
+    "backend_pid": 33206,
+    "tool_call_duration_ms": 259,
+    "tcc_dialog_appeared": false,
+    "tcc_first_prompt_or_deny_path_observed": false,
+    "tcc_prior_grant_state": "already_granted",
+    "tccutil_reset_performed": false,
+    "live_services_untouched_during_setup": true,
+    "fixture_service_and_registration_removed": true,
+    "fixture_plist_removed": true,
+    "fixture_listen_port_closed": true,
+    "documents_test_directory_deleted": true,
+    "live_seven_labels_and_ports_intact_after_remove": true
+  },
+  "evidence_handling": "Sanitized summary of local assertions; credentials, token values and raw home paths remain private",
+  "remaining": [
+    "macOS protected-folder first-prompt and deny-path behavior was not observed because access was already granted; no TCC reset was performed",
+    "Actual login acceptance on macOS Intel and Windows x64 remains outstanding (Intel/Rosetta postponed; Windows under Wine was smoke-only)"
+  ],
+  "removed_at": "2026-11-13T18:47:56+01:00"
+}

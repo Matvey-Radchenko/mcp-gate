@@ -2,57 +2,58 @@ use crate::clients::{Binding, Candidate};
 use serde_json::{Value, json};
 
 pub fn display(plan: &Value) {
-    eprintln!("Setup preview:");
+    println!("\nSetup preview");
     for server in plan["servers"].as_array().into_iter().flatten() {
-        eprintln!(
-            "  {} / {}: direct stdio -> gateway, mode {}",
-            server["client"].as_str().unwrap_or("?"),
-            server["name"].as_str().unwrap_or("?"),
-            server["mode"].as_str().unwrap_or("session")
+        println!(
+            "  {} / {}: direct → gateway ({})",
+            text(&server["client"]),
+            text(&server["name"]),
+            text(&server["mode"])
         );
-        eprintln!("    Source: {}", server["source"].as_str().unwrap_or("?"));
-        eprintln!(
-            "    Local destination: {}",
-            server["target"].as_str().unwrap_or("?")
+        println!("    Source: {}", text(&server["source"]));
+        println!("    Local destination: {}", text(&server["target"]));
+        println!(
+            "    Backend directory: {}",
+            text(&server["working_directory"])
         );
-        if let Some(reason) = server["issue"].as_str() {
-            eprintln!("    Skipped: {reason}");
+        if let Some(note) = server["context_note"].as_str() {
+            println!("    Context change: {note}");
         }
         if let Some(conditions) = server["recipe"]["conditions"].as_str() {
-            eprintln!("    Recipe conditions: {conditions}");
+            println!("    Recipe conditions: {}", super::ui::safe(conditions));
         }
         if let Some(diff) = server.get("diff") {
-            eprintln!("    Redacted diff: {diff}");
+            println!("    Redacted diff: {diff}");
         }
     }
-    for server in plan["skipped"].as_array().into_iter().flatten() {
-        eprintln!(
-            "  Skipped {} / {}: {}",
-            server["client"], server["name"], server["issue"]
-        );
-    }
     for gateway in plan["managed"].as_array().into_iter().flatten() {
-        eprintln!(
-            "  Existing gateway {}: {}",
-            gateway["id"].as_str().unwrap_or("?"),
-            gateway["action"].as_str().unwrap_or("?")
-        );
-        for connection in gateway["connections"].as_array().into_iter().flatten() {
-            eprintln!(
-                "    {} / {} ({})",
-                connection["client"], connection["name"], connection["source"]
+        for b in gateway["connections"].as_array().into_iter().flatten() {
+            println!(
+                "  {} / {}: {}",
+                text(&b["client"]),
+                text(&b["name"]),
+                text(&gateway["action"])
             );
         }
     }
-    eprintln!(
-        "Original command, argument order and client permissions are retained. Authentication stays in private files."
+    println!(
+        "\nCommands, argument order and client permissions are preserved. Credentials stay private."
     );
-    eprintln!(
-        "Setup registers user autostart and starts the Rust gateways now. MCP backends stay lazy after discovery."
+    println!(
+        "User autostart is registered and gateways start now; backends start on demand after discovery."
     );
-    eprintln!(
-        "Discovery runs the original command; npx, uvx or Docker may download dependencies. Readiness does not prove the application has switched."
+    println!("Discovery runs the original command; npx, uvx or Docker may download dependencies.");
+    if cfg!(target_os = "macos") {
+        println!(
+            "macOS may request separate permission for a background gateway to access protected folders."
+        );
+    }
+    println!(
+        "Restart each affected application once after setup. Its new connection remains unconfirmed until used."
     );
+}
+fn text(value: &Value) -> String {
+    super::ui::safe(value.as_str().unwrap_or("?"))
 }
 pub fn redact(value: &Value) -> Value {
     match value {
@@ -92,7 +93,7 @@ pub fn managed(record: &super::store::Record, hash: &str) -> Value {
         "backend_or_catalog_changed":catalog_changed,
         "action":if record.removing { "finish pending remove" } else if catalog_changed {
             "idle gateway: rediscover original command and review catalog changes; busy gateway: defer"
-        } else { "keep current healthy service, or replace it when idle" },
+        } else { if record.binary_hash == hash { "check current service; retain it if healthy" } else { "update gateway when idle; retain endpoint and credentials" } },
         "endpoint_and_credentials":"preserved"})
 }
 

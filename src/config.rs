@@ -18,6 +18,8 @@ pub struct Config {
     pub ownership: Ownership,
     #[serde(default)]
     pub shared_client_roots: SharedClientRoots,
+    #[serde(default, skip_serializing_if = "SharedRecovery::is_manual")]
+    pub shared_recovery: SharedRecovery,
     #[serde(default = "default_queue")]
     pub max_pending_calls: usize,
     #[serde(default = "default_startup")]
@@ -59,6 +61,20 @@ pub enum SharedClientRoots {
     /// Explicit operator decision for root-independent APIs. Never advertise or
     /// forward client roots upstream; backend context is fixed by its config.
     Ignore,
+}
+/// Restart only backends whose volatile state may be discarded. This never
+/// retries an action or establishes whether a remote write completed.
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SharedRecovery {
+    #[default]
+    Manual,
+    Restart,
+}
+impl SharedRecovery {
+    pub fn is_manual(&self) -> bool {
+        *self == Self::Manual
+    }
 }
 fn default_workers() -> usize {
     4
@@ -105,6 +121,11 @@ impl Config {
             "Invalid queue limits"
         );
         self.backend.validate()?;
+        ensure!(
+            self.shared_recovery == SharedRecovery::Manual
+                || (self.ownership == Ownership::Shared && !self.backend.docker),
+            "Automatic recovery requires an explicitly reviewed shared, non-Docker backend"
+        );
         ensure!(
             self.shared_client_roots == SharedClientRoots::Reject
                 || self.ownership == Ownership::Shared,

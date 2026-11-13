@@ -1,5 +1,5 @@
 use super::{
-    Selection, preview, recovery, runtime, service,
+    Selection, recovery, runtime, service,
     store::{self, Journal, Registry},
     upgrade,
 };
@@ -9,98 +9,30 @@ use fs2::FileExt;
 use serde_json::json;
 use std::{collections::BTreeSet, fs, path::Path};
 
-pub async fn run(options: Selection) -> Result<()> {
+pub async fn run(mut options: Selection) -> Result<()> {
+    anyhow::ensure!(
+        !options.all,
+        "setup does not accept --all. Select connections in the wizard or use explicit --client and --server."
+    );
     super::explicit(&options)?;
     let root = store::root()?;
     // Reading the format precedes all writes, including binary copies.
     let registry = store::load(&root)?;
-    let project = options
-        .project
-        .clone()
-        .unwrap_or(std::env::current_dir()?)
-        .canonicalize()?;
-    let candidates: Vec<_> = clients::discover_current(
-        &store::home()?,
-        &project,
-        &options.client,
-        options.project.is_some(),
-    )?
-    .into_iter()
-    .filter(|c| super::matches(&options, c.binding.client, &c.binding.name))
-    .filter(|c| {
-        !registry.gateways.iter().any(|r| {
-            r.bindings
-                .iter()
-                .any(|b| b.target == c.binding.target && b.path == c.binding.path)
-        })
-    })
-    .collect();
-    let hash = crate::catalog::digest(&std::env::current_exe()?)?;
-    let managed: Vec<_> = registry
-        .gateways
-        .iter()
-        .filter(|r| {
-            r.bindings
-                .iter()
-                .any(|b| super::matches_binding(&options, b))
-        })
-        .map(|r| preview::managed(r, &hash))
-        .collect();
-    let mut plan = json!({"servers":candidates.iter().map(|c| {
-        let mut v=c.summary(); if options.diff { v["diff"] = preview::diff(c); } v
-    }).collect::<Vec<_>>(),"managed":managed,
-        "discovery":"Runs the original command. npx, uvx and Docker may download dependencies.",
-        "verification":"Gateway readiness does not prove the running application has switched."});
-    if options.dry_run {
-        if options.json {
+    let Some(chosen) = super::wizard::setup(&mut options, &registry).await? else {
+        return Ok(());
+    };
+    let plan = chosen.plan;
+    if !options.json {
+        println!(
+            "Preparing {} new connections and checking {} existing gateways...",
+            chosen.candidates.len(),
+            chosen.gateways.len()
+        );
+        if !chosen.candidates.is_empty() {
             println!(
-                "{}",
-                serde_json::to_string_pretty(
-                    &json!({"format_version":1,"phase":"preview","plan":plan})
-                )?
+                "Discovery runs the original command; npx, uvx or Docker may download dependencies."
             );
-        } else {
-            preview::display(&plan);
         }
-        return Ok(());
-    }
-    plan["skipped"] = json!(
-        candidates
-            .iter()
-            .filter(|c| c.issue.is_some())
-            .map(Candidate::summary)
-            .collect::<Vec<_>>()
-    );
-    let selected = choose(candidates, &options)?;
-    plan["servers"] = json!(
-        selected
-            .iter()
-            .map(|c| {
-                let mut value = c.summary();
-                if options.diff {
-                    value["diff"] = preview::diff(c);
-                }
-                value
-            })
-            .collect::<Vec<_>>()
-    );
-    preview::display(&plan);
-    if selected.is_empty() && managed.is_empty() {
-        if options.json {
-            println!(
-                "{}",
-                json!({"format_version":1,"phase":"unchanged","plan":plan})
-            );
-        } else {
-            println!("No selected MCP connections can be changed. See the reasons above.");
-        }
-        return Ok(());
-    }
-    if !super::confirm(
-        "Apply this setup, including backend discovery and user autostart services?",
-        options.yes,
-    )? {
-        return Ok(());
     }
     store::prepare(&root)?;
     let lock = fs::OpenOptions::new()
@@ -112,8 +44,8 @@ pub async fn run(options: Selection) -> Result<()> {
         .context("Another setup/remove operation is running")?;
     recovery::pending(&root).await?;
     let mut registry = store::load(&root)?;
-    let updates = upgrade::apply(&root, &mut registry, &options).await?;
-    let mut affected = install(&root, &mut registry, selected).await?;
+    let updates = upgrade::apply(&root, &mut registry, &options, &chosen.gateways).await?;
+    let mut affected = install(&root, &mut registry, chosen.candidates, options.json).await?;
     affected.extend(updates.restart);
     if options.json {
         println!(
@@ -122,41 +54,37 @@ pub async fn run(options: Selection) -> Result<()> {
             "restart_clients":affected,"connection":"awaiting client restart and a new MCP connection"})
         );
     } else {
+        let deferred = updates
+            .messages
+            .iter()
+            .any(|message| message.contains("pending"));
         for update in updates.messages {
             println!("{update}");
         }
-        println!(
-            "Setup complete. Backends start on demand; application connections await verification."
-        );
+        if deferred {
+            println!(
+                "Setup finished with deferred changes. Run setup again after affected clients release their connections."
+            );
+        } else if affected.is_empty() {
+            println!("Selected gateways are up to date. No application restart is needed.");
+        } else {
+            println!(
+                "Setup complete. Backends start on demand; application connections await verification."
+            );
+        }
         super::restart(&affected);
     }
     Ok(())
-}
-fn choose(candidates: Vec<Candidate>, options: &Selection) -> Result<Vec<Candidate>> {
-    let mut selected = Vec::new();
-    for c in candidates {
-        if c.issue.is_none()
-            && (options.server.contains(&c.binding.name)
-                || super::confirm(
-                    &format!(
-                        "Migrate {} / {} in {} mode?",
-                        c.binding.client,
-                        c.binding.name,
-                        c.recipe.as_ref().map_or("session", |r| r.mode.as_str())
-                    ),
-                    false,
-                )?)
-        {
-            selected.push(c);
-        }
-    }
-    Ok(selected)
 }
 async fn install(
     root: &Path,
     registry: &mut Registry,
     selected: Vec<Candidate>,
+    json: bool,
 ) -> Result<BTreeSet<clients::Client>> {
+    if selected.is_empty() {
+        return Ok(BTreeSet::new());
+    }
     let path = root
         .join("operations")
         .join(format!("{}.json", uuid::Uuid::new_v4()));
@@ -170,7 +98,16 @@ async fn install(
     journal.save(&path)?;
     let mut affected = BTreeSet::new();
     let result: Result<()> = async {
-        for candidate in selected {
+        let mut prepared = Vec::new();
+        for (index, candidate) in selected.into_iter().enumerate() {
+            if !json {
+                println!(
+                    "  {}. {} / {}: preparing gateway...",
+                    index + 1,
+                    candidate.binding.client,
+                    super::ui::safe(&candidate.binding.name)
+                );
+            }
             candidate.binding.verify_fallback()?;
             let record = if let Some(record) = runtime::reuse(registry, &candidate)? {
                 runtime::health(&record)
@@ -188,6 +125,17 @@ async fn install(
                 super::checkpoint("ready")?;
                 record
             };
+            prepared.push(record.clone());
+            if let Some(existing) = registry.gateways.iter_mut().find(|r| r.id == record.id) {
+                existing.bindings.extend(record.bindings);
+            } else {
+                registry.gateways.push(record);
+            }
+        }
+        if !json {
+            println!("All selected gateways are ready. Applying local client settings...");
+        }
+        for record in prepared {
             let b = &record.bindings[0];
             b.verify_fallback()?;
             let before = fs::read(&b.target)?;
@@ -201,10 +149,8 @@ async fn install(
             journal.write(&path, &b.target, before, after.into_bytes())?;
             super::checkpoint("client-written")?;
             affected.insert(b.client);
-            if let Some(existing) = registry.gateways.iter_mut().find(|r| r.id == record.id) {
-                existing.bindings.extend(record.bindings);
-            } else {
-                registry.gateways.push(record);
+            if !json {
+                println!("     Local settings prepared for {}.", b.client);
             }
         }
         journal.phase = "committing".into();
