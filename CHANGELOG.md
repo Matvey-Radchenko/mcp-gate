@@ -14,6 +14,9 @@
 - GitHub Release checksums list the attached native archives.
 - Release process for current npm trusted publishing, plus an optional Homebrew tap formula.
 - 0.1.0 ships with documented limits: native login acceptance is macOS ARM64 only; Intel under Rosetta 2 is postponed; Windows was smoke-tested under Wine.
+- Human-readable setup, status, remove and check output, with JSON only when `--json` is set.
+- `status` lists running `local.mcp-gate` LaunchAgents, and `adopt` records an unmanaged one.
+- Agent instructions in `docs/agents.md` and `skills/mcp-gate/SKILL.md`.
 
 Public release records those limits in the [compatibility checks](docs/compatibility.md).
 Existing private `mcp-session-gateway` installations retain their historical names

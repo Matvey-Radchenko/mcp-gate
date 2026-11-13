@@ -11,6 +11,18 @@ been run; Windows x64 was smoke-tested under Wine, not on a native Windows login
 Stability on native Intel Macs and Windows is not guaranteed, and reports are
 welcome. See the [compatibility and release gates](docs/compatibility.md).
 
+In a terminal, `setup` and `remove` ask you to choose connections and show a
+preview before changing anything. Arrows move, Space selects, Enter continues,
+and Esc goes back. Nothing is selected automatically. Non-interactive use never
+prompts: pass `--json` for one JSON document on stdout, and `--dry-run` to
+preview. Applying changes from an agent requires explicit `--client` and
+`--server` with `--yes`, or `remove --all --yes`. `status` lists client
+connections and `local.mcp-gate.<name>` LaunchAgents. An unmanaged agent can be
+recorded with `adopt <name>`; `adopt <name> --dry-run` changes nothing.
+`--details` explains sources. Argument errors are JSON when `--json` is present.
+Agents should follow [docs/agents.md](docs/agents.md). A reusable skill is in
+[skills/mcp-gate/SKILL.md](skills/mcp-gate/SKILL.md).
+
 ```sh
 npx mcp-gate@latest setup
 npx mcp-gate@latest status

@@ -50,6 +50,10 @@ pub fn root() -> Result<PathBuf> {
     anyhow::bail!("Automatic setup supports macOS and Windows only")
 }
 pub fn home() -> Result<PathBuf> {
+    #[cfg(feature = "test-backend")]
+    if let Some(home) = std::env::var_os("MCP_GATE_TEST_HOME") {
+        return Ok(PathBuf::from(home));
+    }
     Ok(PathBuf::from(
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             .context("User home directory is not set")?,

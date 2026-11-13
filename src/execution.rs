@@ -1,5 +1,8 @@
 //! Shared admission and lifecycle for all executable MCP operations.
-use crate::{config::SharedClientRoots, dispatch::failure, gateway::Handler, worker::Worker};
+use crate::{
+    config::SharedClientRoots, dispatch::failure, gateway::Handler, recovery::Reason,
+    worker::Worker,
+};
 use rmcp::{RoleServer, model::*, service::RequestContext};
 use std::{sync::atomic::Ordering, time::Duration};
 impl Handler {
@@ -18,6 +21,7 @@ impl Handler {
         let gateway = &session.gateway;
         let backend = &session.backend;
         let shared = gateway.shared.is_some();
+        let generation = backend.generation();
         #[allow(deprecated)]
         if shared
             && gateway.config.shared_client_roots == SharedClientRoots::Reject
@@ -49,19 +53,14 @@ impl Handler {
         if gateway.stopping.load(Ordering::SeqCst) {
             return failure(is_tool, "Gateway is stopping");
         }
-        if backend.failed.load(Ordering::SeqCst) {
-            slot.take();
-            return failure(
-                is_tool,
-                "Backend state was lost; the last action was NOT retried. In shared mode restart the gateway. Reconnect in session mode.",
-            );
+        if let Err(message) = backend.admit(generation) {
+            return failure(is_tool, message);
         }
         if slot.as_ref().is_some_and(Worker::closed) {
-            backend.failed.store(true, Ordering::SeqCst);
-            slot.take();
+            backend.fail(Reason::TransportClosed);
             return failure(
                 is_tool,
-                "Backend exited; the last action was NOT retried. In shared mode restart the gateway. Reconnect in session mode.",
+                "Backend exited; no action was dispatched. Check status for recovery; the previous action was NOT retried.",
             );
         }
         if slot.is_none() {
@@ -75,13 +74,10 @@ impl Handler {
         }
         if let Some(worker) = slot.as_ref()
             && worker.catalog_changed()
-            && !backend.verify_catalog(gateway, worker).await
+            && let Err(message) = backend.verify_catalog(gateway, worker).await
         {
             slot.take();
-            return failure(
-                is_tool,
-                "Backend catalog changed. Regenerate/review it before use; no action was dispatched.",
-            );
+            return failure(is_tool, message);
         }
         if context.ct.is_cancelled() {
             return failure(is_tool, "Request cancelled before execution");

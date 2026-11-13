@@ -91,7 +91,12 @@ pub fn apply(candidate: &mut Candidate, home: &Path) -> Result<()> {
                     .context("Configuration parent missing")?
                     .join(path)
             };
-            crate::platform::validate_private(&path).map_err(|_|anyhow::anyhow!("Referenced environment file must already have private permissions; original file unchanged"))?;
+            ensure!(
+                path.is_file(),
+                "Referenced environment file for {key} is missing: {}. Restore it, then rerun setup; contents hidden",
+                path.display()
+            );
+            crate::platform::validate_private(&path).map_err(|_| anyhow::anyhow!("Referenced environment file for {key} is not private: {}. Restrict access to your user in its file permissions, then rerun setup; original file unchanged", path.display()))?;
             candidate.env_files.insert(key.clone(), path);
         }
         *item = value(

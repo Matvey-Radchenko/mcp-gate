@@ -42,7 +42,7 @@ impl Harness {
         config.shared_client_roots = mcp_gate::config::SharedClientRoots::Ignore;
         self.restart_with_config(config).await;
     }
-    async fn restart_with_config(&mut self, config: mcp_gate::config::Config) {
+    pub(crate) async fn restart_with_config(&mut self, config: mcp_gate::config::Config) {
         std::fs::write(&self.config, toml::to_string(&config).unwrap()).unwrap();
         let result = Command::new(env!("CARGO_BIN_EXE_mcp-gate"))
             .args(["catalog", "--config"])

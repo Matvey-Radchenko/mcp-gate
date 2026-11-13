@@ -36,17 +36,18 @@ pub fn binary(root: &Path) -> Result<PathBuf> {
     crate::platform::executable(&target)?;
     Ok(target)
 }
-pub async fn apply(root: &Path, registry: &mut Registry, options: &Selection) -> Result<Outcome> {
+pub async fn apply(
+    root: &Path,
+    registry: &mut Registry,
+    options: &Selection,
+    selected: &[String],
+) -> Result<Outcome> {
     let hash = crate::catalog::digest(&std::env::current_exe()?)?;
     let mut outcome = Outcome::default();
     let results = &mut outcome.messages;
     for index in 0..registry.gateways.len() {
         let old = registry.gateways[index].clone();
-        if !old
-            .bindings
-            .iter()
-            .any(|b| super::matches_binding(options, b))
-        {
+        if !selected.contains(&old.id) {
             continue;
         }
         if old.removing {

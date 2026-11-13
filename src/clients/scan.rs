@@ -1,10 +1,23 @@
 use super::{Binding, Candidate, Client, document};
 use anyhow::{Context, Result};
+use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+
+#[derive(Default)]
+pub struct Scan {
+    pub candidates: Vec<Candidate>,
+    pub issues: Vec<SourceIssue>,
+}
+#[derive(Serialize)]
+pub struct SourceIssue {
+    pub client: Client,
+    pub source: PathBuf,
+    pub reason: String,
+}
 
 pub fn discover(
     home: &Path,
@@ -12,7 +25,7 @@ pub fn discover(
     clients: &[Client],
     project_selected: bool,
 ) -> Result<Vec<Candidate>> {
-    collect(home, project, clients, project_selected, &BTreeMap::new())
+    Ok(collect(home, project, clients, project_selected, &BTreeMap::new())?.candidates)
 }
 pub fn discover_current(
     home: &Path,
@@ -20,6 +33,14 @@ pub fn discover_current(
     clients: &[Client],
     project_selected: bool,
 ) -> Result<Vec<Candidate>> {
+    Ok(inventory_current(home, project, clients, project_selected)?.candidates)
+}
+pub fn inventory_current(
+    home: &Path,
+    project: &Path,
+    clients: &[Client],
+    project_selected: bool,
+) -> Result<Scan> {
     let mut overrides = BTreeMap::new();
     if let Some(path) = std::env::var_os("CODEX_HOME") {
         overrides.insert(Client::Codex, vec![PathBuf::from(path).join("config.toml")]);
@@ -50,85 +71,64 @@ fn collect(
     clients: &[Client],
     project_selected: bool,
     overrides: &BTreeMap<Client, Vec<PathBuf>>,
-) -> Result<Vec<Candidate>> {
+) -> Result<Scan> {
     let mut out = Vec::new();
+    let mut issues = Vec::new();
     for client in [Client::Codex, Client::Opencode, Client::ClaudeCode] {
         if !clients.is_empty() && !clients.contains(&client) {
             continue;
         }
-        let mut paths: Vec<(PathBuf, bool, &str)> = match client {
-            Client::Codex => vec![
-                (home.join(".codex/config.toml"), false, "mcp_servers"),
-                (project.join(".codex/config.toml"), true, "mcp_servers"),
-            ],
-            Client::Opencode => vec![
-                (home.join(".config/opencode/opencode.json"), false, "mcp"),
-                (home.join(".config/opencode/opencode.jsonc"), false, "mcp"),
-                (project.join("opencode.json"), true, "mcp"),
-                (project.join("opencode.jsonc"), true, "mcp"),
-            ],
-            Client::ClaudeCode => vec![
-                (home.join(".claude.json"), false, "mcpServers"),
-                (project.join(".mcp.json"), true, "mcpServers"),
-            ],
-        };
-        if let Some(personal) = overrides.get(&client) {
-            let section = paths[0].2;
-            paths.retain(|(_, project, _)| *project);
-            for path in personal {
-                paths.insert(0, (path.clone(), false, section));
-            }
-        }
-        for (path, project_scoped, section) in paths {
-            if !path.is_file() {
+        for source in super::sources::paths(
+            home,
+            project,
+            client,
+            project_selected,
+            overrides.get(&client),
+        ) {
+            if !source.path.is_file() {
                 continue;
             }
-            let toml = client == Client::Codex;
-            let text = std::fs::read_to_string(&path)?;
-            let value = document::parse(&text, toml)
-                .with_context(|| format!("Cannot parse {}", path.display()))?;
-            let Some(mut servers) = value.get(section) else {
-                continue;
-            };
-            let mut base = vec![section.to_string()];
-            if client == Client::Opencode && servers.get("servers").is_some() {
-                servers = &servers["servers"];
-                base.push("servers".into());
-            }
-            let Some(servers) = servers.as_object() else {
-                continue;
-            };
-            for (name, config) in servers {
-                let mut keys = base.clone();
-                keys.push(name.clone());
-                out.push(candidate(
-                    client,
-                    name,
-                    &path,
-                    keys,
-                    config,
-                    project,
-                    project_scoped,
-                )?);
+            if read_source(client, &source, project, &mut out).is_err() {
+                issues.push(SourceIssue { client, source: source.path,
+                    reason: "Cannot read this configuration or its MCP schema. Fix its syntax and string-valued command/environment fields, then retry; values hidden.".into() });
             }
         }
     }
-    if project_selected && (clients.is_empty() || clients.contains(&Client::ClaudeCode)) {
+    if project_selected
+        && super::sources::identity(home) != super::sources::identity(project)
+        && (clients.is_empty() || clients.contains(&Client::ClaudeCode))
+    {
         let target = overrides
             .get(&Client::ClaudeCode)
             .and_then(|p| p.first())
             .cloned()
             .unwrap_or_else(|| home.join(".claude.json"));
-        super::claude::local(&target, project, &mut out)?;
+        // A failed local-scope read must not leave partially prepared overrides eligible.
+        let mut local = out.clone();
+        if super::claude::local(&target, project, &mut local).is_ok() {
+            out = local;
+        } else {
+            for c in out
+                .iter_mut()
+                .filter(|c| c.binding.client == Client::ClaudeCode)
+            {
+                c.issue = Some("Cannot verify Claude local scope and approvals; fix its personal/project configuration first".into());
+            }
+            issues.push(SourceIssue {
+                client: Client::ClaudeCode,
+                source: target,
+                reason: "Cannot verify local project settings or approvals; values hidden".into(),
+            });
+        }
     }
     // Never edit a lower-precedence global definition shadowed by a project entry.
     let shadowed: Vec<_> = out
         .iter()
-        .filter(|c| c.binding.source.starts_with(project))
+        .filter(|c| c.binding.project.is_some())
         .map(|c| (c.binding.client, c.binding.name.clone()))
         .collect();
     for c in &mut out {
-        if !c.binding.source.starts_with(project)
+        if c.binding.project.is_none()
             && shadowed.contains(&(c.binding.client, c.binding.name.clone()))
         {
             c.issue = Some(
@@ -142,7 +142,49 @@ fn collect(
         }
         c.recipe = super::recipes::matching(c);
     }
-    Ok(out)
+    Ok(Scan {
+        candidates: out,
+        issues,
+    })
+}
+
+fn read_source(
+    client: Client,
+    source: &super::sources::Source,
+    project: &Path,
+    out: &mut Vec<Candidate>,
+) -> Result<()> {
+    let value = document::parse(
+        &std::fs::read_to_string(&source.path)?,
+        client == Client::Codex,
+    )?;
+    let Some(mut servers) = value.get(source.section) else {
+        return Ok(());
+    };
+    let mut base = vec![source.section.to_string()];
+    if client == Client::Opencode && servers.get("servers").is_some() {
+        servers = &servers["servers"];
+        base.push("servers".into());
+    }
+    let servers = servers
+        .as_object()
+        .context("MCP entries must be an object")?;
+    let mut parsed = Vec::new();
+    for (name, config) in servers {
+        let mut keys = base.clone();
+        keys.push(name.clone());
+        parsed.push(candidate(
+            client,
+            name,
+            &source.path,
+            keys,
+            config,
+            project,
+            source.project,
+        )?);
+    }
+    out.extend(parsed);
+    Ok(())
 }
 
 pub(super) fn candidate(
@@ -194,7 +236,7 @@ pub(super) fn candidate(
     if !command.is_empty() && project_scoped {
         issue=Some("Project file is read-only to setup. A verified machine-local override is required; use a client local-scope definition, then rerun setup".into());
     } else if !command.is_empty() && config.get("cwd").is_none() {
-        issue=Some("Global command has a project-dependent working directory. Set an explicit cwd in your personal client configuration before migration".into());
+        issue=Some("Global command has no fixed working directory. Setup can ask you to choose one explicitly for use across every project. If this MCP needs a different directory per project, keep it direct or use a verified project-local scope.".into());
     }
     if let Some(executable) = command
         .first()

@@ -6,6 +6,12 @@ CI uses macOS 15 and Windows Server 2025. Local ARM64 checks use macOS 26.6.2
 and 26.7.1. Native login acceptance is macOS ARM64 only. Stability on a native
 Intel Mac or native Windows is not guaranteed, and reports are welcome.
 
+The terminal UI, shared connection inventory, LaunchAgent listing and `adopt`
+command are part of this release. They are covered by local CLI tests. Those
+tests do not claim a native Intel or Windows terminal acceptance run. An agent
+drives the same commands with `--json` and without a TTY; see
+[docs/agents.md](agents.md).
+
 | Check | macOS ARM64 | macOS Intel | Windows x64 |
 | --- | --- | --- | --- |
 | Rust formatting, strict Clippy, size budgets, ordinary tests | Passed locally and in CI | Passed in CI | Passed in CI |
