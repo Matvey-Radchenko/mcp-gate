@@ -31,6 +31,14 @@ jobs:
           node packaging/launcher.mjs
           cd dist
           npm pack ./mcp-gate --ignore-scripts
+          tar -tzf mcp-gate-*.tgz > packed-names.txt
+          grep -qx 'package/README.md' packed-names.txt
+          grep -qx 'package/LICENSE' packed-names.txt
+          grep -qx 'package/bin/mcp-gate.cjs' packed-names.txt
+          if grep -q 'package/scripts/prepack.cjs' packed-names.txt; then
+            echo "prepack guard must not be published"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: shared-npm-launcher
@@ -64,7 +72,7 @@ jobs:
           node-version: '24'
       - name: Release script checks
         run: |
-          for file in packaging/*.mjs npm/mcp-gate/bin/*.cjs tests/support/*.cjs; do node --check "$file"; done
+          for file in packaging/*.mjs npm/mcp-gate/bin/*.cjs npm/mcp-gate/scripts/*.cjs tests/support/*.cjs; do node --check "$file"; done
           node --test packaging/*.test.mjs
       - name: Verify production Task Scheduler XML before compilation
         if: runner.os == 'Windows'

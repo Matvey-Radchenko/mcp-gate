@@ -112,8 +112,9 @@ protected Documents directory. Record behavior before and after the account owne
 grants the required OS access. Client tool approvals and macOS privacy grants are
 separate; the installer must not change TCC or move the backend to bypass it.
 
-Retain sanitized results with the tested binary hashes. Until these checks have
-actually been completed, their release evidence stays pending.
+Retain sanitized results with the tested binary hashes. A check that is only
+partly done is `passed-with-limitations` and keeps a non-empty remaining list.
+`pending` cannot enable the release workflow.
 
 The [2026-09-09 ARM64 evidence](../release/arm64-reboot-2026-09-09.json) records an
 owner-performed reboot and login on macOS 26.6.2. This run used a separate fixture
@@ -130,4 +131,21 @@ artifacts, matched the pre-reboot checkpoint. The old session returned HTTP 404;
 the first fresh tool call returned empty state. Removal restored direct settings
 and permissions, left the shared project bytes and retained artifact intact, and
 removed only the fixture service and registration. Raw checkpoints and credentials
-stay private. Intel/Windows login and macOS privacy-grant evidence remain pending.
+stay private.
+
+The [2026-11-13 Documents evidence](../release/tcc-documents-already-granted-2026-11-13.json)
+uses the ARM64 archive from CI run 42873206494 on macOS 26.7.1. A LaunchAgent-run
+production binary started a mock backend under Documents and completed one tool
+call. Access was already granted, so the TCC dialog did not appear. The
+first-prompt and deny paths were not observed, and TCC was not reset. This does
+not replace the before-and-after grant procedure above.
+
+The [2026-11-13 Windows smoke](../release/windows-whisky-smoke-2026-11-13.json)
+ran that run's x64 binary under Whisky Wine 7.7, itself an x86_64 process under
+Rosetta 2 on Apple silicon. `--version`, `--help` and `init-token` succeeded.
+A `cscript` catalog attempt failed during initialize. `check` failed because Wine
+did not present a protected non-null DACL. That is a limitation of Wine 7.7, not
+a bug in the Windows build: native Windows CI already validates this ACL. Wine
+cannot perform a logon or Task Scheduler test. The x86_64 reboot under Rosetta 2
+is postponed and will not be a native Intel Mac. Native Intel and Windows login
+acceptance remain outstanding.

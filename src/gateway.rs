@@ -29,27 +29,26 @@ pub struct Gateway {
 }
 impl Gateway {
     pub fn runtime_status(&self) -> serde_json::Value {
+        let recovery = self.shared.as_ref().map(|slot| slot.status());
         serde_json::json!({
             "ownership": self.config.ownership,
             "shared_client_roots": self.config.shared_client_roots,
             "concurrency_per_backend": 1,
             "max_pending_calls": self.config.max_pending_calls,
             "queue_timeout_seconds": self.config.queue_timeout_seconds,
-            "shared_state": self.shared.as_ref().map(|slot| {
-                if slot.failed.load(Ordering::SeqCst) { "failed" }
-                else if self.live.load(Ordering::SeqCst) > 0 { "running" }
-                else { "dormant" }
-            }),
+            "shared_state": recovery.as_ref().map(|r| &r["state"]),
+            "recovery": recovery,
         })
     }
     pub fn new(config: Config, catalog: Catalog) -> Arc<Self> {
+        let live = Arc::new(AtomicUsize::new(0));
         Arc::new(Self {
             shared: (config.ownership == Ownership::Shared)
-                .then(|| BackendSlot::new(config.max_pending_calls)),
+                .then(|| BackendSlot::new(&config, live.clone())),
             capacity: Arc::new(Semaphore::new(config.max_workers)),
             config,
             catalog,
-            live: Arc::new(AtomicUsize::new(0)),
+            live,
             sessions: StdMutex::new(Vec::new()),
             stopping: AtomicBool::new(false),
         })
@@ -64,7 +63,7 @@ impl Gateway {
             backend: self
                 .shared
                 .clone()
-                .unwrap_or_else(|| BackendSlot::new(self.config.max_pending_calls)),
+                .unwrap_or_else(|| BackendSlot::new(&self.config, self.live.clone())),
         });
         let mut sessions = self.sessions.lock().unwrap();
         sessions.retain(|s| s.strong_count() > 0);
@@ -119,17 +118,23 @@ impl ServerHandler for Handler {
         info.server_info = Implementation::new("mcp-gate", env!("CARGO_PKG_VERSION"));
         info.capabilities = crate::discovery::frontend_capabilities(&info.capabilities);
         info.instructions = Some(format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             info.instructions.unwrap_or_default(),
             self.session.gateway.config.tool_policy.instructions,
             if self.session.gateway.shared.is_some() {
                 if self.session.gateway.config.shared_client_roots == SharedClientRoots::Ignore {
-                    "One backend is shared by all clients. Calls are serialized. Client roots are explicitly ignored; only the fixed backend configuration defines context. Uncertain actions require gateway restart."
+                    "One backend is shared by all clients. Calls are serialized. Client roots are explicitly ignored; only the fixed backend configuration defines context."
                 } else {
-                    "One backend is shared by all clients. Calls are serialized. Roots-capable clients are rejected. Uncertain actions require gateway restart."
+                    "One backend is shared by all clients. Calls are serialized. Roots-capable clients are rejected."
                 }
             } else {
                 "The backend is isolated to this MCP session and starts on first executable request. Reinitializing creates fresh state, not restored state."
+            },
+            if self.session.gateway.config.shared_recovery == crate::config::SharedRecovery::Restart
+            {
+                "Backend recovery is enabled and resets volatile state. Failed actions are never retried. After an uncertain write, verify its outcome before submitting a replacement or dependent write."
+            } else {
+                "Backend recovery is manual. After state loss, inspect the previous action and restart the shared gateway or reconnect in session mode."
             }
         ));
         info

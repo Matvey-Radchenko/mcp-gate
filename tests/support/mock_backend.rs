@@ -39,6 +39,14 @@ impl ServerHandler for Mock {
         _: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        if std::env::var("MOCK_DISCOVERY_OFFLINE_FILE")
+            .is_ok_and(|path| std::path::Path::new(&path).exists())
+        {
+            return Err(ErrorData::internal_error(
+                "Discovery temporarily unavailable (fixture)",
+                None,
+            ));
+        }
         let tools = ["state", "pause", "roots", "crash"]
             .into_iter()
             .filter(|name| *name != "roots" || !self.changed_tools.load(Ordering::SeqCst))
@@ -119,6 +127,32 @@ impl ServerHandler for Mock {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        if let Ok(path) = std::env::var("MOCK_ACTION_JOURNAL") {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .unwrap();
+            writeln!(file, "{}", request.name).unwrap();
+        }
+        if std::env::var("MOCK_OFFLINE_FILE").is_ok_and(|path| std::path::Path::new(&path).exists())
+        {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Network unavailable (fixture)",
+            )])
+            .into());
+        }
+        if request
+            .arguments
+            .as_ref()
+            .is_some_and(|a| a.get("protocol_error") == Some(&json!(true)))
+        {
+            return Err(ErrorData::internal_error(
+                "Network unavailable (fixture)",
+                None,
+            ));
+        }
         if let Some(change) = request
             .arguments
             .as_ref()

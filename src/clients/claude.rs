@@ -64,6 +64,7 @@ pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> 
                 project,
                 false,
             )?;
+            c.binding.project = Some(project.into());
         }
         if c.command.is_empty() {
             continue;

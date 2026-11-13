@@ -77,8 +77,9 @@ exact file-list, architecture, binary SHA-256, shared-launcher identity and know
 private-path/token signature inspection. No production test hooks or compatibility
 fixture binary were found. The combined SHA-256 check also passed locally.
 
-Subsequent documentation changes record these completed checks and keep actual
-new-login/protected-folder acceptance pending. They do not change the release
-executable. npm and GitHub Release publication remain blocked until the remaining
-evidence and owner authorization are available; final publication must inspect
-its own run's archives.
+Subsequent documentation changes record these completed checks and, as of this
+audit, kept actual new-login and protected-folder acceptance pending. They do
+not change the release executable. On 2026-11-13 the owner added sanitized
+Documents and Wine smoke evidence and chose to ship 0.1.0 with those limitations
+still listed. Native Intel and Windows login acceptance remain outstanding.
+Final publication must still inspect its own run's archives.

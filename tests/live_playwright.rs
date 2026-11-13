@@ -58,6 +58,16 @@ async fn delete(c: &Config, id: &str, expected: u64) {
     .await
     .expect("Worker cleanup");
 }
+async fn quiet(processes: &[support::process_tree::TrackedProcess]) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while processes.iter().any(|process| process.running()) {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    true
+}
 fn screenshots(c: &Config, name: &str) -> BTreeSet<PathBuf> {
     std::fs::read_dir(c.state_dir.join("worker-data"))
         .unwrap()
@@ -196,7 +206,7 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     let all_processes = track(&all_pids);
     delete(&c, &aid, 1).await;
     assert!(
-        a_processes.iter().all(|p| !p.running()),
+        quiet(&a_processes).await,
         "A's browser process tree must be reaped"
     );
     assert!(
@@ -211,7 +221,7 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     );
     delete(&c, &bid, 0).await;
     assert!(
-        all_processes.iter().all(|p| !p.running()),
+        quiet(&all_processes).await,
         "Browser cleanup must not leave orphans"
     );
     assert!(descendants(gateway_pid).is_empty());

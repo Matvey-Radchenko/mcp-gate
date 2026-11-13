@@ -25,9 +25,12 @@ test('combined release accepts one shared launcher and rejects conflicting or mi
       archive(target, `mcp-gate-0.1.0-${target}.tar.gz`);
     }
     assert.equal(verify().status, 0);
-    const expected = [...rows].sort(([a], [b]) => a.localeCompare(b))
+    const expected = [...rows]
+      .filter(([name]) => name.endsWith('.tar.gz'))
+      .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, hash]) => `${hash}  ${name}\n`).join('');
     assert.equal(readFileSync(checksums, 'utf8'), expected);
+    assert.doesNotMatch(readFileSync(checksums, 'utf8'), /\.tgz/);
 
     archive('win32-x64', launcher, Buffer.from('different tar permissions'));
     const conflict = verify();

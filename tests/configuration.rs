@@ -143,6 +143,21 @@ fn strict_version_profile_and_capacity_validation() {
 }
 
 #[test]
+fn recovery_is_explicit_and_restricted_to_reviewed_shared_processes() {
+    use mcp_gate::config::{Ownership, SharedRecovery};
+    let mut c = config();
+    assert!(c.shared_recovery == SharedRecovery::Manual);
+    assert!(!toml::to_string(&c).unwrap().contains("shared_recovery"));
+    c.shared_recovery = SharedRecovery::Restart;
+    c.validate().unwrap();
+    c.ownership = Ownership::Session;
+    assert!(c.validate().is_err());
+    c.ownership = Ownership::Shared;
+    c.backend.docker = true;
+    assert!(c.validate().is_err());
+}
+
+#[test]
 fn private_environment_references_and_invocation_fingerprint() {
     let dir = tempfile::tempdir().unwrap();
     let secret = dir.path().join("fake-secret");

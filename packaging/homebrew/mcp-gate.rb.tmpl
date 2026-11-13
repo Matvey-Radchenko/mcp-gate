@@ -1,0 +1,35 @@
+class McpGate < Formula
+  desc "Lazy local MCP gateways for existing agent clients"
+  homepage "https://github.com/Matvey-Radchenko/mcp-gate"
+  license "MIT"
+  version "{{version}}"
+
+  # Nested under on_macos so a Linux host does not select these Darwin archives.
+  on_macos do
+    on_arm do
+      url "https://github.com/Matvey-Radchenko/mcp-gate/releases/download/v#{version}/mcp-gate-#{version}-darwin-arm64.tar.gz"
+      sha256 "{{sha256_darwin_arm64}}"
+    end
+    on_intel do
+      url "https://github.com/Matvey-Radchenko/mcp-gate/releases/download/v#{version}/mcp-gate-#{version}-darwin-x64.tar.gz"
+      sha256 "{{sha256_darwin_x64}}"
+    end
+  end
+
+  depends_on :macos
+
+  def install
+    bin.install "bin/mcp-gate"
+  end
+
+  def caveats
+    <<~EOS
+      Upgrades do not restart gateways that are already registered. Re-run `mcp-gate setup` after upgrading.
+      mcp-gate manages its own user LaunchAgents. This formula does not install a Homebrew service.
+    EOS
+  end
+
+  test do
+    assert_match "mcp-gate #{version}", shell_output("#{bin}/mcp-gate --version")
+  end
+end

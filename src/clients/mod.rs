@@ -3,10 +3,12 @@ pub mod document;
 pub mod expand;
 pub mod recipes;
 mod scan;
+mod sources;
 pub use claude::project_key as claude_project_key;
-pub use scan::{discover, discover_current};
+pub use scan::{Scan, SourceIssue, discover, discover_current, inventory_current};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use sources::identity;
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(
@@ -43,6 +45,7 @@ pub struct Binding {
     pub after: Value,
 }
 
+#[derive(Clone)]
 pub struct Candidate {
     pub binding: Binding,
     pub command: Vec<String>,
@@ -58,6 +61,8 @@ impl Candidate {
     pub fn summary(&self) -> Value {
         serde_json::json!({"client":self.binding.client,"name":self.binding.name,
             "source":self.binding.source,"target":self.binding.target,
+            "working_directory":self.cwd,
+            "context_note":(self.binding.project.is_none() && self.binding.direct.get("cwd").is_none()).then_some("Explicitly selected fixed backend directory applies to this personal connection in every project; the client no longer supplies a different directory per project."),
             "transition":"stdio -> authenticated loopback HTTP", "mode": self.recipe.as_ref().map_or("session",|r|r.mode.as_str()),
             "recipe":self.recipe.as_ref().map(|r|serde_json::json!({"id":r.id,"conditions":r.conditions,"disabled_tools":r.disabled_tools})),
             "command":"preserved (values hidden)","permissions":"preserved",

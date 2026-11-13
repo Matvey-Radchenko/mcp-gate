@@ -56,6 +56,73 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           gh release create "v$RELEASE_VERSION" --target "$GITHUB_SHA" --title "mcp-gate $RELEASE_VERSION" --notes-file release/notes.md artifacts/native-*/*.tar.gz artifacts/SHA256SUMS
+  homebrew:
+    name: Homebrew tap
+    needs: publish
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Skip when HOMEBREW_TAP_TOKEN is absent
+        id: gate
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_TOKEN is absent; skipping Homebrew tap update."
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.present == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.present == 'true'
+        with:
+          node-version: '24'
+      - name: Download the Release checksums
+        if: steps.gate.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$RUNNER_TEMP/mcp-gate-release"
+      - name: Render the formula
+        if: steps.gate.outputs.present == 'true'
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node packaging/homebrew.mjs "$RUNNER_TEMP/mcp-gate-release/SHA256SUMS" "$RELEASE_VERSION" "$RUNNER_TEMP/mcp-gate.rb"
+      - name: Push Formula/mcp-gate.rb to the personal tap
+        if: steps.gate.outputs.present == 'true'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          askpass=$(mktemp)
+          trap 'rm -f "$askpass"' EXIT
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\n" x-access-token ;;' \
+            '  *) printf "%s\n" "$HOMEBREW_TAP_TOKEN" ;;' \
+            'esac' > "$askpass"
+          chmod 700 "$askpass"
+          export GIT_ASKPASS="$askpass"
+          export GIT_TERMINAL_PROMPT=0
+          tap="$RUNNER_TEMP/homebrew-tap"
+          git clone "https://github.com/Matvey-Radchenko/homebrew-tap.git" "$tap"
+          branch=$(git -C "$tap" symbolic-ref --short refs/remotes/origin/HEAD)
+          branch=${branch#origin/}
+          mkdir -p "$tap/Formula"
+          cp "$RUNNER_TEMP/mcp-gate.rb" "$tap/Formula/mcp-gate.rb"
+          git -C "$tap" add Formula/mcp-gate.rb
+          if git -C "$tap" diff --cached --quiet; then
+            echo "Homebrew formula already matches mcp-gate $RELEASE_VERSION."
+            exit 0
+          fi
+          git -C "$tap" -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "mcp-gate $RELEASE_VERSION"
+          git -C "$tap" push origin "HEAD:${branch}"
   registry:
     needs: publish
     strategy:
