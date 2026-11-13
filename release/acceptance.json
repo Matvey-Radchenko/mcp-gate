@@ -18,11 +18,26 @@
     },
     {
       "id": "clean-service-login",
-      "status": "pending",
+      "status": "passed-with-limitations",
       "evidence": [
-        "release/arm64-reboot-2026-09-09.json: actual macOS 26.6.2 ARM64 reboot with an isolated fixture in an existing account; inspected production binary autostarted without setup/manual start, zero sessions/workers, unchanged persistent files and action timestamps, rejected old session, fresh empty backend state and verified fixture removal. This is not protected-folder or clean-account acceptance"
+        "release/arm64-reboot-2026-09-09.json: actual macOS 26.6.2 ARM64 reboot with an isolated fixture in an existing account; inspected production binary autostarted without setup/manual start, zero sessions/workers, unchanged persistent files and action timestamps, rejected old session, fresh empty backend state and verified fixture removal. This is not protected-folder or clean-account acceptance",
+        "release/windows-whisky-smoke-2026-11-13.json: Windows x64 binary from CI run 42873206494, smoke-tested under Whisky Wine 7.7 itself running under Rosetta 2 on Apple silicon. --version, --help and init-token succeeded. A cscript catalog attempt failed at initialize. No Windows logon or Task Scheduler test is possible under Wine"
       ],
-      "remaining": "Actual new OS login on macOS Intel and Windows x64 and macOS protected-folder access before/after the owner grants OS permission; registration/manual start in CI is insufficient. ARM64 existing-account scope and procedure: docs/native-acceptance.md"
+      "remaining": [
+        "No native Intel Mac login acceptance and no native Windows login acceptance",
+        "Windows x64 was only smoke-tested under Wine; logon and Task Scheduler were not exercised",
+        "The x86_64 build under Rosetta 2 with a real reboot is postponed and will be emulation, not a native Intel Mac"
+      ]
+    },
+    {
+      "id": "macos-protected-folder",
+      "status": "passed-with-limitations",
+      "evidence": [
+        "release/tcc-documents-already-granted-2026-11-13.json: 2026-11-13 macOS 26.7.1 ARM64. A LaunchAgent-run production binary from CI run 42873206494 started a mock backend under Documents and completed one tool call. Documents access was already granted, the TCC dialog did not appear, and TCC was not reset"
+      ],
+      "remaining": [
+        "The macOS protected-folder first-prompt and deny paths were not observed"
+      ]
     },
     {
       "id": "safe-update-downgrade",

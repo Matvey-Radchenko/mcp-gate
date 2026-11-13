@@ -1,0 +1,49 @@
+{
+  "format_version": 1,
+  "version": "0.1.0",
+  "source_commit": "0d1e4dce5ec2bfecab8b1be9cffcafdbadd3bf6f",
+  "artifact_source": "https://github.com/Matvey-Radchenko/mcp-gate/actions/runs/42873206494",
+  "archive_sha256": "7efe8039a3dcca5ebd4aab9314d4041ffc359a1ab2f08eeda515e3f265d44977",
+  "binary_sha256": "099f6356c8faa1edfd1a16fa44ed1d8761e38dae233d54372e9ad85e56874021",
+  "platform": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "binary": "PE32+ console x86-64",
+    "host_os": "macOS 26.7.1 (25G241)",
+    "host_architecture": "arm64"
+  },
+  "emulation": "Wine 7.7 (WhiskyWine 2.5.0) under Rosetta 2",
+  "emulation_notes": "wine64 itself is an x86_64 Mach-O binary, so the Windows x64 build was exercised through Rosetta 2 plus Wine. This is not a native Windows login or Task Scheduler logon test.",
+  "scope": "Smoke-only: --version, --help, init-token, and a cheap cscript stdio backend attempt. No Windows logon, no Task Scheduler, no Job Objects, no WSL/Docker. Throwaway WINEPREFIX only; existing Whisky bottle unused.",
+  "client": null,
+  "backend": {
+    "name": "cscript WSH experiment",
+    "result": "worker process started then stopped; initialize handshake failed"
+  },
+  "verified_at": "2026-11-13T18:42:29.081381+01:00",
+  "checks": {
+    "wineboot_init_exit": 0,
+    "version_exit": 0,
+    "version_stdout": "mcp-gate 0.1.0",
+    "help_exit": 0,
+    "help_lists_setup_remove_status": true,
+    "init_token_exit": 0,
+    "catalog_exit": 1,
+    "catalog_error": "2026-11-13T17:41:42.292246Z  INFO worker process started pid=416\n2026-11-13T17:41:42.810788Z  INFO worker process stopped pid=416\nError: connection closed: initialize response",
+    "check_exit": 1,
+    "check_error": "Error: Private Windows file must have a protected non-null DACL",
+    "serve_and_http_probe": "skipped: catalog was not generated",
+    "existing_whisky_bottle_used": false,
+    "throwaway_prefix_deleted_after": true
+  },
+  "limitations": [
+    "No Windows Node.exe was present; a cheap cscript.exe JScript stdio backend was tried and failed at initialize (connection closed: initialize response).",
+    "mcp-gate check rejected the token file with: Private Windows file must have a protected non-null DACL. Wine 7.7 did not satisfy the native Windows ACL contract used by the release binary, so serve was not attempted.",
+    "Windows logon autostart and schtasks LogonTrigger cannot be reproduced under Wine."
+  ],
+  "evidence_handling": "Sanitized summary; no tokens, no raw home paths, throwaway prefix deleted after the run",
+  "remaining": [
+    "Native Windows x64 login acceptance",
+    "Listen/HTTP probe under Wine once catalog generation and Windows DACL checks can be satisfied"
+  ]
+}

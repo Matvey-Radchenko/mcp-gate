@@ -2,6 +2,13 @@
 
 1. Complete every mandatory check in `release/acceptance.json` with actual evidence.
    Pending checks must not be relabelled as passed to enable the workflow.
+   `passed-with-limitations` is allowed only together with evidence and a non-empty
+   `remaining` or `limitations` list. 0.1.0 uses that status for native login and
+   macOS protected-folder access: native acceptance is macOS ARM64 only, the
+   Rosetta 2 Intel reboot is postponed, Windows was smoke-tested under Wine, and
+   the TCC first-prompt/deny path was not observed. Do not delete those limitations
+   to make the workflow pass. Wine's missing protected DACL is a Wine 7.7 limit,
+   not a Windows product bug.
 2. Review the exact Git tree/history and npm/archive contents for private data.
    The public branch starts at a sanitized source snapshot; original local history
    and operational notes are retained separately and must not be pushed.

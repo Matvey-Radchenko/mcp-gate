@@ -5,8 +5,11 @@ while backends start on demand. Verified stateless API servers can share a
 single serialized backend; session-owned servers keep independent MCP connections.
 Actions are never retried or replayed automatically.
 
-**0.1.0 is in release preparation and has not been published.** See the
-[compatibility and release gates](docs/compatibility.md) before relying on a scenario.
+**0.1.0 is in release preparation and has not been published.** Native login
+acceptance is macOS ARM64 only. The Intel x86_64 check under Rosetta 2 has not
+been run; Windows x64 was smoke-tested under Wine, not on a native Windows login.
+Stability on native Intel Macs and Windows is not guaranteed, and reports are
+welcome. See the [compatibility and release gates](docs/compatibility.md).
 
 ```sh
 npx mcp-gate@latest setup
