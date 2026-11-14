@@ -1,6 +1,6 @@
 //! Authentication, DNS-rebinding protection and HTTP connection leases.
 //! MCP framing, negotiation, SSE and session IDs belong to the official SDK.
-use crate::gateway::Gateway;
+use crate::{config::Ownership, gateway::Gateway};
 use axum::{
     Router,
     body::{Body, Bytes},
@@ -31,6 +31,7 @@ struct Lease {
     streams: usize,
     requests: usize,
     disconnected: Option<Instant>,
+    last_activity: Instant,
     closing: bool,
     active: Arc<std::sync::atomic::AtomicUsize>,
     _capacity: Arc<OwnedSemaphorePermit>,
@@ -54,8 +55,9 @@ impl Server {
     pub fn new(gateway: Arc<Gateway>, token: String) -> Self {
         let cancellation = CancellationToken::new();
         let mut manager = LocalSessionManager::default();
-        // A quiet, connected session may hold a performance recording. A generic
-        // idle timeout would destroy it. Only explicit termination/lost GET cleans it.
+        // A connected GET stream may hold a recording, so it is not idle.
+        // A session-owned backend with no request and no stream is closed after
+        // session_idle_seconds. Shared backends are not closed that way.
         manager.session_config.keep_alive = None;
         manager.session_config.completed_cache_ttl = Duration::from_secs(15);
         let manager = Arc::new(manager);
@@ -111,6 +113,36 @@ impl Server {
                     clean_state.leases.lock().unwrap().remove(&id);
                     tracing::info!("disconnected session expired");
                 }
+                if clean_state.gateway.config.ownership == Ownership::Session {
+                    let idle_for =
+                        Duration::from_secs(clean_state.gateway.config.session_idle_seconds);
+                    let idle: Vec<_> = {
+                        let leases = clean_state.leases.lock().unwrap();
+                        leases
+                            .iter()
+                            .filter_map(|(id, lease)| {
+                                let mut lease = lease.lock().unwrap();
+                                if !lease.closing
+                                    && lease.streams == 0
+                                    && lease.requests == 0
+                                    && lease.active.load(std::sync::atomic::Ordering::SeqCst) == 0
+                                    && lease.last_activity.elapsed() >= idle_for
+                                {
+                                    lease.closing = true;
+                                    Some(id.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    };
+                    for id in idle {
+                        let _ = clean_manager.close_session(&id.clone().into()).await;
+                        clean_state.leases.lock().unwrap().remove(&id);
+                        tracing::info!("idle session closed");
+                    }
+                }
+                clean_state.gateway.reap_closed_workers().await;
             }
         });
         let router = Router::new()
@@ -236,6 +268,7 @@ async fn guard(State(state): State<HttpState>, mut req: Request, next: Next) -> 
             }
             req.extensions_mut()
                 .insert(Activity(value.active.clone(), value._capacity.clone()));
+            value.last_activity = Instant::now();
             if method == Method::GET {
                 value.streams += 1;
                 value.disconnected = None;
@@ -276,6 +309,7 @@ async fn guard(State(state): State<HttpState>, mut req: Request, next: Next) -> 
                 streams: 0,
                 requests: 0,
                 disconnected: None,
+                last_activity: Instant::now(),
                 closing: false,
                 active: Arc::default(),
                 _capacity: Arc::new(permit),
@@ -328,6 +362,7 @@ impl Drop for ActiveCall {
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         let mut value = self.lease.lock().unwrap();
+        value.last_activity = Instant::now();
         if self.stream {
             value.streams -= 1;
             if value.streams == 0 {

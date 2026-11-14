@@ -34,6 +34,14 @@ pub struct Config {
     pub max_sessions: usize,
     #[serde(default = "default_grace")]
     pub disconnect_grace_seconds: u64,
+    /// Close a session-owned HTTP session that has had no request for this long
+    /// and shut down its backend. Shared backends are not idle-closed.
+    #[serde(default = "default_session_idle")]
+    pub session_idle_seconds: u64,
+    /// When every worker slot is busy, shut down the longest-idle session-owned
+    /// backend that has been idle at least this long. Zero evicts any idle one.
+    #[serde(default = "default_session_evict")]
+    pub session_idle_evict_seconds: u64,
     #[serde(default = "default_startup")]
     pub startup_timeout_seconds: u64,
     #[serde(default = "default_call")]
@@ -84,6 +92,12 @@ fn default_sessions() -> usize {
 }
 fn default_grace() -> u64 {
     60
+}
+fn default_session_idle() -> u64 {
+    15 * 60
+}
+fn default_session_evict() -> u64 {
+    2 * 60
 }
 fn default_startup() -> u64 {
     30
@@ -142,8 +156,13 @@ impl Config {
         ensure!(
             self.startup_timeout_seconds > 0
                 && self.call_timeout_seconds > 0
-                && self.disconnect_grace_seconds > 0,
+                && self.disconnect_grace_seconds > 0
+                && self.session_idle_seconds > 0,
             "Timeouts must be positive"
+        );
+        ensure!(
+            self.session_idle_evict_seconds <= self.session_idle_seconds,
+            "Idle eviction cannot wait longer than the session idle timeout"
         );
         for p in [&self.token_file, &self.catalog_file, &self.state_dir] {
             ensure!(

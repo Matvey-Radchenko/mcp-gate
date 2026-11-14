@@ -58,7 +58,10 @@ Setup copies the Rust binary into permanent versioned storage, independently of
 npx caches. macOS uses a LaunchAgent; Windows uses a user Task Scheduler logon task.
 The gateways run after login and MCP backends remain lazy. State lives in
 `~/Library/Application Support/mcp-gate` or `%LOCALAPPDATA%\mcp-gate`.
-Sessions and unfinished actions are not restored after restart.
+Sessions and unfinished actions are not restored after restart. A session-owned
+backend is closed after 15 minutes without a request, and sooner if its process
+exits or another call needs the last free worker and that session has already
+been idle for 2 minutes. Shared backends are not closed for being idle.
 
 You retain responsibility for installing and updating MCP packages, interpreters,
 Docker and browsers. Setup's discovery executes the existing command: npx, uvx

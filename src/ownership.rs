@@ -12,7 +12,7 @@ use std::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::{Mutex, Semaphore};
 
@@ -21,6 +21,7 @@ pub(crate) struct BackendSlot {
     lifecycle: StdMutex<Lifecycle>,
     live: Arc<AtomicUsize>,
     shared: bool,
+    last_active: StdMutex<Instant>,
     pub admission: Semaphore,
 }
 impl BackendSlot {
@@ -34,8 +35,17 @@ impl BackendSlot {
             )),
             live,
             shared: config.ownership == Ownership::Shared,
+            last_active: StdMutex::new(Instant::now()),
             admission: Semaphore::new(config.max_pending_calls + 1),
         })
+    }
+
+    pub fn touch(&self) {
+        *self.last_active.lock().unwrap() = Instant::now();
+    }
+
+    pub fn idle(&self) -> Duration {
+        self.last_active.lock().unwrap().elapsed()
     }
 
     // The caller holds `worker` across startup and execution: no duplicate spawn,
@@ -45,8 +55,25 @@ impl BackendSlot {
         gateway: &Gateway,
         peer: Option<Peer<RoleServer>>,
     ) -> Result<Worker, &'static str> {
-        let Ok(permit) = gateway.capacity.clone().try_acquire_owned() else {
-            return Err("All backend worker slots are in use. Close another session, then retry.");
+        let permit = match gateway.capacity.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                // A session that never sends DELETE keeps its worker. When every
+                // slot is taken, drop the one that has been idle longest.
+                if !gateway.reclaim_idle_worker().await {
+                    return Err(
+                        "All backend worker slots are in use. Close another session, then retry.",
+                    );
+                }
+                match gateway.capacity.clone().try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        return Err(
+                            "All backend worker slots are in use. Close another session, then retry.",
+                        );
+                    }
+                }
+            }
         };
         let mut startup = FailureGuard::new(
             (gateway.config.shared_recovery == SharedRecovery::Restart).then(|| self.clone()),
@@ -128,28 +155,64 @@ impl BackendSlot {
     }
 
     pub fn fail(self: &Arc<Self>, reason: Reason) {
-        let Some(generation) = self.lifecycle.lock().unwrap().fail(reason) else {
-            return;
-        };
         let slot = self.clone();
         tokio::spawn(async move {
-            // Hold the execution lock until owned resources are gone. No new
-            // worker can appear between taking the old one and its cleanup.
-            let mut worker = slot.worker.lock().await;
-            if slot.generation() != generation {
-                return;
-            }
-            if let Some(worker) = worker.take() {
-                worker.shutdown().await;
-            }
-            // A cancelled startup can leave a ProcessOwner cleaning up via Drop.
-            // Shared mode owns the entire single-worker capacity, including that
-            // cleanup. Never mark it ready until the permit is actually released.
-            while slot.shared && slot.live.load(Ordering::SeqCst) > 0 {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            slot.lifecycle.lock().unwrap().drained(generation);
+            slot.retire(reason).await;
         });
+    }
+
+    /// Stop the current worker, if one is idle, and record why it cannot be reused.
+    /// A call that holds the worker lock is left running.
+    pub async fn retire(self: &Arc<Self>, reason: Reason) -> bool {
+        let Some(generation) = self.lifecycle.lock().unwrap().fail(reason) else {
+            return false;
+        };
+        // Hold the execution lock until owned resources are gone. No new
+        // worker can appear between taking the old one and its cleanup.
+        // Keep the worker lock through shutdown. The next call on this session
+        // waits, then observes the drained state instead of a half-finished one.
+        let mut guard = self.worker.lock().await;
+        if self.generation() != generation {
+            return false;
+        }
+        let stopped = guard.is_some();
+        if let Some(worker) = guard.take() {
+            worker.shutdown().await;
+        }
+        // A cancelled startup can leave a ProcessOwner cleaning up via Drop.
+        // Shared mode owns the entire single-worker capacity, including that
+        // cleanup. Never mark it ready until the permit is actually released.
+        self.finish_drain(generation).await;
+        drop(guard);
+        stopped
+    }
+
+    pub async fn retire_if_idle(self: &Arc<Self>, reason: Reason) -> bool {
+        // Do not wait for the worker lock. The caller may already hold another
+        // session's lock, and waiting here could deadlock two startups.
+        let worker = {
+            let mut guard = match self.worker.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => return false,
+            };
+            guard.take()
+        };
+        let Some(worker) = worker else {
+            return false;
+        };
+        let generation = self.lifecycle.lock().unwrap().fail(reason);
+        worker.shutdown().await;
+        if let Some(generation) = generation {
+            self.finish_drain(generation).await;
+        }
+        true
+    }
+
+    async fn finish_drain(&self, generation: u64) {
+        while self.shared && self.live.load(Ordering::SeqCst) > 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        self.lifecycle.lock().unwrap().drained(generation);
     }
 }
 
