@@ -8,6 +8,7 @@
 - Identical command, arguments, environment and working directory share one gateway. Session mode still isolates backends per connection.
 - `--json` is global. Setup, remove, status and adopt describe their flags. `--yes` requires both `--client` and `--server`; `remove --all --yes` is the exception.
 - Status names unchecked direct commands, drops the application-switch note until a gateway is managed, and returns an error for an unknown `--server` or `--client`. Running mcp-gate with no subcommand prints a short start-here message.
+- Search typed between setup prompts is not echoed onto the following status line.
 - `--diff` shows the command, arguments, working directory and gateway URL, and still hides environment values, headers and secret-like argument values.
 - Session-owned backends close after 15 minutes without a request (`session_idle_seconds`) and release the worker. A backend process that exits releases its slot immediately. When every slot is busy, the longest-idle session idle for at least 2 minutes (`session_idle_evict_seconds`) is stopped so a new call can start.
 - The Windows release download check passes the archive name to tar relative to its directory. Git Bash tar treated `C:\...` as a remote host.
