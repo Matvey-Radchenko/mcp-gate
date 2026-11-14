@@ -1,8 +1,9 @@
 # Compatibility and release gates
 
-The npm 0.1.0 packages are `@matvei-radchenko/mcp-gate` and the three
-`@matvei-radchenko/mcp-gate-bin-*` platform packages. They are **not published**
-under those names yet. This table is evidence, not a promise
+The npm 0.1.0 packages are published as `@matvei-radchenko/mcp-gate` and the three
+`@matvei-radchenko/mcp-gate-bin-*` platform packages. GitHub Release
+[v0.1.0](https://github.com/Matvey-Radchenko/mcp-gate/releases/tag/v0.1.0)
+attaches the native archives and `SHA256SUMS`. This table is evidence, not a promise
 that all combinations have been tested. Update it only from completed checks.
 CI uses macOS 15 and Windows Server 2025. Local ARM64 checks use macOS 26.6.2
 and 26.7.1. Native login acceptance is macOS ARM64 only. Stability on a native
@@ -129,9 +130,8 @@ login and protected-folder access. Those limitations stay in
 [release/acceptance.json](../release/acceptance.json): no native Intel or Windows
 login, Windows only smoke-tested under Wine, the Rosetta 2 reboot still postponed,
 and the TCC first-prompt/deny path not observed. Pending checks still cannot be
-relabelled as passed. npm names, owner authorization and trusted publishing
-remain separate release steps. Post-publication registry and download checks
-must still pass before the release is complete.
+relabelled as passed. Publication of the npm packages and the GitHub Release
+does not change those limits.
 
 Reference contracts: [Claude scope precedence and headers helpers](https://code.claude.com/docs/en/mcp),
 [GitHub native runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
