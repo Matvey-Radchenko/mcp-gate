@@ -169,6 +169,9 @@ jobs:
           if-no-files-found: error
       - name: Retain compilation cache after a failed acceptance check
         if: failure()
+        # A Windows target upload has taken about seven minutes. Cap the step
+        # so a stuck save fails here instead of holding the job open.
+        timeout-minutes: 15
         uses: actions/cache/save@v4
         with:
           path: |

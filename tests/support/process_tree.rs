@@ -14,6 +14,9 @@ impl TrackedProcess {
             created: process_state(pid).map(|(created, _)| created),
         }
     }
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
     pub fn running(&self) -> bool {
         #[cfg(windows)]
         {
