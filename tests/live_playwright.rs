@@ -58,8 +58,18 @@ async fn delete(c: &Config, id: &str, expected: u64) {
     .await
     .expect("Worker cleanup");
 }
+fn still_running(processes: &[support::process_tree::TrackedProcess]) -> Vec<u32> {
+    processes
+        .iter()
+        .filter(|process| process.running())
+        .map(|process| process.pid())
+        .collect()
+}
 async fn quiet(processes: &[support::process_tree::TrackedProcess]) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    // The gateway worker can exit before Windows reaps Chrome. Exit code 259
+    // still means running. native_chrome uses this same bound; five seconds
+    // was still inside that exit after the worker had already stopped.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
     while processes.iter().any(|process| process.running()) {
         if std::time::Instant::now() >= deadline {
             return false;
@@ -207,7 +217,8 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     delete(&c, &aid, 1).await;
     assert!(
         quiet(&a_processes).await,
-        "A's browser process tree must be reaped"
+        "A's browser process tree must be reaped; still running: {:?}",
+        still_running(&a_processes)
     );
     assert!(
         text(
@@ -222,7 +233,8 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     delete(&c, &bid, 0).await;
     assert!(
         quiet(&all_processes).await,
-        "Browser cleanup must not leave orphans"
+        "Browser cleanup must not leave orphans; still running: {:?}",
+        still_running(&all_processes)
     );
     assert!(descendants(gateway_pid).is_empty());
     assert!(
