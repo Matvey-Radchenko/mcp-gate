@@ -62,8 +62,10 @@ pub fn sanitize(name: &str) -> String {
 }
 
 fn test_scope() -> String {
+    // Only the service tests set this. Dry-run and the setup demo keep the
+    // published `local.mcp-gate.<name>` label.
     #[cfg(feature = "test-backend")]
-    if let Ok(root) = std::env::var("MCP_GATE_TEST_ROOT") {
+    if let Ok(root) = std::env::var("MCP_GATE_TEST_LABEL_SCOPE") {
         use sha2::{Digest, Sha256};
         let hash = format!("{:x}", Sha256::digest(root.as_bytes()));
         return format!("-{}", &hash[..6]);

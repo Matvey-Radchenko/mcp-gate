@@ -195,21 +195,19 @@ fn identical_definitions_share_a_gateway_and_collisions_get_a_suffix() {
             .unwrap()
             .to_string()
     };
-    let shared = label("filesystem", "codex");
-    assert_eq!(shared, label("filesystem", "claude-code"));
-    assert!(shared.starts_with("local.mcp-gate.filesystem"));
+    assert_eq!(
+        label("filesystem", "codex"),
+        label("filesystem", "claude-code")
+    );
+    assert_eq!(label("filesystem", "codex"), "local.mcp-gate.filesystem");
     assert!(
         servers
             .iter()
             .any(|server| { server["name"] == "filesystem" && server["shares_gateway"] == true })
     );
     let mail = [label("mail", "codex"), label("mail", "claude-code")];
-    assert!(
-        mail.iter()
-            .any(|item| item.starts_with("local.mcp-gate.mail"))
-    );
-    assert!(mail.iter().any(|item| item.ends_with("-2")));
-    assert_ne!(mail[0], mail[1]);
+    assert!(mail.contains(&"local.mcp-gate.mail".to_string()));
+    assert!(mail.contains(&"local.mcp-gate.mail-2".to_string()));
 }
 
 #[test]

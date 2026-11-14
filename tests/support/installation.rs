@@ -52,7 +52,8 @@ impl Installation {
         c.arg(action)
             .arg("--json")
             .env("CLAUDE_CONFIG_DIR", self.settings.parent().unwrap())
-            .env("MCP_GATE_TEST_ROOT", &self.root);
+            .env("MCP_GATE_TEST_ROOT", &self.root)
+            .env("MCP_GATE_TEST_LABEL_SCOPE", &self.root);
         if action != "status" {
             c.args([
                 "--client",
