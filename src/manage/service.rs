@@ -171,6 +171,7 @@ fn label_taken(label: &str) -> anyhow::Error {
 
 #[cfg(target_os = "macos")]
 fn write_new(path: &std::path::Path, bytes: &[u8], label: &str) -> Result<()> {
+    use std::io::Write;
     let mut file = match crate::platform::private_file(path) {
         Ok(file) => file,
         Err(_) if path.exists() => return Err(label_taken(label)),
