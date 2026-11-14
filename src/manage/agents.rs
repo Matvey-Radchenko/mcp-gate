@@ -121,7 +121,10 @@ async fn describe(path: &Path) -> (Option<String>, &'static str) {
 }
 
 fn plists(home: &Path) -> Vec<PathBuf> {
-    if !cfg!(any(target_os = "macos", feature = "test-backend")) {
+    // Only launchd reads ~/Library/LaunchAgents. Windows logon tasks and Linux
+    // have no equivalent directory. `test-backend` is enabled on every CI OS, so
+    // it must not turn a JSON plist into a discovered service off macOS.
+    if !cfg!(target_os = "macos") {
         return Vec::new();
     }
     let Ok(entries) = std::fs::read_dir(home.join("Library/LaunchAgents")) else {

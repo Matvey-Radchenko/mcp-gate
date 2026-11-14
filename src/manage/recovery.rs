@@ -9,11 +9,13 @@ pub async fn restore(journal: &mut Journal, journal_path: &std::path::Path) -> R
     let mut recovery = journal.restore();
     if recovery.is_empty() {
         for record in journal.services.iter().rev() {
-            if !runtime::stop_idle(record).await.unwrap_or(false) {
-                recovery.push(format!(
+            match runtime::stop_idle(record).await {
+                Ok(true) => {}
+                Ok(false) => recovery.push(format!(
                     "Service {} retained: busy or health unknown",
                     record.id
-                ));
+                )),
+                Err(error) => recovery.push(format!("Service {} retained: {error}", record.id)),
             }
         }
     }

@@ -9,8 +9,27 @@ use std::{path::PathBuf, time::Duration};
 use support::{
     Harness,
     native_codex::{NativeCodex, discovery_sessions},
-    process_tree::{descendants, track},
+    process_tree::{TrackedProcess, descendants, track},
 };
+
+async fn await_exit(processes: &[TrackedProcess]) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while processes.iter().any(TrackedProcess::running) {
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    true
+}
+
+fn live_pids(processes: &[TrackedProcess]) -> Vec<u32> {
+    processes
+        .iter()
+        .filter(|process| process.running())
+        .map(TrackedProcess::pid)
+        .collect()
+}
 
 struct Probe {
     config: Config,
@@ -196,9 +215,13 @@ async fn two_threads_real_browsers_and_lifecycle() {
     );
     probe.delete(first_ids.first().unwrap()).await;
     probe.workers(1).await;
+    // The gateway worker can exit before Windows reaps Chrome. The same
+    // bound as final cleanup distinguishes a slow exit from a leftover tree.
+    let a_gone = await_exit(&a_processes).await;
     assert!(
-        a_processes.iter().all(|p| !p.running()),
-        "A's original browser tree must be gone while B survives"
+        a_gone,
+        "A's original browser tree must be gone while B survives; still running: {:?}",
+        live_pids(&a_processes)
     );
     let surviving = c
         .call_in(
@@ -211,13 +234,11 @@ async fn two_threads_real_browsers_and_lifecycle() {
     c.request("thread/unsubscribe", json!({"threadId":b})).await;
     c.close().await;
     probe.workers(0).await;
-    tokio::time::timeout(Duration::from_secs(15), async {
-        while all_processes.iter().any(|p| p.running()) {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("Owned backend/browser process survived cleanup");
+    assert!(
+        await_exit(&all_processes).await,
+        "Owned backend/browser process survived cleanup: {:?}",
+        live_pids(&all_processes)
+    );
     assert_eq!(probe.health().await["sessions"], 0);
     assert!(descendants(gateway_pid).is_empty());
     pages.abort();
