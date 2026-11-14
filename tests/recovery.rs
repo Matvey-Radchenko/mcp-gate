@@ -80,7 +80,10 @@ async fn assert_fresh_clients(h: &Harness, old_pid: u32) {
 
 #[tokio::test]
 async fn timeout_recovers_without_replaying_and_rejects_old_queue() {
-    let mut h = recovering(1).await;
+    // The pause runs for 10s. The call timeout must be long enough for the
+    // second request to reach the worker lock first; a 1s timeout raced on
+    // a busy Windows runner and let that request start after recovery.
+    let mut h = recovering(5).await;
     let a = h.session().await;
     let b = h.session().await;
     let pid = mock_value(
