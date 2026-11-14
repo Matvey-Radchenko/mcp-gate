@@ -151,6 +151,10 @@ fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Res
     }
     Ok(value)
 }
+/// A replaced service may hold its state lock before it listens. Recovery runs
+/// at `upgrade-registered`, before `ready`, so both use this startup window.
+const SERVICE_HANDOFF: Duration = Duration::from_secs(30);
+
 pub async fn ready(record: &Record) -> Result<()> {
     // Bound elapsed time, not retries: refused connections on Windows can take
     // seconds each, and multiplying those delays would stall safe recovery.
@@ -166,7 +170,7 @@ pub async fn ready(record: &Record) -> Result<()> {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     };
-    if let Ok(result) = tokio::time::timeout(Duration::from_secs(30), wait).await {
+    if let Ok(result) = tokio::time::timeout(SERVICE_HANDOFF, wait).await {
         return result;
     }
     anyhow::bail!(
@@ -210,30 +214,60 @@ pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result
 /// A live maintenance barrier or the daemon's exclusive state lock prevents a
 /// new owner from accepting work while its service registration is removed.
 pub async fn stop_idle(record: &Record) -> Result<bool> {
-    use fs2::FileExt;
     let config = Config::load(&record.config())?;
-    let mut offline = None;
-    match maintenance(record, true).await {
-        Ok(true) => {}
-        Ok(false) => return Ok(false),
-        Err(_) => {
-            let lock = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .open(config.state_dir.join("gateway.lock"))?;
-            if lock.try_lock_exclusive().is_err() {
-                return Ok(false);
-            }
-            offline = Some(lock);
-        }
-    }
+    let offline = match hold_for_stop(record, &config).await? {
+        StopHold::Busy => return Ok(false),
+        StopHold::Paused => None,
+        StopHold::Offline(lock) => Some(lock),
+    };
     let result = super::service::unregister(record);
     if result.is_err() {
         let _ = maintenance(record, false).await;
     }
     drop(offline);
     result?;
+    await_state_release(&config).await
+}
+
+enum StopHold {
+    /// HTTP 409, or still unreachable after the handoff bound.
+    Busy,
+    /// Maintenance is held in the running process.
+    Paused,
+    /// This task holds the state lock; no gateway process does.
+    Offline(std::fs::File),
+}
+
+/// Pause an idle gateway, or take its state lock when no process owns it.
+/// A starting process takes the lock before it listens. One refused health
+/// request is not evidence that the gateway is busy.
+async fn hold_for_stop(record: &Record, config: &Config) -> Result<StopHold> {
+    use fs2::FileExt;
+    let deadline = tokio::time::Instant::now() + SERVICE_HANDOFF;
+    loop {
+        match maintenance(record, true).await {
+            Ok(true) => return Ok(StopHold::Paused),
+            Ok(false) => return Ok(StopHold::Busy),
+            Err(_) => {
+                let lock = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(config.state_dir.join("gateway.lock"))?;
+                if lock.try_lock_exclusive().is_ok() {
+                    return Ok(StopHold::Offline(lock));
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Ok(StopHold::Busy);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
+
+async fn await_state_release(config: &Config) -> Result<bool> {
+    use fs2::FileExt;
     let lock = std::fs::OpenOptions::new()
         .write(true)
         .open(config.state_dir.join("gateway.lock"))?;
@@ -246,4 +280,64 @@ pub async fn stop_idle(record: &Record) -> Result<bool> {
     anyhow::bail!(
         "Service stop requested but its process still owns the state directory; replacement deferred"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs2::FileExt;
+
+    #[tokio::test]
+    async fn a_starting_process_lock_is_not_a_busy_gateway() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        let token = root.path().join("token");
+        std::fs::write(&token, "ab".repeat(32)).unwrap();
+        crate::platform::private_permissions(&token).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let release = root.path().join("release");
+        std::fs::create_dir_all(&release).unwrap();
+        let config_path = release.join("config.toml");
+        let config: Config = serde_json::from_value(json!({
+            "format_version": 2,
+            "listen": format!("127.0.0.1:{port}"),
+            "token_file": &token,
+            "catalog_file": root.path().join("catalog.json"),
+            "state_dir": &state,
+            "backend": {"profile": "stdio", "command": &token, "version": "fixture"}
+        }))
+        .unwrap();
+        std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        let config = Config::load(&config_path).unwrap();
+        let record = Record {
+            removing: false,
+            id: "fixture".into(),
+            release,
+            label: "local.mcp-gate.fixture".into(),
+            binary_hash: "0".repeat(64),
+            binary: token,
+            bindings: Vec::new(),
+        };
+        let held = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(state.join("gateway.lock"))
+            .unwrap();
+        held.try_lock_exclusive().unwrap();
+        let started = std::time::Instant::now();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        });
+        let hold = hold_for_stop(&record, &config).await.unwrap();
+        assert!(
+            matches!(hold, StopHold::Offline(_)),
+            "a lock released during startup must not be reported as busy"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 }
