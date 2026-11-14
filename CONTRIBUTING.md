@@ -2,7 +2,9 @@
 
 Development commands do not deploy binaries, update client
 settings, register launchd jobs or publish anything. Keep secrets and runtime data
-outside the repository.
+outside the repository. Report vulnerabilities privately, as described in
+[SECURITY.md](SECURITY.md). Do not put tokens or private configuration in an issue
+or pull request.
 
 ## One check command
 
