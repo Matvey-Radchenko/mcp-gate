@@ -13,7 +13,7 @@ npx @matvei-radchenko/mcp-gate@latest remove
 npm i -g @matvei-radchenko/mcp-gate
 ```
 
-The command name stays `mcp-gate` for Codex, Claude Code, Cursor, and VS Code.
+The command name stays `mcp-gate` for Codex, OpenCode, and Claude Code.
 
 Use `setup --dry-run` to preview settings without running MCP commands. Select
 project settings with `--project /path/to/project`. Shared project files are
