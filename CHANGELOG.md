@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The Windows release download check passes the archive name to tar relative to its directory. Git Bash tar treated `C:\...` as a remote host.
+
 ## 0.1.0 — unreleased
 
 - Public `mcp-gate` command with setup, status and remove.
