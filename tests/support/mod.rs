@@ -70,7 +70,7 @@ impl Harness {
         panic!("Replacement test gateway did not start");
     }
     pub(crate) async fn new(real: bool, max_workers: usize) -> Self {
-        Self::configured(real, max_workers, None).await
+        Self::configured(real, max_workers, None, None).await
     }
     pub(crate) async fn generic(
         ownership: &str,
@@ -82,6 +82,16 @@ impl Harness {
             false,
             if ownership == "shared" { 1 } else { 4 },
             Some((ownership, pending, call_timeout, queue_timeout)),
+            None,
+        )
+        .await
+    }
+    pub(crate) async fn session_limits(max_workers: usize, idle: u64, evict: u64) -> Self {
+        Self::configured(
+            false,
+            max_workers,
+            Some(("session", 16, 30, 30)),
+            Some((idle, evict)),
         )
         .await
     }
@@ -89,6 +99,7 @@ impl Harness {
         real: bool,
         max_workers: usize,
         generic: Option<(&str, usize, u64, u64)>,
+        idle: Option<(u64, u64)>,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -115,6 +126,8 @@ state_dir = {state:?}
 max_workers = {max_workers}
 max_sessions = 8
 disconnect_grace_seconds = 2
+session_idle_seconds = {idle_seconds}
+session_idle_evict_seconds = {evict_seconds}
 startup_timeout_seconds = 30
 call_timeout_seconds = 60
 [backend]
@@ -134,7 +147,9 @@ MOCK_CANCEL_FILE = {cancel_file:?}
             } else {
                 std::path::Path::new(mock)
             },
-            version = if real { "1.8.0" } else { "mock-1" }
+            version = if real { "1.8.0" } else { "mock-1" },
+            idle_seconds = idle.map(|(idle, _)| idle).unwrap_or(900),
+            evict_seconds = idle.map(|(_, evict)| evict).unwrap_or(120),
         );
         let text = if let Some((ownership, pending, call_timeout, queue_timeout)) = generic {
             let mut value: toml::Value = toml::from_str(&text).unwrap();

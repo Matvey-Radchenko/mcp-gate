@@ -2,6 +2,7 @@ use crate::{
     catalog::Catalog,
     config::{Config, Ownership, SharedClientRoots},
     ownership::BackendSlot,
+    recovery::Reason,
 };
 use rmcp::{
     RoleServer, ServerHandler,
@@ -53,6 +54,57 @@ impl Gateway {
             stopping: AtomicBool::new(false),
         })
     }
+    fn sessions(&self) -> Vec<Arc<Session>> {
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.retain(|session| session.strong_count() > 0);
+        sessions.iter().filter_map(Weak::upgrade).collect()
+    }
+
+    /// Drop backends whose process has already exited. The permit stays taken
+    /// until the worker is dropped, so a dead browser must not wait for the
+    /// next call on that same session.
+    pub async fn reap_closed_workers(&self) {
+        // Shared recovery is owned by the request that observed the failure.
+        // A background reap would replace that reason and could admit the next call.
+        if self.shared.is_some() {
+            return;
+        }
+        let slots: Vec<_> = self
+            .sessions()
+            .into_iter()
+            .map(|session| session.backend.clone())
+            .collect();
+        for slot in slots {
+            let closed = slot
+                .worker
+                .try_lock()
+                .ok()
+                .is_some_and(|guard| guard.as_ref().is_some_and(crate::worker::Worker::closed));
+            if closed {
+                slot.retire(Reason::TransportClosed).await;
+            }
+        }
+    }
+
+    /// When every worker slot is busy, stop the longest-idle session backend
+    /// that has been unused for at least `session_idle_evict_seconds`.
+    pub async fn reclaim_idle_worker(&self) -> bool {
+        if self.shared.is_some() {
+            return false;
+        }
+        let minimum = Duration::from_secs(self.config.session_idle_evict_seconds);
+        let mut sessions = self.sessions();
+        sessions.retain(|session| session.backend.idle() >= minimum);
+        sessions.sort_by_key(|session| std::cmp::Reverse(session.backend.idle()));
+        for session in sessions {
+            if session.backend.retire_if_idle(Reason::Idle).await {
+                tracing::info!("evicted an idle session backend to free a worker slot");
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn handler(self: &Arc<Self>) -> Result<Handler, std::io::Error> {
         if self.stopping.load(Ordering::SeqCst) {
             return Err(std::io::Error::other("Gateway stopping"));

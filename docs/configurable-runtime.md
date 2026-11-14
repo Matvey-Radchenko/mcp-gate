@@ -14,9 +14,18 @@ No live service deployment or client configuration changes are part of developme
   bounds additional admitted calls, `queue_timeout_seconds` bounds lock waiting.
   Zero pending calls means fail-fast while busy. Cancelled or expired queued calls
   do not reach the backend. These limits are not OS memory quotas.
-- There is no idle eviction: long user pauses do not destroy browser state. Existing
-  disconnect grace closes HTTP sessions only when no tool call is active. Clients
-  that never opened GET/SSE still need DELETE or explicit administrative closure.
+- Session-owned backends are closed after `session_idle_seconds` (default 15
+  minutes) with no request and no open GET stream. That frees the worker when a
+  client initializes per call and never sends HTTP DELETE. A connected GET stream
+  is not idle, so an open recording is kept. Shared backends are not idle-closed.
+- If the backend process exits, including when its browser is gone and the
+  process ends, the worker slot is released without waiting for another call on
+  that same session. The session must reconnect; the action is not replayed.
+- When every worker slot is busy, the longest-idle session-owned backend that
+  has been idle for at least `session_idle_evict_seconds` (default 2 minutes;
+  zero means any idle one) is shut down so the new call can start. A call that
+  is still running is not evicted. Existing disconnect grace still closes HTTP
+  sessions after a lost GET when no tool call is active.
 - An active shared call cancelled/timed out with uncertain outcome poisons the shared
   slot and closes its process. Waiting/new clients receive an error; they cannot
   silently spawn a replacement. An operator must restart that gateway. This trades
@@ -71,6 +80,8 @@ queue_timeout_seconds = 30
 startup_timeout_seconds = 30
 call_timeout_seconds = 300
 disconnect_grace_seconds = 60
+session_idle_seconds = 900
+session_idle_evict_seconds = 120
 
 [backend]
 profile = "stdio"
