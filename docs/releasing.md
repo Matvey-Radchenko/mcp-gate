@@ -12,8 +12,14 @@
 2. Review the exact Git tree/history and npm/archive contents for private data.
    The public branch starts at a sanitized source snapshot; original local history
    and operational notes are retained separately and must not be pushed.
-3. Confirm the availability/ownership of `mcp-gate`, `mcp-gate-bin-darwin-arm64`,
-   `mcp-gate-bin-darwin-x64`, and `mcp-gate-bin-win32-x64`.
+3. Confirm the owner scope and these four new names. Version `0.1.0` is free
+   on them because the names have not been published:
+   `@matvei-radchenko/mcp-gate`,
+   `@matvei-radchenko/mcp-gate-bin-darwin-arm64`,
+   `@matvei-radchenko/mcp-gate-bin-darwin-x64`, and
+   `@matvei-radchenko/mcp-gate-bin-win32-x64`.
+   The launcher `bin` command stays `mcp-gate`. Each package sets
+   `publishConfig.access` to `public`.
 4. Confirm the reviewed repository is public. The owner authenticates to npm
    separately, with account 2FA. Trusted publishing needs npm CLI 11.5.1 or newer
    and Node.js 22.14 or newer; `npm trust` needs npm CLI 11.15.0 or newer. The
@@ -32,10 +38,26 @@
    requires all four npm `.tgz` files and rejects a launcher tarball whose bytes
    differ across runners. Those npm archives are not Release assets.
    The owner then publishes the three platform `.tgz` files first and the launcher
-   `.tgz` last, from an interactive 2FA session:
+   `.tgz` last, from an interactive 2FA session. Pass an explicit `./` path.
+   Without `./`, npm treats `dir/file.tgz` as a GitHub `user/repo` shorthand and
+   tries to git clone it. npm may open a browser and require web authentication
+   for each publish. From the downloaded `artifacts` directory:
 
    ```sh
-   npm publish ARCHIVE --access public --tag latest
+   npm publish ./native-darwin-arm64/matvei-radchenko-mcp-gate-bin-darwin-arm64-0.1.0.tgz --access public --tag latest
+   npm publish ./native-darwin-x64/matvei-radchenko-mcp-gate-bin-darwin-x64-0.1.0.tgz --access public --tag latest
+   npm publish ./native-win32-x64/matvei-radchenko-mcp-gate-bin-win32-x64-0.1.0.tgz --access public --tag latest
+   npm publish ./native-darwin-arm64/matvei-radchenko-mcp-gate-0.1.0.tgz --access public --tag latest
+   ```
+
+   The launcher tarball is the same bytes in every `native-*` directory; publish
+   it once. Then deprecate the two unscoped Darwin packages that were already
+   published. The unscoped `mcp-gate` and `mcp-gate-bin-win32-x64` names were
+   rejected and have nothing to deprecate:
+
+   ```sh
+   npm deprecate mcp-gate-bin-darwin-arm64 "Moved to @matvei-radchenko/mcp-gate-bin-darwin-arm64"
+   npm deprecate mcp-gate-bin-darwin-x64 "Moved to @matvei-radchenko/mcp-gate-bin-darwin-x64"
    ```
 
    Do not pass `--provenance`. Provenance is created for a public package from a
@@ -49,7 +71,7 @@
    successful publish.
 6. Create the trusted publisher immediately before the first workflow run that
    publishes a version the registry does not already have. On npmjs.com, for each
-   of the four packages, add GitHub Actions with user `Matvey-Radchenko`,
+   of the four `@matvei-radchenko` packages, add GitHub Actions with user `Matvey-Radchenko`,
    repository `mcp-gate`, workflow filename `release.yml`, and environment `npm`.
    A publisher created after 3 September 2026 allows `npm stage publish` only
    until the owner also allows direct `npm publish`. Allow direct `npm publish`.

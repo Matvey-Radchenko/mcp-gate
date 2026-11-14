@@ -1,6 +1,8 @@
 # Compatibility and release gates
 
-The npm 0.1.0 release is **not published**. This table is evidence, not a promise
+The npm 0.1.0 packages are `@matvei-radchenko/mcp-gate` and the three
+`@matvei-radchenko/mcp-gate-bin-*` platform packages. They are **not published**
+under those names yet. This table is evidence, not a promise
 that all combinations have been tested. Update it only from completed checks.
 CI uses macOS 15 and Windows Server 2025. Local ARM64 checks use macOS 26.6.2
 and 26.7.1. Native login acceptance is macOS ARM64 only. Stability on a native
