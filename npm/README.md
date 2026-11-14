@@ -7,10 +7,13 @@ Supported release targets: macOS ARM64, macOS Intel, Windows x64. See the
 for the client versions and scenarios actually tested.
 
 ```sh
-npx mcp-gate@latest setup
-npx mcp-gate@latest status
-npx mcp-gate@latest remove
+npx @matvei-radchenko/mcp-gate@latest setup
+npx @matvei-radchenko/mcp-gate@latest status
+npx @matvei-radchenko/mcp-gate@latest remove
+npm i -g @matvei-radchenko/mcp-gate
 ```
+
+The command name stays `mcp-gate` for Codex, Claude Code, Cursor, and VS Code.
 
 Use `setup --dry-run` to preview settings without running MCP commands. Select
 project settings with `--project /path/to/project`. Shared project files are

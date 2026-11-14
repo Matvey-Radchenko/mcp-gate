@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { launcherPackage, npmTarball, platformPackageName } from './manifest.mjs';
 
 test('combined release accepts one shared launcher and rejects conflicting or missing archives', () => {
   const root = mkdtempSync(join(tmpdir(), 'mcp-gate checksums '));
@@ -14,14 +15,14 @@ test('combined release accepts one shared launcher and rejects conflicting or mi
     writeFileSync(join(root, `native-${target}`, name), bytes);
     rows.set(name, createHash('sha256').update(bytes).digest('hex'));
   }
-  const launcher = 'mcp-gate-0.1.0.tgz';
+  const launcher = npmTarball(launcherPackage, '0.1.0');
   const checksums = join(root, 'SHA256SUMS');
   const verify = () => spawnSync(process.execPath, [resolve('packaging/checksums.mjs'), root], { encoding: 'utf8' });
   try {
     for (const target of targets) {
       mkdirSync(join(root, `native-${target}`));
       archive(target, launcher);
-      archive(target, `mcp-gate-bin-${target}-0.1.0.tgz`);
+      archive(target, npmTarball(platformPackageName(target), '0.1.0'));
       archive(target, `mcp-gate-0.1.0-${target}.tar.gz`);
     }
     assert.equal(verify().status, 0);

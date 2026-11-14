@@ -24,13 +24,17 @@ Agents should follow [docs/agents.md](docs/agents.md). A reusable skill is in
 [skills/mcp-gate/SKILL.md](skills/mcp-gate/SKILL.md).
 
 ```sh
-npx mcp-gate@latest setup
-npx mcp-gate@latest status
-npx mcp-gate@latest remove
+npx @matvei-radchenko/mcp-gate@latest setup
+npx @matvei-radchenko/mcp-gate@latest status
+npx @matvei-radchenko/mcp-gate@latest remove
+npm i -g @matvei-radchenko/mcp-gate
 ```
 
+The installed command is still `mcp-gate`. Codex, Claude Code, Cursor, and VS Code
+call that command; they do not use the scoped package name as the executable.
+A global install or a GitHub Release binary provides the same three commands.
+
 Release targets are macOS ARM64, macOS Intel and Windows x64. Linux is excluded.
-A global npm install or a GitHub Release binary provides the same three commands.
 The npm package only launches the Rust executable: installing or updating the
 package does not switch existing connections.
 

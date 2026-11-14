@@ -143,10 +143,10 @@ jobs:
       - name: Install from the real npm registry
         env:
           RELEASE_VERSION: ${{ inputs.version }}
-        run: npx --yes "mcp-gate@$env:RELEASE_VERSION" --version
+        run: npx --yes "@matvei-radchenko/mcp-gate@$env:RELEASE_VERSION" --version
         if: runner.os == 'Windows'
       - name: Install from the real npm registry
         env:
           RELEASE_VERSION: ${{ inputs.version }}
-        run: npx --yes "mcp-gate@$RELEASE_VERSION" --version
+        run: npx --yes "@matvei-radchenko/mcp-gate@$RELEASE_VERSION" --version
         if: runner.os != 'Windows'
