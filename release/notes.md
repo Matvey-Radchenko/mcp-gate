@@ -1,6 +1,8 @@
 First stable npm release of mcp-gate: local Rust gateways for existing stdio MCP servers.
 
-Install with `npx mcp-gate@latest setup`. Release binaries are built for macOS
+Install with `npx @matvei-radchenko/mcp-gate@latest setup` or
+`npm i -g @matvei-radchenko/mcp-gate`. The command remains `mcp-gate`.
+Release binaries are built for macOS
 ARM64, macOS Intel and Windows x64. Native login acceptance for 0.1.0 is macOS
 ARM64 only. The Intel x86_64 run under Rosetta 2 is postponed, and Windows x64
 was smoke-tested under Wine rather than a native Windows login. Stability on

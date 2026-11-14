@@ -1,5 +1,5 @@
 {
-  "name": "mcp-gate",
+  "name": "@matvei-radchenko/mcp-gate",
   "version": "0.1.0",
   "description": "Lazy local MCP gateways for existing agent clients",
   "keywords": [
@@ -18,6 +18,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Matvey-Radchenko/mcp-gate.git"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "bin": {
     "mcp-gate": "bin/mcp-gate.cjs"
@@ -38,8 +41,8 @@
     "win32"
   ],
   "optionalDependencies": {
-    "mcp-gate-bin-darwin-arm64": "0.1.0",
-    "mcp-gate-bin-darwin-x64": "0.1.0",
-    "mcp-gate-bin-win32-x64": "0.1.0"
+    "@matvei-radchenko/mcp-gate-bin-darwin-arm64": "0.1.0",
+    "@matvei-radchenko/mcp-gate-bin-darwin-x64": "0.1.0",
+    "@matvei-radchenko/mcp-gate-bin-win32-x64": "0.1.0"
   }
 }

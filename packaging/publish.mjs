@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
+import { launcherPackage, npmTarball, platformPackageName, registryName } from './manifest.mjs';
 
 export function verifyPublished(bytes, metadata, name, version) {
   assert.equal(metadata.name, name, 'Registry package identity differs');
@@ -20,13 +21,13 @@ async function publish(root, version) {
   assert(npm, 'Run through npm exec -- node packaging/publish.mjs');
   const targets = ['darwin-arm64', 'darwin-x64', 'win32-x64'];
   const packages = targets.map(target => ({
-    name: `mcp-gate-bin-${target}`, target,
+    name: platformPackageName(target), target,
   }));
-  packages.push({ name: 'mcp-gate', target: 'darwin-arm64' });
+  packages.push({ name: launcherPackage, target: 'darwin-arm64' });
   for (const { name, target } of packages) {
-    const archive = join(root, `native-${target}`, `${name}-${version}.tgz`);
+    const archive = join(root, `native-${target}`, npmTarball(name, version));
     const bytes = readFileSync(archive);
-    const response = await fetch(`https://registry.npmjs.org/${name}/${version}`, {
+    const response = await fetch(`https://registry.npmjs.org/${registryName(name)}/${version}`, {
       signal: AbortSignal.timeout(30_000),
     });
     if (response.status === 404) {
@@ -38,7 +39,7 @@ async function publish(root, version) {
       verifyPublished(bytes, await response.json(), name, version);
       console.log(`Verified identical published archive: ${name}@${version}`);
     }
-    const tags = await fetch(`https://registry.npmjs.org/-/package/${name}/dist-tags`, {
+    const tags = await fetch(`https://registry.npmjs.org/-/package/${registryName(name)}/dist-tags`, {
       signal: AbortSignal.timeout(30_000),
     });
     assert(tags.ok, `Cannot inspect dist-tags for ${name}`);

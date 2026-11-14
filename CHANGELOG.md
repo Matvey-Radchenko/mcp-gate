@@ -3,6 +3,7 @@
 ## 0.1.0 — unreleased
 
 - Public `mcp-gate` command with setup, status and remove.
+- npm packages are `@matvei-radchenko/mcp-gate` and `@matvei-radchenko/mcp-gate-bin-{darwin-arm64,darwin-x64,win32-x64}`. The command name stays `mcp-gate`.
 - Lazy stdio backends behind authenticated local Streamable HTTP.
 - Shared/session ownership, bounded queues, cancellation and catalog drift checks.
 - Explicit backend working directory, portable process ownership and private files.

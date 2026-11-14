@@ -29,7 +29,7 @@ function main() {
   let binary;
   try {
     const suffix = process.platform === 'win32' ? '.exe' : '';
-    binary = require.resolve(`mcp-gate-bin-${target}/bin/mcp-gate${suffix}`);
+    binary = require.resolve(`@matvei-radchenko/mcp-gate-bin-${target}/bin/mcp-gate${suffix}`);
   } catch {
     console.error('The native mcp-gate package is missing. Reinstall with optional dependencies enabled, or download the matching GitHub Release binary.');
     process.exit(1);

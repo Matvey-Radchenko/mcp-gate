@@ -31,7 +31,7 @@ jobs:
           node packaging/launcher.mjs
           cd dist
           npm pack ./mcp-gate --ignore-scripts
-          tar -tzf mcp-gate-*.tgz > packed-names.txt
+          tar -tzf matvei-radchenko-mcp-gate-[0-9]*.tgz > packed-names.txt
           grep -qx 'package/README.md' packed-names.txt
           grep -qx 'package/LICENSE' packed-names.txt
           grep -qx 'package/bin/mcp-gate.cjs' packed-names.txt
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: shared-npm-launcher
-          path: dist/mcp-gate-*.tgz
+          path: dist/matvei-radchenko-mcp-gate-[0-9]*.tgz
           if-no-files-found: error
   native:
     needs: launcher
