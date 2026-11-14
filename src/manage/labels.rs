@@ -8,7 +8,9 @@ use std::{
 
 /// `local.mcp-gate.<name>` with a numeric suffix when that label is already taken.
 pub fn allocate(name: &str, taken: &BTreeSet<String>) -> String {
-    let base = sanitize(name);
+    // Published labels stay `local.mcp-gate.<name>`. Test builds add a short hash of
+    // the private state directory so parallel service tests do not share one login label.
+    let base = format!("{}{}", sanitize(name), test_scope());
     for n in 1..10_000 {
         let suffix = if n == 1 {
             String::new()
@@ -57,6 +59,16 @@ pub fn sanitize(name: &str) -> String {
         out.insert(0, 's');
     }
     stem_for(&out, 0)
+}
+
+fn test_scope() -> String {
+    #[cfg(feature = "test-backend")]
+    if let Ok(root) = std::env::var("MCP_GATE_TEST_ROOT") {
+        use sha2::{Digest, Sha256};
+        let hash = format!("{:x}", Sha256::digest(root.as_bytes()));
+        return format!("-{}", &hash[..6]);
+    }
+    String::new()
 }
 
 fn stem_for(base: &str, suffix_len: usize) -> String {
