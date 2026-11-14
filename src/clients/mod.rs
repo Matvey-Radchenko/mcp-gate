@@ -4,6 +4,7 @@ pub mod expand;
 pub mod recipes;
 mod scan;
 mod sources;
+pub use claude::declares_project_servers as claude_project_servers;
 pub use claude::project_key as claude_project_key;
 pub use scan::{Scan, SourceIssue, discover, discover_current, inventory_current};
 use serde::{Deserialize, Serialize};
@@ -55,6 +56,8 @@ pub struct Candidate {
     pub inherit_env: Vec<String>,
     pub issue: Option<String>,
     pub recipe: Option<recipes::Recipe>,
+    /// Label the preview chose. Existing services keep the label already stored.
+    pub service_label: Option<String>,
 }
 
 impl Candidate {
@@ -68,6 +71,7 @@ impl Candidate {
             "command":"preserved (values hidden)","permissions":"preserved",
             "platform_note":cfg!(target_os = "macos").then_some("macOS privacy grants of the agent application do not transfer to a background gateway; access to protected folders may require a separate system approval."),
             "autostart": if cfg!(windows) { "Task Scheduler" } else { "LaunchAgent" },
+            "service_label":self.service_label,
             "issue":self.issue})
     }
 }

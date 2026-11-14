@@ -15,9 +15,11 @@ npm i -g @matvei-radchenko/mcp-gate
 
 The command name stays `mcp-gate` for Codex, OpenCode, and Claude Code.
 
-Use `setup --dry-run` to preview settings without running MCP commands. Select
-project settings with `--project /path/to/project`. Shared project files are
-never rewritten. Setup skips entries without a verified local override.
+Use `setup --dry-run` to preview settings without running MCP commands. Connections
+without a working directory stay in that preview; pass `--cwd <dir>` or use the
+interactive prompt. Select project settings with `--project /path/to/project` when
+Claude Code has a project-scoped server. Shared project files are never rewritten.
+Setup skips entries without a verified local override.
 
 Setup registers user services and copies the Rust binary to permanent private
 storage. The npm launcher itself does not change client settings or services.

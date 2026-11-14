@@ -137,9 +137,10 @@ Reference contracts: [Claude scope precedence and headers helpers](https://code.
 [GitHub native runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
 [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
 
-Installer scope still needs final acceptance: ordinary global commands without an
-explicit cwd are skipped. In particular, OpenCode configurations do not gain a
-made-up cwd field; a supported project-local solution remains a separate setup.
+Ordinary global commands without a working directory are not given one by
+guessing. Interactive setup asks; non-interactive setup accepts `--cwd <dir>`.
+OpenCode configurations do not gain a made-up cwd field; a supported
+project-local solution remains a separate setup.
 The OpenCode transport tests above do not establish automatic migration for every
 configuration source or schema.
 

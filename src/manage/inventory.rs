@@ -91,6 +91,8 @@ pub async fn read(
             } else {
                 "setup needs attention"
             }
+        } else if kind == "direct" {
+            "health not checked"
         } else {
             "not checked"
         };
@@ -108,7 +110,12 @@ pub async fn read(
                 "Existing HTTP connection; gateway ownership and backend health are not verified."
                     .into(),
             ),
-            _ => c.issue.clone(),
+            _ => c.issue.clone().or_else(|| {
+                (kind == "direct").then(|| {
+                    "Direct command; backend health is not checked until setup creates a gateway."
+                        .into()
+                })
+            }),
         };
         connections.push(Connection {
             client: c.binding.client,

@@ -101,6 +101,18 @@ fn launch(plist: &Value) -> Option<Launch> {
     })
 }
 
+pub(super) fn recorded_labels(home: &Path) -> std::collections::BTreeSet<String> {
+    let mut labels = std::collections::BTreeSet::new();
+    for path in plists(home) {
+        if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+            && stem.starts_with("local.mcp-gate.")
+        {
+            labels.insert(stem.to_string());
+        }
+    }
+    labels
+}
+
 pub(super) fn valid_name(name: &str) -> bool {
     let mut chars = name.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric())

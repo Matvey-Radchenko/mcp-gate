@@ -14,7 +14,7 @@ pub async fn run(mut options: Selection) -> Result<()> {
         !options.all,
         "setup does not accept --all. Select connections in the wizard or use explicit --client and --server."
     );
-    super::explicit(&options)?;
+    super::explicit(&options, false)?;
     let root = store::root()?;
     // Reading the format precedes all writes, including binary copies.
     let registry = store::load(&root)?;

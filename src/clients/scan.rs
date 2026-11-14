@@ -276,6 +276,7 @@ pub(super) fn candidate(
         command,
         cwd,
         env,
+        service_label: None,
         inherit_env: serde_json::from_value(
             config
                 .get("env_vars")

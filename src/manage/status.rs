@@ -132,6 +132,12 @@ async fn display(
             });
         }
     }
+    if (!options.server.is_empty() || !options.client.is_empty())
+        && inventory.connections.is_empty()
+        && results.is_empty()
+    {
+        anyhow::bail!("{}", unmatched_filter(options));
+    }
     if options.json {
         println!(
             "{}",
@@ -176,9 +182,9 @@ async fn display(
                 "External gateways were not set up by this installation, so setup and remove do not own them."
             );
         }
-        println!(
-            "Application switch is not confirmed by gateway health. Direct/other HTTP backends are not checked."
-        );
+        if managed > 0 {
+            println!("Application switch is not confirmed by gateway health.");
+        }
         if options.details {
             println!("Configure: mcp-gate setup");
         } else {
@@ -253,6 +259,23 @@ async fn probe(record: &store::Record, config: &Config) -> Vec<String> {
         );
     }
     issues
+}
+
+fn unmatched_filter(options: &Status) -> String {
+    let mut parts = Vec::new();
+    if !options.server.is_empty() {
+        parts.push(format!("server {}", options.server.join(", ")));
+    }
+    if !options.client.is_empty() {
+        let names = options
+            .client
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("client {names}"));
+    }
+    format!("No connection matches {}.", parts.join(" and "))
 }
 
 async fn verify_probe(config: &Config) -> anyhow::Result<()> {

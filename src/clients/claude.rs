@@ -13,6 +13,27 @@ pub fn project_key(project: &Path) -> Result<String> {
     Ok(key.to_owned())
 }
 
+/// True when personal Claude settings contain at least one project-scoped MCP server.
+pub fn declares_project_servers(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(value) = super::document::parse(&text, false) else {
+        return false;
+    };
+    value
+        .get("projects")
+        .and_then(Value::as_object)
+        .is_some_and(|projects| {
+            projects.values().any(|project| {
+                project
+                    .get("mcpServers")
+                    .and_then(Value::as_object)
+                    .is_some_and(|servers| !servers.is_empty())
+            })
+        })
+}
+
 pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> Result<()> {
     if !target.is_file() {
         return Ok(());

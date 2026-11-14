@@ -10,6 +10,10 @@ No live service deployment or client configuration changes are part of developme
   roots and logging destination. Closing it does not close another session's backend.
 - `shared` (explicit): the gateway owns one lazy backend across clients. Closing all
   clients does not shut it down. Shutdown of the gateway reaps it.
+- The same command, arguments, environment and working directory use one gateway
+  process even when two clients configure it. Session mode still gives each HTTP
+  session its own backend. Shared mode still has one backend. The two ownership
+  modes are not mixed in one gateway.
 - Both modes execute one request (`tools/call`, `resources/read`, `prompts/get`) at a time **per backend**. `max_pending_calls`
   bounds additional admitted calls, `queue_timeout_seconds` bounds lock waiting.
   Zero pending calls means fail-fast while busy. Cancelled or expired queued calls
