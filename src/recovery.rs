@@ -15,6 +15,7 @@ use std::{
 pub(crate) enum Reason {
     Cancelled,
     HandlerDropped,
+    Idle,
     Timeout,
     TransportClosed,
     StartupFailed,

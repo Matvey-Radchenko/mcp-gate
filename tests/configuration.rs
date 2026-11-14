@@ -123,11 +123,19 @@ fn config() -> Config {
 fn strict_version_profile_and_capacity_validation() {
     let original = config();
     original.validate().unwrap();
-    for field in ["format_version", "max_workers", "queue_timeout_seconds"] {
+    for field in [
+        "format_version",
+        "max_workers",
+        "queue_timeout_seconds",
+        "session_idle_seconds",
+    ] {
         let mut value = toml::Value::try_from(&original).unwrap();
         value[field] = 0.into();
         assert!(value.try_into::<Config>().unwrap().validate().is_err());
     }
+    let mut eviction = toml::Value::try_from(&original).unwrap();
+    eviction["session_idle_evict_seconds"] = 10_000.into();
+    assert!(eviction.try_into::<Config>().unwrap().validate().is_err());
     let text = toml::to_string(&original).unwrap();
     assert!(toml::from_str::<Config>(&format!("typo = true\n{text}")).is_err());
     let mut chrome = backend();

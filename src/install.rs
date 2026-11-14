@@ -167,6 +167,8 @@ pub async fn install(prefix: &Path, runtime: &Path, node: &Path, listen: SocketA
         max_workers: 4,
         max_sessions: 128,
         disconnect_grace_seconds: 60,
+        session_idle_seconds: 15 * 60,
+        session_idle_evict_seconds: 2 * 60,
         startup_timeout_seconds: 30,
         call_timeout_seconds: 300,
         backend: Backend {

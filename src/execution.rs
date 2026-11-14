@@ -20,6 +20,7 @@ impl Handler {
         let session = &self.session;
         let gateway = &session.gateway;
         let backend = &session.backend;
+        backend.touch();
         let shared = gateway.shared.is_some();
         let generation = backend.generation();
         #[allow(deprecated)]
@@ -82,7 +83,7 @@ impl Handler {
         if context.ct.is_cancelled() {
             return failure(is_tool, "Request cancelled before execution");
         }
-        crate::dispatch::invoke(
+        let result = crate::dispatch::invoke(
             slot.as_ref().expect("worker initialized under slot lock"),
             backend,
             gateway.config.call_timeout_seconds,
@@ -90,6 +91,9 @@ impl Handler {
             request,
             context,
         )
-        .await
+        .await;
+        // Idle time starts when the call finishes, not when it was queued.
+        backend.touch();
+        result
     }
 }

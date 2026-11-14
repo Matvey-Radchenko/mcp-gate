@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Session-owned backends close after 15 minutes without a request (`session_idle_seconds`) and release the worker. A backend process that exits releases its slot immediately. When every slot is busy, the longest-idle session idle for at least 2 minutes (`session_idle_evict_seconds`) is stopped so a new call can start.
+
 ## 0.1.0 — unreleased
 
 - Public `mcp-gate` command with setup, status and remove.

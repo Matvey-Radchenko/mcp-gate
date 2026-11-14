@@ -189,6 +189,64 @@ async fn auth_lazy_isolation_capacity_and_delete() {
 }
 
 #[tokio::test]
+async fn idle_session_closes_and_frees_its_worker() {
+    let mut h = Harness::session_limits(1, 1, 1).await;
+    let a = h.session().await;
+    a.call("state", json!({"value": "kept"})).await;
+    h.workers(1).await;
+    h.workers(0).await;
+    assert_eq!(
+        a.req(reqwest::Method::POST)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"ping"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let b = h.session().await;
+    assert_eq!(
+        mock_value(&b.call("state", json!({})).await)["value"],
+        Value::Null
+    );
+    h.workers(1).await;
+    b.close().await;
+    h.stop();
+}
+
+#[tokio::test]
+async fn exited_backend_frees_the_slot_before_another_call_on_that_session() {
+    let mut h = Harness::new(false, 1).await;
+    let a = h.session().await;
+    a.call("crash", json!({})).await;
+    h.workers(0).await;
+    let b = h.session().await;
+    let started = mock_value(&b.call("state", json!({"value": "next"})).await);
+    assert_eq!(started["value"], "next");
+    h.workers(1).await;
+    b.close().await;
+    h.stop();
+}
+
+#[tokio::test]
+async fn full_gateway_evicts_the_longest_idle_session() {
+    let mut h = Harness::session_limits(1, 30, 1).await;
+    let a = h.session().await;
+    a.call("state", json!({"value": "old"})).await;
+    h.workers(1).await;
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let b = h.session().await;
+    let started = b.call("state", json!({"value": "new"})).await;
+    assert!(!content(&started).contains("slots are in use"), "{started}");
+    assert_eq!(mock_value(&started)["value"], "new");
+    h.workers(1).await;
+    let denied = a.call("state", json!({})).await;
+    assert!(content(&denied).contains("Reconnect"), "{denied}");
+    b.close().await;
+    h.stop();
+}
+
+#[tokio::test]
 async fn disconnect_grace_reconnect_and_shutdown() {
     let mut h = Harness::new(false, 2).await;
     let a = h.session().await;
