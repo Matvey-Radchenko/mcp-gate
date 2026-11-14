@@ -322,7 +322,7 @@ impl Session {
             next: Arc::new(AtomicU64::new(1)),
             progress: Arc::new(AtomicU64::new(0)),
         };
-        session.parse(response).await;
+        session.read_message(response, None).await;
         session
             .post(json!({"jsonrpc":"2.0", "method":"notifications/initialized"}))
             .await;
@@ -349,42 +349,95 @@ impl Session {
             .post(json!({"jsonrpc":"2.0", "id":id,"method":method,"params":params}))
             .await;
         assert!(response.status().is_success(), "HTTP {}", response.status());
-        self.parse(response).await
+        self.read_message(response, Some(id)).await
     }
-    pub(crate) async fn parse(&self, response: reqwest::Response) -> Value {
-        if response
+    /// Read one JSON-RPC response and the rest of its HTTP body.
+    ///
+    /// Returning at the first `data:` line leaves the tail of the event stream
+    /// on a keep-alive connection. On Windows the next request then reads that
+    /// tail, or nothing, instead of its own JSON.
+    pub(crate) async fn read_message(
+        &self,
+        response: reqwest::Response,
+        expect: Option<u64>,
+    ) -> Value {
+        let content_type = response
             .headers()
             .get("content-type")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("application/json")
-        {
-            return response.json().await.unwrap();
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        if content_type.starts_with("application/json") {
+            let bytes = response.bytes().await.unwrap();
+            assert!(
+                !bytes.is_empty(),
+                "JSON response for id {expect:?} had an empty body"
+            );
+            return serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+                panic!(
+                    "{error} in JSON body for id {expect:?}: {}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            });
         }
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
-        while let Some(chunk) = stream.next().await {
-            buffer.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
-            while let Some(end) = buffer.find('\n') {
-                let line = buffer[..end].trim_end().to_owned();
-                buffer.drain(..=end);
-                if let Some(data) = line.strip_prefix("data:") {
-                    let Ok(value) = serde_json::from_str::<Value>(data.trim()) else {
-                        continue;
-                    };
-                    if value["method"] == "roots/list" {
-                        self.post(json!({"jsonrpc":"2.0", "id":value["id"], "result":{"roots":[{"uri":"file:///tmp/gateway-test", "name":"test"}]}})).await;
-                    } else if value["method"] == "notifications/progress" {
-                        assert_eq!(value["params"]["progressToken"], "test-progress");
-                        self.progress.fetch_add(1, Ordering::SeqCst);
-                    } else if value.get("result").is_some() || value.get("error").is_some() {
-                        return value;
-                    }
+        let mut matched = None;
+        loop {
+            let next = stream.next().await;
+            let ended = next.is_none();
+            if let Some(chunk) = next {
+                buffer.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+            }
+            buffer = buffer.replace("\r\n", "\n").replace('\r', "\n");
+            while let Some(split) = buffer.find("\n\n") {
+                let event = buffer[..split].to_owned();
+                buffer.drain(..split + 2);
+                if let Some(value) = self.accept_event(&event, expect).await {
+                    matched = Some(value);
                 }
             }
+            if ended {
+                if matched.is_none() && !buffer.trim().is_empty() {
+                    matched = self.accept_event(&buffer, expect).await;
+                }
+                break;
+            }
+            if matched.is_some() {
+                while stream.next().await.is_some() {}
+                break;
+            }
         }
-        json!({"transportEnded":true}) // A cancelled MCP request may end without a result.
+        matched.unwrap_or(json!({"transportEnded":true}))
+    }
+    async fn accept_event(&self, event: &str, expect: Option<u64>) -> Option<Value> {
+        let mut data = String::new();
+        for line in event.lines() {
+            let line = line.trim_end();
+            if let Some(piece) = line.strip_prefix("data:") {
+                if !data.is_empty() {
+                    data.push('\n');
+                }
+                data.push_str(piece.trim_start());
+            }
+        }
+        if data.is_empty() {
+            return serde_json::from_str(event.trim())
+                .ok()
+                .and_then(|value: Value| message_for_caller(&value, expect).then_some(value));
+        }
+        let Ok(value) = serde_json::from_str::<Value>(data.trim()) else {
+            return None;
+        };
+        if value["method"] == "roots/list" {
+            self.post(json!({"jsonrpc":"2.0", "id":value["id"], "result":{"roots":[{"uri":"file:///tmp/gateway-test", "name":"test"}]}})).await;
+            return None;
+        }
+        if value["method"] == "notifications/progress" {
+            assert_eq!(value["params"]["progressToken"], "test-progress");
+            self.progress.fetch_add(1, Ordering::SeqCst);
+            return None;
+        }
+        message_for_caller(&value, expect).then_some(value)
     }
     pub(crate) async fn call(&self, name: &str, args: Value) -> Value {
         self.request("tools/call", json!({"name":name,"arguments":args}))
@@ -407,7 +460,15 @@ pub(crate) fn content(value: &Value) -> &str {
         .unwrap_or_else(|| panic!("Missing tool text: {value}"))
 }
 pub(crate) fn mock_value(value: &Value) -> Value {
-    serde_json::from_str(content(value)).unwrap()
+    let text = content(value);
+    serde_json::from_str(text).unwrap_or_else(|error| panic!("{error} in tool text: {text}"))
+}
+
+fn message_for_caller(value: &Value, expect: Option<u64>) -> bool {
+    if value.get("result").is_none() && value.get("error").is_none() {
+        return false;
+    }
+    expect.is_none_or(|id| value["id"].as_u64() == Some(id))
 }
 #[cfg(unix)]
 pub(crate) fn alive(pid: u32) -> bool {

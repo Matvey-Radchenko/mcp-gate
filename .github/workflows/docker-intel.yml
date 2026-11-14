@@ -6,9 +6,11 @@ permissions:
 jobs:
   docker:
     runs-on: macos-15-intel
-    # One cold Colima boot is several minutes. A stuck VM is deleted and
-    # started once more, so the job bound covers that second attempt.
-    timeout-minutes: 35
+    # Colima provisions Docker and restarts the VM during one normal start.
+    # On Intel that second boot is still in progress at seven minutes. The
+    # job bound covers one full start, one retry after a failed start, the
+    # image pull, and the Docker test.
+    timeout-minutes: 50
     env:
       DOCKER_IMAGE: node@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
     steps:
@@ -26,16 +28,20 @@ jobs:
       - name: Install isolated Docker test infrastructure
         run: brew install colima docker
       - name: Start a dedicated container engine
-        timeout-minutes: 14
+        # Twelve minutes is one provisioning restart plus the second boot.
+        # The retry gets the same bound, so the step covers both attempts.
+        timeout-minutes: 26
         run: |
           set -euo pipefail
           start_engine() {
             colima start --profile mcp-gate-ci --runtime docker --vm-type vz --cpu 2 --memory 4 --disk 12 --mount "$RUNNER_TEMP:w"
             docker --context colima-mcp-gate-ci info --format '{{.ServerVersion}} {{.OSType}} {{.Architecture}}'
           }
-          # Colima can restart its own VM while Docker is provisioning, then
-          # hang when host port 53 is already taken. That start does not exit,
-          # so stop it and replace the profile once.
+          # A normal start installs the runtime, then restarts the VM and waits
+          # for guest boot scripts. On Intel that second boot is still running
+          # at seven minutes. Lima's port 53 line there is an optional forward
+          # warning; the host agent was still syncing the clock after it. Kill
+          # only a start that has not exited, then replace the profile once.
           run_bounded() {
             local limit="$1"
             shift
@@ -56,10 +62,10 @@ jobs:
             wait "$pid" || status=$?
             return "$status"
           }
-          if ! run_bounded 420 start_engine; then
-            echo "Colima did not become ready; deleting the CI profile and retrying once."
+          if ! run_bounded 720 start_engine; then
+            echo "Colima start failed; deleting the CI profile and retrying once."
             colima delete --profile mcp-gate-ci --data --force || true
-            start_engine
+            run_bounded 720 start_engine
           fi
           colima version
           docker --version
