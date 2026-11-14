@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A timed-out shared call records the failure before the next waiter can take the worker, so that queued call is not dispatched.
+- README visuals: wordmark, before/after diagram, and a setup recording.
 - README rewritten.
 - `setup --dry-run` keeps personal connections that have no working directory in the plan and tells you to run interactive setup or pass `--cwd <dir>`. No directory is assumed, including the home directory.
 - Dry-run text says what would be registered. New gateways use a readable `local.mcp-gate.<name>` label, shown in the preview. Existing `local.mcp-gate.<uuid>` services stay on that label.

@@ -1,12 +1,9 @@
 <p align="center">
-  <!-- TODO: add a dark/light wordmark. Until then the typographic heading is enough. -->
-  <!--
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mcp-gate-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/mcp-gate-light.svg">
-    <img alt="mcp-gate" src="docs/assets/mcp-gate-light.svg" width="160">
+    <img alt="mcp-gate" src="docs/assets/mcp-gate-light.svg" width="240">
   </picture>
-  -->
 </p>
 
 <h1 align="center">mcp-gate</h1>
@@ -30,11 +27,13 @@ npx @matvei-radchenko/mcp-gate@latest setup
 
 In a terminal, `setup` and `remove` ask you to choose connections and show a preview before changing anything. Type to search, arrows move, Space selects, Enter reviews, Esc goes back. Nothing is selected by default.
 
-<!-- TODO: record a short GIF or asciinema of the setup wizard and put it here, e.g. ![setup wizard](docs/assets/setup-demo.gif) -->
+![Setup wizard on fixture connections: search, select, preview, then cancel](docs/assets/setup-demo.gif)
 
 ## Why a gateway
 
 A stdio MCP server that starts with the client starts on every session, even when you only needed the tool catalog. mcp-gate sits in front as a small Rust process:
+
+![Before, each session starts every stdio server. After, one lazy gateway per server starts a backend only for a real call.](docs/assets/before-after.svg)
 
 - **Lazy backends.** `initialize`, `tools/list`, and the rest of discovery are served from a reviewed catalog snapshot. The upstream process starts when a real call (`tools/call`, `resources/read`, `prompts/get`) needs it.
 - **Shared or session-owned.** A reviewed stateless API can share one serialized backend across clients. A session-owned server (browsers, anything with per-client state) gets its own MCP connection. Shared mode is opt-in and is not safe for an arbitrary browser server.
@@ -180,6 +179,9 @@ Yes. mcp-gate does not analyze or copy arbitrary dependency trees. Reviewed reci
 
 **Can I script this from an agent?**
 Yes — with `--json`, `--dry-run`, and explicit `--yes` only after the user has chosen the targets. See [docs/agents.md](docs/agents.md).
+
+**Can another agent on this machine call a gateway?**
+Each configured server has its own loopback Streamable HTTP endpoint and its own bearer token. Another agent on the same machine can call that endpoint. The token authorizes that gateway only.
 
 ## Development
 

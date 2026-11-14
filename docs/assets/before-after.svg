@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 548" role="img" aria-labelledby="ba-title ba-desc">
+  <title id="ba-title">Before and after mcp-gate</title>
+  <desc id="ba-desc">Before, every client session starts its own copy of each stdio server. After, clients share one lazy gateway per server. A backend starts only for a real call: one shared process for a stateless API, a separate process per session for a browser, and idle sessions are reclaimed.</desc>
+  <rect width="960" height="548" rx="18" fill="#f6f5f2"/>
+  <g font-family="ui-sans-serif, system-ui, sans-serif" fill="#1c1917">
+    <rect x="20" y="20" width="452" height="392" rx="14" fill="#fffefb" stroke="#e4e0d8"/>
+    <text x="40" y="52" font-size="18" font-weight="700">Before</text>
+    <text x="40" y="76" font-size="13" fill="#6b6560">Each session starts its own copy of every server.</text>
+
+    <g font-size="13">
+      <rect x="40" y="100" width="196" height="248" rx="10" fill="#f6f5f2" stroke="#e4e0d8"/>
+      <text x="56" y="126" font-weight="700">Session</text>
+      <text x="118" y="126" fill="#6b6560">own processes</text>
+      <rect x="56" y="144" width="164" height="52" rx="8" fill="#fffefb" stroke="#1c1917"/>
+      <text x="72" y="166" font-weight="600">mail</text>
+      <text x="72" y="184" font-size="12" fill="#6b6560">stdio process</text>
+      <rect x="56" y="208" width="164" height="52" rx="8" fill="#fffefb" stroke="#1c1917"/>
+      <text x="72" y="230" font-weight="600">docs</text>
+      <text x="72" y="248" font-size="12" fill="#6b6560">stdio process</text>
+      <rect x="56" y="272" width="164" height="52" rx="8" fill="#fffefb" stroke="#1c1917"/>
+      <text x="72" y="294" font-weight="600">browser</text>
+      <text x="72" y="312" font-size="12" fill="#6b6560">stdio process</text>
+
+      <rect x="256" y="100" width="196" height="248" rx="10" fill="#f6f5f2" stroke="#e4e0d8"/>
+      <text x="272" y="126" font-weight="700">Session</text>
+      <text x="334" y="126" fill="#6b6560">another copy</text>
+      <rect x="272" y="144" width="164" height="52" rx="8" fill="#fffefb" stroke="#1c1917"/>
+      <text x="288" y="166" font-weight="600">mail</text>
+      <text x="288" y="184" font-size="12" fill="#6b6560">stdio process</text>
+      <rect x="272" y="208" width="164" height="52" rx="8" fill="#fffefb" stroke="#1c1917"/>
+      <text x="288" y="230" font-weight="600">docs</text>
+      <text x="288" y="248" font-size="12" fill="#6b6560">stdio process</text>
+      <rect x="272" y="272" width="164" height="52" rx="8" fill="#fffefb" stroke="#1c1917"/>
+      <text x="288" y="294" font-weight="600">browser</text>
+      <text x="288" y="312" font-size="12" fill="#6b6560">stdio process</text>
+    </g>
+    <text x="40" y="386" font-size="13" fill="#6b6560">N sessions × M servers, including for discovery.</text>
+
+    <rect x="488" y="20" width="452" height="392" rx="14" fill="#fffefb" stroke="#e4e0d8"/>
+    <text x="508" y="52" font-size="18" font-weight="700">After</text>
+    <text x="508" y="76" font-size="13" fill="#6b6560">One lazy gateway per server. A call starts the backend.</text>
+
+    <g font-size="13">
+      <rect x="508" y="104" width="92" height="36" rx="8" fill="#f6f5f2" stroke="#e4e0d8"/>
+      <text x="524" y="127">sessions</text>
+      <path d="M600 122 H628" stroke="#1c1917" stroke-width="1.5" fill="none"/>
+      <path d="M622 116 L630 122 L622 128" fill="none" stroke="#1c1917" stroke-width="1.5"/>
+      <rect x="632" y="100" width="140" height="44" rx="8" fill="#1c1917"/>
+      <text x="648" y="118" fill="#f6f5f2" font-size="11">mcp-gate</text>
+      <text x="648" y="134" fill="#f6f5f2" font-weight="700">mail</text>
+      <path d="M772 122 H800" stroke="#1c1917" stroke-width="1.5" fill="none"/>
+      <path d="M794 116 L802 122 L794 128" fill="none" stroke="#1c1917" stroke-width="1.5"/>
+      <rect x="804" y="100" width="116" height="44" rx="8" fill="#fffefb" stroke="#1c1917"/>
+      <text x="818" y="118" font-weight="600">one backend</text>
+      <text x="818" y="134" font-size="12" fill="#6b6560">on tools/call</text>
+      <text x="632" y="162" font-size="12" fill="#6b6560">Stateless API: shared, one at a time.</text>
+
+      <rect x="508" y="196" width="92" height="36" rx="8" fill="#f6f5f2" stroke="#e4e0d8"/>
+      <text x="524" y="219">sessions</text>
+      <path d="M600 214 H628" stroke="#1c1917" stroke-width="1.5" fill="none"/>
+      <path d="M622 208 L630 214 L622 220" fill="none" stroke="#1c1917" stroke-width="1.5"/>
+      <rect x="632" y="192" width="140" height="44" rx="8" fill="#1c1917"/>
+      <text x="648" y="210" fill="#f6f5f2" font-size="11">mcp-gate</text>
+      <text x="648" y="226" fill="#f6f5f2" font-weight="700">browser</text>
+      <path d="M772 214 H800" stroke="#1c1917" stroke-width="1.5" fill="none"/>
+      <path d="M794 208 L802 214 L794 220" fill="none" stroke="#1c1917" stroke-width="1.5"/>
+      <rect x="804" y="188" width="116" height="36" rx="8" fill="#fffefb" stroke="#1c1917"/>
+      <text x="816" y="211">this session</text>
+      <rect x="804" y="232" width="116" height="36" rx="8" fill="#fffefb" stroke="#8a847c" stroke-dasharray="4 3"/>
+      <text x="816" y="254" fill="#6b6560">idle, reclaimed</text>
+      <text x="632" y="286" font-size="12" fill="#6b6560">Browser: one backend per session.</text>
+    </g>
+    <text x="508" y="330" font-size="13" fill="#6b6560">Discovery stays on the gateway.</text>
+    <text x="508" y="350" font-size="13" fill="#6b6560">The upstream process stays down until a real call.</text>
+    <text x="508" y="386" font-size="13" fill="#6b6560">An idle session-owned backend is closed and its worker freed.</text>
+
+    <rect x="20" y="428" width="920" height="100" rx="14" fill="#fffefb" stroke="#e4e0d8"/>
+    <text x="40" y="458" font-size="13" font-weight="700">Example from one maintainer's Mac</text>
+    <text x="318" y="458" font-size="13" fill="#6b6560">One observation, not a benchmark.</text>
+    <text x="40" y="486" font-size="14">Eight gateway processes together use about 22 MB RSS.</text>
+    <text x="40" y="508" font-size="14">Before migration, Codex had accumulated about 13 copies of one stdio mail server, about 160 MB.</text>
+  </g>
+</svg>

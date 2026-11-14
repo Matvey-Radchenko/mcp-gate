@@ -1,5 +1,12 @@
 # Security boundaries
 
+## Reporting a vulnerability
+
+Report security issues privately through
+[GitHub Security Advisories](https://github.com/Matvey-Radchenko/mcp-gate/security/advisories/new).
+Do not open a public issue for a vulnerability. Do not include tokens, private
+configuration, or backend payloads.
+
 This is a trusted-user, local-only service, not a multi-tenant browser sandbox.
 
 - Bind is restricted to loopback. Every endpoint, including health and DELETE,

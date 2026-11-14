@@ -1,0 +1,45 @@
+name: Bug
+description: Something mcp-gate did that you did not expect
+title: ""
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste tokens, private configuration, tool arguments, or backend payloads.
+        For a vulnerability, use [private reporting](https://github.com/Matvey-Radchenko/mcp-gate/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, and what you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mcp-gate version
+      description: Output of `mcp-gate --version`.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15 ARM64, or Windows 11 x64
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Client
+      description: Codex, OpenCode, or Claude Code, and the version if you know it.
+    validations:
+      required: false
