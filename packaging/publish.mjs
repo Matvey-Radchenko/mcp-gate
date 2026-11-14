@@ -1,11 +1,22 @@
-// Resume an interrupted/owner-bootstrapped release only for identical npm bytes.
+// Publish a missing version with GitHub OIDC, or accept an identical registry copy.
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { launcherPackage, npmTarball, platformPackageName, registryName } from './manifest.mjs';
+
+export function publishCommand(archive) {
+  return ['publish', archive, '--access', 'public', '--tag', 'latest', '--provenance'];
+}
+
+export function publishEnvironment(env) {
+  const next = { ...env };
+  delete next.NODE_AUTH_TOKEN;
+  delete next.NPM_TOKEN;
+  return next;
+}
 
 export function verifyPublished(bytes, metadata, name, version) {
   assert.equal(metadata.name, name, 'Registry package identity differs');
@@ -25,14 +36,18 @@ async function publish(root, version) {
   }));
   packages.push({ name: launcherPackage, target: 'darwin-arm64' });
   for (const { name, target } of packages) {
-    const archive = join(root, `native-${target}`, npmTarball(name, version));
+    const archive = resolve(join(root, `native-${target}`, npmTarball(name, version)));
     const bytes = readFileSync(archive);
     const response = await fetch(`https://registry.npmjs.org/${registryName(name)}/${version}`, {
       signal: AbortSignal.timeout(30_000),
     });
     if (response.status === 404) {
-      const result = spawnSync(process.execPath, [npm, 'publish', archive,
-        '--access', 'public', '--tag', 'latest', '--provenance'], { stdio: 'inherit' });
+      // An absolute archive path cannot be parsed as a GitHub user/repo spec.
+      // The child environment has no npm token, so npm uses the Actions OIDC token.
+      const result = spawnSync(process.execPath, [npm, ...publishCommand(archive)], {
+        stdio: 'inherit',
+        env: publishEnvironment(process.env),
+      });
       assert.equal(result.status, 0, `Publication failed for ${name}; do not publish the launcher before every platform`);
     } else {
       assert(response.ok, `Cannot inspect registry version: ${response.status}`);

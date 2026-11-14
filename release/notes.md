@@ -1,15 +1,18 @@
-First stable npm release of mcp-gate: local Rust gateways for existing stdio MCP servers.
+Patch 0.1.1 of mcp-gate: local Rust gateways for existing stdio MCP servers.
+Session-owned workers now go idle, the Windows release archive check no longer
+hands Git Bash tar a drive-letter path, and the README is the published landing
+page. The release platforms are unchanged.
 
 Install with `npx @matvei-radchenko/mcp-gate@latest setup` or
 `npm i -g @matvei-radchenko/mcp-gate`. The command remains `mcp-gate`.
 Release binaries are built for macOS
-ARM64, macOS Intel and Windows x64. Native login acceptance for 0.1.0 is macOS
-ARM64 only. The Intel x86_64 run under Rosetta 2 is postponed, and Windows x64
-was smoke-tested under Wine rather than a native Windows login. Stability on
-native Intel Macs and Windows is not guaranteed; reports are welcome. Wine 7.7
-does not present the protected non-null DACL the Windows build requires; that is
-a limitation of running under Wine, not a Windows bug. See `docs/compatibility.md`
-for the tested client versions and recipe constraints.
+ARM64, macOS Intel and Windows x64. Native login acceptance is still the 0.1.0
+result: macOS ARM64 only. The Intel x86_64 run under Rosetta 2 is postponed, and
+Windows x64 was smoke-tested under Wine rather than a native Windows login.
+Stability on native Intel Macs and Windows is not guaranteed; reports are
+welcome. Wine 7.7 does not present the protected non-null DACL the Windows build
+requires; that is a limitation of running under Wine, not a Windows bug. See
+`docs/compatibility.md` for the tested client versions and recipe constraints.
 
 Setup registers user autostart services and preserves client permission settings.
 MCP packages remain user-managed. Remove restores direct connections without

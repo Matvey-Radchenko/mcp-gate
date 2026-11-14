@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
+import { retryNotFound } from './not-found-retry.mjs';
 
 // Git Bash ships GNU tar, which treats `C:\...` as host `C`. Archive names
 // passed here are relative to `directory`, so the colon never reaches tar.
@@ -12,10 +13,22 @@ export function tar(directory, args) {
   return spawnSync('tar', args, { cwd: directory, encoding: 'utf8' });
 }
 
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export async function downloadAsset(url, fetchImpl = fetch, sleep = wait) {
+  return retryNotFound(async () => {
+    const response = await fetchImpl(url);
+    if (response.ok) return Buffer.from(await response.arrayBuffer());
+    const error = new Error(`Download failed: ${response.status} ${url}`);
+    error.notFound = response.status === 404;
+    throw error;
+  }, sleep);
+}
+
 async function download(base, name) {
-  const response = await fetch(`${base}/${name}`);
-  assert(response.ok, `Download failed: ${name} ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  return downloadAsset(`${base}/${name}`);
 }
 
 async function verifyRelease(version) {

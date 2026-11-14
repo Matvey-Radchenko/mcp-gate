@@ -10,11 +10,12 @@ node packaging/compile.mjs
 node packaging/compat-build.mjs
 ```
 
-The second build uses this reviewed tree with version `0.1.0-compat-fixture` in a
-generated Cargo manifest and lockfile. It is an unpublished compatibility fixture,
-not a historical public release. Both binaries use the production release profile
-without the `test-backend` feature. The mock MCP itself is built by the ordinary
-harness. The compatibility executable is never copied into `dist`.
+The second build uses this reviewed tree with version `<package>-compat-fixture`
+(currently `0.1.1-compat-fixture`) in a generated Cargo manifest and lockfile. It
+is an unpublished compatibility fixture, not a historical public release. Both
+binaries use the production release profile without the `test-backend` feature.
+The mock MCP itself is built by the ordinary harness. The compatibility
+executable is never copied into `dist`.
 
 Set `MCP_GATE_RELEASE_BINARY` to the absolute `target/release/mcp-gate` path and
 `MCP_GATE_COMPAT_BINARY` to `target/compatibility/release/mcp-gate`, then run:
@@ -31,7 +32,7 @@ The test uses a temporary home, personal Claude fixture configuration and a uniq
 user service. It verifies busy deferral, actual replacement in both directions,
 unchanged endpoint/token/client permissions, retained artifacts, rejection of the
 old session, no replay into a fresh backend, repeat-setup idempotence and removal.
-This verifies format compatibility within the 0.1.0 implementation. Each later
+This verifies format compatibility within the current implementation. Each later
 release must also be tested against the actual prior published binary.
 
 ## Real Docker ownership

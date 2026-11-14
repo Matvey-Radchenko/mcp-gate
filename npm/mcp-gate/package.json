@@ -1,6 +1,6 @@
 {
   "name": "@matvei-radchenko/mcp-gate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lazy local MCP gateways for existing agent clients",
   "keywords": [
     "mcp",
@@ -41,8 +41,8 @@
     "win32"
   ],
   "optionalDependencies": {
-    "@matvei-radchenko/mcp-gate-bin-darwin-arm64": "0.1.0",
-    "@matvei-radchenko/mcp-gate-bin-darwin-x64": "0.1.0",
-    "@matvei-radchenko/mcp-gate-bin-win32-x64": "0.1.0"
+    "@matvei-radchenko/mcp-gate-bin-darwin-arm64": "0.1.1",
+    "@matvei-radchenko/mcp-gate-bin-darwin-x64": "0.1.1",
+    "@matvei-radchenko/mcp-gate-bin-win32-x64": "0.1.1"
   }
 }

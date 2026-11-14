@@ -5,7 +5,7 @@ on:
       version:
         description: Verified stable version (must match Cargo, npm and acceptance evidence)
         required: true
-        default: '0.1.0'
+        default: '0.1.1'
 permissions:
   contents: read
 jobs:
@@ -39,16 +39,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      # Do not set registry-url. That writes NODE_AUTH_TOKEN and npm then
+      # skips the GitHub OIDC token this job's id-token permission provides.
+      - name: Install an npm CLI that can publish with GitHub OIDC
+        run: npm install --global npm@11.15.0
       - uses: actions/download-artifact@v4
         with:
           pattern: native-*
           path: artifacts
       - name: Verify all archives and write checksums
         run: node packaging/checksums.mjs artifacts
-      - name: Publish platform packages, then launcher; verify identical existing versions
+      - name: Publish platform packages, then launcher, without an npm token
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
+          unset NODE_AUTH_TOKEN NPM_TOKEN
           npm exec -- node packaging/publish.mjs artifacts "$RELEASE_VERSION"
       - name: Create GitHub Release from these checked artifacts
         env:
@@ -59,6 +64,10 @@ jobs:
   homebrew:
     name: Homebrew tap
     needs: publish
+    # Homebrew waits. The job runs only when the repository variable
+    # HOMEBREW_TAP_ENABLED is the string true. An unset variable skips the
+    # job, and a skipped job does not fail the release.
+    if: ${{ vars.HOMEBREW_TAP_ENABLED == 'true' }}
     runs-on: macos-15
     timeout-minutes: 10
     steps:
@@ -141,12 +150,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: node packaging/download-smoke.mjs "$RELEASE_VERSION"
       - name: Install from the real npm registry
+        shell: bash
         env:
           RELEASE_VERSION: ${{ inputs.version }}
-        run: npx --yes "@matvei-radchenko/mcp-gate@$env:RELEASE_VERSION" --version
-        if: runner.os == 'Windows'
-      - name: Install from the real npm registry
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: npx --yes "@matvei-radchenko/mcp-gate@$RELEASE_VERSION" --version
-        if: runner.os != 'Windows'
+        run: node packaging/registry-install.mjs "$RELEASE_VERSION"

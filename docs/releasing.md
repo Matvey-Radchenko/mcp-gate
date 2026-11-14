@@ -12,102 +12,90 @@
 2. Review the exact Git tree/history and npm/archive contents for private data.
    The public branch starts at a sanitized source snapshot; original local history
    and operational notes are retained separately and must not be pushed.
-3. Confirm the owner scope and these four new names. Version `0.1.0` is free
-   on them because the names have not been published:
+3. The four packages already exist from 0.1.0. Their names stay
    `@matvei-radchenko/mcp-gate`,
    `@matvei-radchenko/mcp-gate-bin-darwin-arm64`,
    `@matvei-radchenko/mcp-gate-bin-darwin-x64`, and
    `@matvei-radchenko/mcp-gate-bin-win32-x64`.
    The launcher `bin` command stays `mcp-gate`. Each package sets
-   `publishConfig.access` to `public`.
-4. Confirm the reviewed repository is public. The owner authenticates to npm
-   separately, with account 2FA. Trusted publishing needs npm CLI 11.5.1 or newer
-   and Node.js 22.14 or newer; `npm trust` needs npm CLI 11.15.0 or newer. The
-   publish job uses Node.js 24. A trusted publisher can be added only after the
-   package exists
-   ([npm trust prerequisites](https://docs.npmjs.com/cli/v11/commands/npm-trust/)).
-   `npm stage publish` can create a new name, but it also publishes a public
-   `0.0.0-stage` placeholder
-   ([staged publishing](https://docs.npmjs.com/staged-publishing/)). Do not stage
-   or publish a placeholder for this release.
-5. Keep the `npm` GitHub environment as an approval hold. Dispatch
-   `Publish verified release` from `main` for `0.1.0`. After the native jobs
-   finish, download that run's `native-*` artifacts and run
-   `node packaging/checksums.mjs artifacts`. `SHA256SUMS` lists the three native
-   `.tar.gz` archives that `gh release create` attaches. The same command still
-   requires all four npm `.tgz` files and rejects a launcher tarball whose bytes
-   differ across runners. Those npm archives are not Release assets.
-   The owner then publishes the three platform `.tgz` files first and the launcher
-   `.tgz` last, from an interactive 2FA session. Pass an explicit `./` path.
-   Without `./`, npm treats `dir/file.tgz` as a GitHub `user/repo` shorthand and
-   tries to git clone it. npm may open a browser and require web authentication
-   for each publish. From the downloaded `artifacts` directory:
+   `publishConfig.access` to `public`. 0.1.1 is the next version. Do not reuse
+   0.1.0, and do not publish a `0.0.0-stage` placeholder.
+4. Confirm the reviewed repository is public. Trusted publishing needs npm CLI
+   11.5.1 or newer and Node.js 22.14 or newer. `npm trust` needs npm CLI 11.15.0
+   or newer and account-level 2FA
+   ([npm trust](https://docs.npmjs.com/cli/v11/commands/npm-trust/),
+   [trusted publishers](https://docs.npmjs.com/trusted-publishers/)).
+   The publish job uses Node.js 24 and installs `npm@11.15.0`. A trusted
+   publisher can be added only because these packages already exist. Do not run
+   `npm stage publish`.
+5. Keep the `npm` GitHub environment as the approval hold. Dispatch
+   `Publish verified release` from `main` for `0.1.1` only after the trusted
+   publishers below exist. The publish job has `permissions: id-token: write`
+   and `environment: npm`. It does not set `registry-url` on `setup-node` and
+   it unsets `NODE_AUTH_TOKEN` and `NPM_TOKEN` before publishing. An Actions
+   `NODE_AUTH_TOKEN` would make npm skip OIDC.
+   `packaging/publish.mjs` publishes an absolute tarball path, platform packages
+   first and the launcher last:
 
    ```sh
-   npm publish ./native-darwin-arm64/matvei-radchenko-mcp-gate-bin-darwin-arm64-0.1.0.tgz --access public --tag latest
-   npm publish ./native-darwin-x64/matvei-radchenko-mcp-gate-bin-darwin-x64-0.1.0.tgz --access public --tag latest
-   npm publish ./native-win32-x64/matvei-radchenko-mcp-gate-bin-win32-x64-0.1.0.tgz --access public --tag latest
-   npm publish ./native-darwin-arm64/matvei-radchenko-mcp-gate-0.1.0.tgz --access public --tag latest
+   npm publish <absolute-tarball> --provenance --access public --tag latest
    ```
 
-   The launcher tarball is the same bytes in every `native-*` directory; publish
-   it once. Then deprecate the two unscoped Darwin packages that were already
-   published. The unscoped `mcp-gate` and `mcp-gate-bin-win32-x64` names were
-   rejected and have nothing to deprecate:
+   If that exact version is already on the registry, the job checks its SHA-512
+   integrity and `latest` tag instead of publishing again. It then creates the
+   GitHub Release from the same artifacts. Do not rebuild them while the
+   environment approval is waiting.
+6. Create one trusted publisher per package immediately before that dispatch.
+   A new publisher that does not complete a successful publish within 2 days
+   expires. On npmjs.com, open each package and add a GitHub Actions publisher
+   with these fields:
+
+   | Field | Value |
+   | --- | --- |
+   | Organization or user | `Matvey-Radchenko` |
+   | Repository | `mcp-gate` |
+   | Workflow filename | `release.yml` (the filename only, not `.github/workflows/release.yml`) |
+   | Environment name | `npm` |
+   | Allowed action | direct `npm publish` |
+
+   Do not grant `npm dist-tag`. The workflow does not call `npm dist-tag`.
+   Publishers created after 3 September 2026 allow `npm stage publish` until
+   direct `npm publish` is also selected. Select direct `npm publish`.
+   With npm CLI 11.15.0 or newer, logged in as the owner with account 2FA, the
+   same configuration is one command per package. Run the three platform
+   packages first, then the launcher. `--allow-publish` is required; it does
+   not default on:
+
+   ```sh
+   npm trust github @matvei-radchenko/mcp-gate-bin-darwin-arm64 --file release.yml --repo Matvey-Radchenko/mcp-gate --env npm --allow-publish
+   npm trust github @matvei-radchenko/mcp-gate-bin-darwin-x64 --file release.yml --repo Matvey-Radchenko/mcp-gate --env npm --allow-publish
+   npm trust github @matvei-radchenko/mcp-gate-bin-win32-x64 --file release.yml --repo Matvey-Radchenko/mcp-gate --env npm --allow-publish
+   npm trust github @matvei-radchenko/mcp-gate --file release.yml --repo Matvey-Radchenko/mcp-gate --env npm --allow-publish
+   ```
+
+   The first command prompts for 2FA. The website can skip 2FA for the next
+   five minutes so the other three commands can finish. The registry stores one
+   trusted-publisher configuration per package. Replace an existing one with
+   `npm trust list <package>` and `npm trust revoke <package> --id <id>` before
+   creating another. No npm token belongs in the repository or workflow.
+   0.1.0 was published by the owner from the downloaded archives. Those two
+   unscoped Darwin packages were deprecated at that time:
 
    ```sh
    npm deprecate mcp-gate-bin-darwin-arm64 "Moved to @matvei-radchenko/mcp-gate-bin-darwin-arm64"
    npm deprecate mcp-gate-bin-darwin-x64 "Moved to @matvei-radchenko/mcp-gate-bin-darwin-x64"
    ```
 
-   Do not pass `--provenance`. Provenance is created for a public package from a
-   public repository when trusted publishing runs on GitHub Actions or GitLab CI
-   ([trusted publishers](https://docs.npmjs.com/trusted-publishers/),
-   [provenance](https://docs.npmjs.com/generating-provenance-statements/)).
-   Do not rebuild the artifacts before resuming the held job. The job checks the
-   registry SHA-512 integrity and `latest` tag of those exact bytes, then creates
-   the GitHub Release. Because the versions already exist, it does not call
-   `npm publish` and therefore does not count as a trusted publisher's first
-   successful publish.
-6. Create the trusted publisher immediately before the first workflow run that
-   publishes a version the registry does not already have. On npmjs.com, for each
-   of the four `@matvei-radchenko` packages, add GitHub Actions with user `Matvey-Radchenko`,
-   repository `mcp-gate`, workflow filename `release.yml`, and environment `npm`.
-   A publisher created after 3 September 2026 allows `npm stage publish` only
-   until the owner also allows direct `npm publish`. Allow direct `npm publish`.
-   `packaging/publish.mjs` runs `npm publish`, including `--tag latest` and
-   `--provenance`. Trusted publishing generates provenance without that flag; the
-   provenance guide still shows it, and this workflow keeps it. Do not grant
-   `npm dist-tag`: the workflow does not call `npm dist-tag`.
-   From npm CLI 11.15.0, neither permission defaults on. The equivalent is:
-
-   ```sh
-   npm trust github PACKAGE --file release.yml --repo Matvey-Radchenko/mcp-gate --env npm --allow-publish
-   ```
-
-   The website allows up to 10 publishers per package. The `npm trust` docs
-   currently say the registry stores one configuration per package; one publisher
-   for `release.yml` satisfies that stricter statement.
-   A new publisher that does not complete a successful publish within 2 days
-   expires and cannot be edited. Delete it, create another one, and publish
-   inside the new 2 days
-   ([configuration expiry](https://docs.npmjs.com/trusted-publishers/)).
-   Create it when the next release workflow is ready to publish, not while the
-   0.1.0 approval is waiting and not days ahead. No npm token belongs in the
-   repository or workflow. A conflicting immutable version aborts the workflow.
-   Later versions publish through OIDC, platform packages first.
-7. Verify installation from the actual registry on all three platforms. Download
-   each GitHub archive, verify its checksum, and run its native binary on the
-   matching clean runner. The release is not complete until these pass.
-8. Homebrew is optional. `Publish verified release` renders
-   `packaging/homebrew/mcp-gate.rb.tmpl` from the Release `SHA256SUMS` and pushes
-   `Formula/mcp-gate.rb` to the already created `Matvey-Radchenko/homebrew-tap`
-   when the `HOMEBREW_TAP_TOKEN` secret is present. The token needs contents
-   write on that tap. This workflow does not create the tap. Without the secret,
-   the job logs a skip and does not clone or push.
-   The formula installs the macOS Release archives (`on_arm` / `on_intel` inside
-   `on_macos`, plus `depends_on :macos`). It has no `service do` block: mcp-gate
-   manages its own LaunchAgents. Upgrades still require `mcp-gate setup`.
+7. The `registry` job downloads each GitHub archive, verifies its checksum, and
+   installs `@matvei-radchenko/mcp-gate@<version>` on all three runners. A 404
+   from either the new Release asset or the new scoped version is retried with
+   backoff for a few minutes. Any other failure stops immediately. The release
+   is not complete until these pass.
+8. The Homebrew tap job is off. It runs only when the repository variable
+   `HOMEBREW_TAP_ENABLED` is the string `true`. Leaving the variable unset skips
+   the job, and that skip does not fail the release. The formula and tap notes
+   stay in the repository for when Homebrew is enabled. The formula installs
+   the macOS Release archives and has no `service do` block.
 
 Updating npm or Homebrew alone changes no services. Users must run setup with the
 chosen version to update or compatibly downgrade background gateways. The public

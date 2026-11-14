@@ -43,7 +43,7 @@ function runNpm(args, options = {}) {
 test('launcher version comes from package.json and matches Cargo and optional packages', () => {
   assert.equal(manifest.name, launcherPackage);
   assert.deepEqual(manifest.publishConfig, { access: 'public' });
-  assert.equal(npmTarball(launcherPackage, manifest.version), 'matvei-radchenko-mcp-gate-0.1.0.tgz');
+  assert.equal(npmTarball(launcherPackage, manifest.version), 'matvei-radchenko-mcp-gate-0.1.1.tgz');
   assert.equal(manifest.author, 'Matvey Radchenko');
   assert.equal(manifest.homepage, 'https://github.com/Matvey-Radchenko/mcp-gate');
   assert.deepEqual(manifest.bugs, { url: 'https://github.com/Matvey-Radchenko/mcp-gate/issues' });
@@ -65,7 +65,7 @@ test('launcher version comes from package.json and matches Cargo and optional pa
     /Cargo\/npm version mismatch/,
   );
   const drifted = structuredClone(manifest);
-  drifted.optionalDependencies[platformPackageName('win32-x64')] = '0.1.1';
+  drifted.optionalDependencies[platformPackageName('win32-x64')] = '9.9.9';
   assert.throws(() => assertReleaseManifest(drifted, cargoToml, launcherSource), /win32-x64/);
   assert.throws(
     () => assertReleaseManifest(manifest, cargoToml, "console.error('mcp-gate 9.9.9')"),
@@ -95,7 +95,7 @@ test('platform packages copy metadata and keep native os, cpu, and files', () =>
     const pkg = platformPackage(manifest, target);
     assert.equal(pkg.name, platformPackageName(target));
     assert.deepEqual(pkg.publishConfig, { access: 'public' });
-    assert.equal(npmTarball(pkg.name, pkg.version), `matvei-radchenko-mcp-gate-bin-${target}-0.1.0.tgz`);
+    assert.equal(npmTarball(pkg.name, pkg.version), `matvei-radchenko-mcp-gate-bin-${target}-0.1.1.tgz`);
     assert.equal(pkg.version, manifest.version);
     assert.equal(pkg.author, manifest.author);
     assert.equal(pkg.homepage, manifest.homepage);

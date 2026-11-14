@@ -101,8 +101,9 @@ the protected non-null DACL the native Windows build requires. That failure is a
 limit of Wine 7.7, not a defect in the Windows ACL contract: native Windows CI
 already passed the same check. No Windows logon or Task Scheduler test is
 possible under Wine. The x86_64 reboot under Rosetta 2 is postponed.
-The unpublished compatibility fixture is built from the same reviewed 0.1.0 tree;
-it does not establish compatibility with any future release's changed formats.
+The unpublished compatibility fixture appends `-compat-fixture` to the current
+package version. It does not establish compatibility with any future release's
+changed formats.
 
 macOS client tool approvals and operating-system privacy grants are separate.
 When Documents access is already granted, a LaunchAgent can start a backend there.
@@ -125,13 +126,14 @@ browsers. API recipes pin reviewed artifacts where public versions are not enoug
 those hashes do not establish every transitive package version. Telegram requires
 the previous TDLib owner to release its files before discovery.
 
-The release workflow can ship 0.1.0 with `passed-with-limitations` on native
-login and protected-folder access. Those limitations stay in
+0.1.1 reuses the 0.1.0 evidence. The release workflow can ship that patch with
+the same `passed-with-limitations` on native login and protected-folder access.
+Those limitations stay in
 [release/acceptance.json](../release/acceptance.json): no native Intel or Windows
 login, Windows only smoke-tested under Wine, the Rosetta 2 reboot still postponed,
-and the TCC first-prompt/deny path not observed. Pending checks still cannot be
-relabelled as passed. Publication of the npm packages and the GitHub Release
-does not change those limits.
+and the TCC first-prompt/deny path not observed. No 0.1.1 check is newly marked
+passed. Pending checks still cannot be relabelled as passed. Publication of the
+npm packages and the GitHub Release does not change those limits.
 
 Reference contracts: [Claude scope precedence and headers helpers](https://code.claude.com/docs/en/mcp),
 [GitHub native runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),

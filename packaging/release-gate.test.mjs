@@ -17,10 +17,19 @@ function acceptance(overrides = {}) {
   };
 }
 
-test('0.1.0 evidence ships login and Documents access only with the recorded limitations', () => {
+test('0.1.1 reuses the 0.1.0 login and Documents evidence without new passed claims', () => {
   const realManifest = JSON.parse(readFileSync('npm/mcp-gate/package.json', 'utf8'));
   const real = JSON.parse(readFileSync('release/acceptance.json', 'utf8'));
-  assertReleaseEvidence(realManifest, real, '0.1.0');
+  assert.equal(real.version, '0.1.1');
+  assert.equal(real.reused_evidence, '0.1.0');
+  assertReleaseEvidence(realManifest, real, '0.1.1');
+  for (const file of [
+    'release/arm64-reboot-2026-09-09.json',
+    'release/windows-whisky-smoke-2026-11-13.json',
+    'release/tcc-documents-already-granted-2026-11-13.json',
+  ]) {
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).version, '0.1.0');
+  }
   const login = real.checks.find(check => check.id === 'clean-service-login');
   const folder = real.checks.find(check => check.id === 'macos-protected-folder');
   assert.equal(login.status, 'passed-with-limitations');
