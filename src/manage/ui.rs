@@ -127,6 +127,94 @@ pub fn scope(options: &mut Selection) -> Result<bool> {
     }
 }
 
+/// Typeahead between prompts is echoed by the terminal and lands on the next
+/// status line (`mailFound 3 connections`). Suppress echo until the next prompt
+/// reads those bytes itself. Inquire restores the mode it observed, so this
+/// stays off across the gap and is restored when the guard drops.
+pub struct QuietInput {
+    restore_echo: bool,
+}
+
+impl QuietInput {
+    pub fn suppress() -> Self {
+        Self {
+            restore_echo: terminal() && disable_echo(),
+        }
+    }
+}
+
+impl Drop for QuietInput {
+    fn drop(&mut self) {
+        if self.restore_echo {
+            enable_echo();
+        }
+    }
+}
+
+pub fn fresh_line() {
+    if !terminal() {
+        return;
+    }
+    print!("\r\x1b[2K");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+}
+
+fn disable_echo() -> bool {
+    set_echo(false).unwrap_or(false)
+}
+
+fn enable_echo() {
+    let _ = set_echo(true);
+}
+
+#[cfg(unix)]
+fn set_echo(on: bool) -> Option<bool> {
+    // SAFETY: the termios value is zeroed and then fully overwritten by tcgetattr
+    // before any field is read. Standard input is the process terminal.
+    let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
+    // SAFETY: the pointer refers to the local termios above, valid for this call.
+    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut termios) } != 0 {
+        return None;
+    }
+    let was = termios.c_lflag & libc::ECHO != 0;
+    if on {
+        termios.c_lflag |= libc::ECHO;
+    } else {
+        termios.c_lflag &= !libc::ECHO;
+    }
+    // SAFETY: termios was filled by tcgetattr on this same descriptor.
+    if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) } != 0 {
+        return None;
+    }
+    Some(was)
+}
+
+#[cfg(windows)]
+fn set_echo(on: bool) -> Option<bool> {
+    use windows_sys::Win32::System::Console::{
+        ENABLE_ECHO_INPUT, GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE, SetConsoleMode,
+    };
+    // SAFETY: STD_INPUT_HANDLE is the process input handle. The mode word is
+    // written by GetConsoleMode before it is read.
+    unsafe {
+        let handle = GetStdHandle(STD_INPUT_HANDLE);
+        let mut mode: u32 = 0;
+        if GetConsoleMode(handle, &mut mode) == 0 {
+            return None;
+        }
+        let was = mode & ENABLE_ECHO_INPUT != 0;
+        let next = if on {
+            mode | ENABLE_ECHO_INPUT
+        } else {
+            mode & !ENABLE_ECHO_INPUT
+        };
+        if SetConsoleMode(handle, next) == 0 {
+            return None;
+        }
+        Some(was)
+    }
+}
+
 pub fn canceled(json: bool) {
     if json {
         println!(

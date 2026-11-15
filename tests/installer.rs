@@ -71,7 +71,8 @@ fn actual_service_setup_repeat_remove_without_changing_project_files() {
             ])
             .arg(&project)
             .env("CLAUDE_CONFIG_DIR", &personal)
-            .env("MCP_GATE_TEST_ROOT", &root);
+            .env("MCP_GATE_TEST_ROOT", &root)
+            .env("MCP_GATE_TEST_LABEL_SCOPE", &root);
         if dry {
             process.arg("--dry-run");
         }

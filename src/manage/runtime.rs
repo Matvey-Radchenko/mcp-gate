@@ -99,11 +99,16 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
     )?;
     let mut binding = candidate.binding.clone();
     binding.after = remote(&binding, &binary, &release.join("config.toml"), &config)?;
+    // The wizard assigns this before installation. A missing label is only a
+    // fallback for a caller that did not preview; it does not rename anything.
+    let label = candidate.service_label.clone().unwrap_or_else(|| {
+        super::labels::allocate(&candidate.binding.name, &std::collections::BTreeSet::new())
+    });
     Ok(Record {
         removing: false,
         id: id.clone(),
         release,
-        label: format!("local.mcp-gate.{id}"),
+        label,
         binary_hash: crate::catalog::digest(&binary)?,
         binary,
         bindings: vec![binding],
@@ -180,25 +185,19 @@ pub async fn ready(record: &Record) -> Result<()> {
 }
 
 pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result<Option<Record>> {
-    if candidate.recipe.as_ref().is_none_or(|r| r.mode != "shared") {
+    // Identical command, arguments, environment and directory share one gateway.
+    // Session isolation stays per HTTP session; a shared backend stays singular.
+    if super::context::needs_directory(candidate) {
         return Ok(None);
     }
     for record in &registry.gateways {
-        if record.removing
-            || !record
-                .bindings
-                .iter()
-                .any(|b| b.direct == candidate.binding.direct)
-        {
+        if record.removing {
             continue;
         }
-        let config = Config::load(&record.config())?;
-        if config.ownership != crate::config::Ownership::Shared
-            || config.backend.env != launch::environment(candidate)?
-            || config.backend.working_directory.as_ref() != Some(&candidate.cwd)
-            || config.backend.env_files != candidate.env_files
-            || config.backend.inherit_env != candidate.inherit_env
-        {
+        let Ok(config) = Config::load(&record.config()) else {
+            continue;
+        };
+        if !launch::same_backend(&config, candidate)? {
             continue;
         }
         crate::catalog::Catalog::load(&config.catalog_file, &config.backend)?;

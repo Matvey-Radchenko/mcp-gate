@@ -154,10 +154,16 @@ impl BackendSlot {
             .snapshot(self.live.load(Ordering::SeqCst))
     }
 
+    /// Record the failure before returning. The caller may still hold `worker`,
+    /// so cleanup runs separately and must not lock inline. A waiter has to see
+    /// the new generation as soon as it acquires that lock, not after scheduling.
     pub fn fail(self: &Arc<Self>, reason: Reason) {
+        let Some(generation) = self.lifecycle.lock().unwrap().fail(reason) else {
+            return;
+        };
         let slot = self.clone();
         tokio::spawn(async move {
-            slot.retire(reason).await;
+            slot.reap_generation(generation).await;
         });
     }
 
@@ -167,15 +173,19 @@ impl BackendSlot {
         let Some(generation) = self.lifecycle.lock().unwrap().fail(reason) else {
             return false;
         };
+        self.reap_generation(generation).await;
+        true
+    }
+
+    async fn reap_generation(self: &Arc<Self>, generation: u64) {
         // Hold the execution lock until owned resources are gone. No new
         // worker can appear between taking the old one and its cleanup.
         // Keep the worker lock through shutdown. The next call on this session
         // waits, then observes the drained state instead of a half-finished one.
         let mut guard = self.worker.lock().await;
         if self.generation() != generation {
-            return false;
+            return;
         }
-        let stopped = guard.is_some();
         if let Some(worker) = guard.take() {
             worker.shutdown().await;
         }
@@ -183,8 +193,6 @@ impl BackendSlot {
         // Shared mode owns the entire single-worker capacity, including that
         // cleanup. Never mark it ready until the permit is actually released.
         self.finish_drain(generation).await;
-        drop(guard);
-        stopped
     }
 
     pub async fn retire_if_idle(self: &Arc<Self>, reason: Reason) -> bool {

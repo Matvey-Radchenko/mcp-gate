@@ -20,6 +20,7 @@ pub async fn choose(options: &Selection, registry: &Registry) -> Result<Vec<(Str
         return Ok(vec![]);
     }
     let interactive = ui::interactive(options);
+    let _quiet = interactive.then(ui::QuietInput::suppress);
     ensure!(
         interactive || options.dry_run || options.yes,
         "No changes applied. Run remove in a terminal to select connections, or use remove --all --yes for all managed connections. Use --dry-run to preview."

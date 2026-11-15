@@ -174,6 +174,7 @@ async fn refresh(
         inherit_env: config.backend.inherit_env.clone(),
         issue: None,
         recipe: None,
+        service_label: None,
     };
     let recipe = crate::clients::recipes::matching(&candidate);
     ensure!(

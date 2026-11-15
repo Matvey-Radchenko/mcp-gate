@@ -64,10 +64,6 @@ pub fn register(record: &Record) -> Result<()> {
     {
         let path = agent_path(record)?;
         std::fs::create_dir_all(path.parent().context("Missing LaunchAgents directory")?)?;
-        ensure!(
-            !path.exists(),
-            "LaunchAgent already exists; refusing to overwrite"
-        );
         let binary = &record.binary;
         let xml = crate::install::xml;
         let plist = format!(
@@ -81,10 +77,18 @@ pub fn register(record: &Record) -> Result<()> {
             xml(&record.release.join("logs/stdout.log").to_string_lossy()),
             xml(&record.release.join("logs/stderr.log").to_string_lossy())
         );
-        super::store::atomic(&path, plist.as_bytes())?;
-        run(Command::new("launchctl")
+        // create_new refuses to replace a label another setup already claimed.
+        write_new(&path, plist.as_bytes(), &record.label)?;
+        if let Err(error) = run(Command::new("launchctl")
             .args(["bootstrap", &domain()])
-            .arg(path))?;
+            .arg(&path))
+        {
+            let _ = std::fs::remove_file(&path);
+            if label_in_use(&error) {
+                return Err(label_taken(&record.label));
+            }
+            return Err(error);
+        }
     }
     #[cfg(windows)]
     {
@@ -96,10 +100,15 @@ pub fn register(record: &Record) -> Result<()> {
             .flat_map(u16::to_le_bytes)
             .collect();
         super::store::atomic(&task, &bytes)?;
-        run(Command::new("schtasks.exe")
+        if let Err(error) = run(Command::new("schtasks.exe")
             .args(["/Create", "/TN", &record.label, "/XML"])
             .arg(&task))
-        .context("Task Scheduler registration failed")?;
+        {
+            if label_in_use(&error) {
+                return Err(label_taken(&record.label));
+            }
+            return Err(error.context("Task Scheduler registration failed"));
+        }
         run(Command::new("schtasks.exe").args(["/Run", "/TN", &record.label]))
             .context("Task Scheduler start failed")?;
     }
@@ -147,6 +156,32 @@ pub fn unregister(record: &Record) -> Result<()> {
     }
     anyhow::bail!("Service removal is still pending in the user service manager")
 }
+/// Another installation already owns this per-user service name.
+pub fn label_in_use(error: &anyhow::Error) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("already in use")
+        || text.contains("already exists")
+        || text.contains("bootstrap failed: 5")
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn label_taken(label: &str) -> anyhow::Error {
+    anyhow::anyhow!("Service label {label} is already in use")
+}
+
+#[cfg(target_os = "macos")]
+fn write_new(path: &std::path::Path, bytes: &[u8], label: &str) -> Result<()> {
+    use std::io::Write;
+    let mut file = match crate::platform::private_file(path) {
+        Ok(file) => file,
+        Err(_) if path.exists() => return Err(label_taken(label)),
+        Err(error) => return Err(error),
+    };
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
+}
+
 pub fn installed(record: &Record) -> Result<bool> {
     #[cfg(target_os = "macos")]
     return Ok(Command::new("launchctl")

@@ -1,8 +1,9 @@
 # Using mcp-gate from an agent
 
 Run mcp-gate without a terminal. The process must not wait for a menu. Pass
-`--json` whenever you need a machine-readable result. Do not pass `--yes` unless
-the user has already chosen the exact clients and servers.
+`--json` whenever you need a machine-readable result. It is a global flag, so
+both `mcp-gate --json status` and `mcp-gate status --json` work. Do not pass
+`--yes` unless the user has already chosen the exact clients and servers.
 
 ## Exit codes
 
@@ -21,13 +22,19 @@ mcp-gate status --json
 ```
 
 `status --json` is one compact JSON object, not pretty-printed. `format_version`
-stays 1. `services` lists LaunchAgents named `local.mcp-gate.<name>`. `ownership`
-is `managed` when this installation's registry records the agent, and `unmanaged`
-when it does not. `state` is `running` when the gateway's health endpoint
-answers. `connections` lists client MCP entries. `kind` is `direct`, `http`,
-`managed`, or `external`. `external` means the client already uses a gateway this
+stays 1. `services` lists LaunchAgents named `local.mcp-gate.<name>`. New
+gateways use the server name; a 0.1.0 gateway may still be
+`local.mcp-gate.<uuid>`. Both are managed the same way and are not renamed.
+`ownership` is `managed` when this installation's registry records the agent,
+and `unmanaged` when it does not. `state` is `running` when the gateway's health
+endpoint answers. `connections` lists client MCP entries. `kind` is `direct`,
+`http`, `managed`, or `external`. A direct connection's `state` is
+`health not checked` and its `reason` says that backend health does not apply
+until setup. `external` means the client already uses a gateway this
 installation did not set up, so setup and remove do not own it. Gateway health
-does not prove that an application has switched to the gateway.
+does not prove that an application has switched to the gateway. An explicit
+`--server` or `--client` that matches nothing exits 1. With `--json`, `phase`
+is `failed`.
 
 ```sh
 mcp-gate status --details
@@ -49,7 +56,18 @@ mcp-gate adopt NAME --json
 `setup` does not accept `--all`. `remove NAME` is the same as `--server NAME`.
 `adopt` only writes the local registry. It does not restart the gateway, edit
 client settings, or copy the binary. `--dry-run` prints the plan and writes
-nothing.
+nothing. Connections that have no working directory stay in the plan with
+`needs_directory` and `directory_hint`. Pass `--cwd <dir>` to fill those in.
+mcp-gate does not default that directory to the home directory; pass
+`--cwd "$HOME"` only when the server does not depend on a project directory.
+`service_label` is the LaunchAgent or scheduled-task name that would be
+registered, such as `local.mcp-gate.filesystem`. Identical command, arguments,
+environment and working directory share one label (`shares_gateway`). In a dry
+run the autostart sentence says what *would* be registered.
+`--diff` shows `command`, `args`, `cwd` and the gateway `url`. Argument values
+that look like secrets, including `--token=...`, become `<hidden>`. Environment
+values, headers and tokens stay hidden. `--yes` requires both `--client` and
+`--server`. The exception is `remove --all --yes`.
 
 `check --config PATH` prints a one-line summary. `check --config PATH --json`
 prints `{"format_version":1,"phase":"ok",...}`.

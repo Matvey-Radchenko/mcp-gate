@@ -1,21 +1,48 @@
 use crate::clients::{Binding, Candidate};
 use serde_json::{Value, json};
 
-pub fn display(plan: &Value) {
+pub fn display(plan: &Value, dry_run: bool) {
     println!("\nSetup preview");
-    for server in plan["servers"].as_array().into_iter().flatten() {
-        println!(
-            "  {} / {}: direct → gateway ({})",
-            text(&server["client"]),
-            text(&server["name"]),
-            text(&server["mode"])
-        );
+    let servers: Vec<_> = plan["servers"].as_array().into_iter().flatten().collect();
+    for server in &servers {
+        if let Some(hint) = server["directory_hint"].as_str() {
+            println!(
+                "  {} / {}: {}",
+                text(&server["client"]),
+                text(&server["name"]),
+                super::ui::safe(hint)
+            );
+        } else {
+            println!(
+                "  {} / {}: direct → gateway ({})",
+                text(&server["client"]),
+                text(&server["name"]),
+                text(&server["mode"])
+            );
+        }
         println!("    Source: {}", text(&server["source"]));
+        if let Some(label) = server["service_label"].as_str() {
+            let when = if server["directory_hint"].is_string() {
+                ", once a directory is set"
+            } else {
+                ""
+            };
+            let shared = if server["shares_gateway"] == true {
+                " (one gateway for this identical backend)"
+            } else {
+                ""
+            };
+            println!("    Service label{when}: {label}{shared}");
+        }
         println!("    Local destination: {}", text(&server["target"]));
-        println!(
-            "    Backend directory: {}",
-            text(&server["working_directory"])
-        );
+        if server["directory_hint"].is_string() {
+            println!("    Backend directory: not set");
+        } else {
+            println!(
+                "    Backend directory: {}",
+                text(&server["working_directory"])
+            );
+        }
         if let Some(note) = server["context_note"].as_str() {
             println!("    Context change: {note}");
         }
@@ -23,7 +50,10 @@ pub fn display(plan: &Value) {
             println!("    Recipe conditions: {}", super::ui::safe(conditions));
         }
         if let Some(diff) = server.get("diff") {
-            println!("    Redacted diff: {diff}");
+            println!(
+                "    Diff: {}",
+                serde_json::to_string(diff).unwrap_or_else(|_| diff.to_string())
+            );
         }
     }
     for gateway in plan["managed"].as_array().into_iter().flatten() {
@@ -34,15 +64,42 @@ pub fn display(plan: &Value) {
                 text(&b["name"]),
                 text(&gateway["action"])
             );
+            if let Some(label) = gateway["label"].as_str() {
+                println!("    Service label: {label}");
+            }
         }
     }
     println!(
         "\nCommands, argument order and client permissions are preserved. Credentials stay private."
     );
-    println!(
-        "User autostart is registered and gateways start now; backends start on demand after discovery."
-    );
-    println!("Discovery runs the original command; npx, uvx or Docker may download dependencies.");
+    let directory_only = !servers.is_empty()
+        && servers
+            .iter()
+            .all(|server| server["directory_hint"].is_string());
+    print_effects(dry_run, directory_only);
+}
+
+fn print_effects(dry_run: bool, directory_only: bool) {
+    if dry_run && directory_only {
+        println!("No gateway would be registered until a working directory is chosen.");
+    } else if dry_run {
+        println!(
+            "User autostart would be registered and gateways would start after setup; backends start on demand after discovery."
+        );
+    } else {
+        println!(
+            "User autostart is registered and gateways start now; backends start on demand after discovery."
+        );
+    }
+    if dry_run {
+        println!(
+            "Discovery would run the original command; npx, uvx or Docker may download dependencies."
+        );
+    } else {
+        println!(
+            "Discovery runs the original command; npx, uvx or Docker may download dependencies."
+        );
+    }
     if cfg!(target_os = "macos") {
         println!(
             "macOS may request separate permission for a background gateway to access protected folders."
@@ -56,22 +113,157 @@ fn text(value: &Value) -> String {
     super::ui::safe(value.as_str().unwrap_or("?"))
 }
 pub fn redact(value: &Value) -> Value {
+    redact_keyed(value, None)
+}
+
+fn redact_keyed(value: &Value, key: Option<&str>) -> Value {
+    if key.is_some_and(sensitive_key) {
+        return json!("<hidden>");
+    }
     match value {
-        Value::Object(map) => {
-            Value::Object(map.iter().map(|(k, v)| (k.clone(), redact(v))).collect())
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(name, child)| (name.clone(), redact_keyed(child, Some(name))))
+                .collect(),
+        ),
+        Value::Array(values) if key.is_some_and(is_word_list) => Value::Array(redact_words(values)),
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(|child| redact_keyed(child, None))
+                .collect(),
+        ),
+        Value::String(text)
+            if key.is_none_or(|name| !verbatim(name)) && looks_like_secret(text) =>
+        {
+            json!("<hidden>")
         }
-        Value::Array(values) => Value::Array(values.iter().map(redact).collect()),
-        Value::Null | Value::Bool(_) => value.clone(),
-        _ => json!("<hidden>"),
+        other => other.clone(),
     }
 }
+
+fn is_word_list(key: &str) -> bool {
+    matches!(key, "args" | "command")
+}
+
+fn verbatim(key: &str) -> bool {
+    matches!(key, "cwd" | "working_directory" | "url" | "command")
+}
+
+fn sensitive_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase().replace('-', "_");
+    const EXACT: &[&str] = &[
+        "env",
+        "environment",
+        "env_vars",
+        "headers",
+        "http_headers",
+        "header",
+        "authorization",
+        "token",
+        "password",
+        "secret",
+        "api_key",
+        "apikey",
+        "credential",
+        "credentials",
+        "cookie",
+        "headershelper",
+        "http_headers_helper",
+    ];
+    EXACT.contains(&key.as_str())
+        || key.contains("token")
+        || key.contains("secret")
+        || key.contains("password")
+        || key.contains("authorization")
+        || key.contains("credential")
+        || key.contains("cookie")
+}
+
+fn redact_words(words: &[Value]) -> Vec<Value> {
+    let mut hide_next = false;
+    let mut out = Vec::new();
+    for word in words {
+        let Some(text) = word.as_str() else {
+            out.push(json!("<hidden>"));
+            hide_next = false;
+            continue;
+        };
+        if hide_next {
+            out.push(json!("<hidden>"));
+            hide_next = false;
+            continue;
+        }
+        if let Some((flag, _)) = text.split_once('=')
+            && flag.starts_with('-')
+            && sensitive_flag(flag)
+        {
+            out.push(json!(format!("{flag}=<hidden>")));
+            continue;
+        }
+        if text.starts_with('-') && sensitive_flag(text) {
+            hide_next = true;
+            out.push(json!(text));
+            continue;
+        }
+        if looks_like_secret(text) {
+            out.push(json!("<hidden>"));
+        } else {
+            out.push(json!(text));
+        }
+    }
+    out
+}
+
+fn sensitive_flag(flag: &str) -> bool {
+    let flag = flag
+        .trim_start_matches('-')
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    flag.contains("token")
+        || flag.contains("secret")
+        || flag.contains("password")
+        || flag.contains("authorization")
+        || flag.contains("credential")
+        || flag.contains("api_key")
+        || flag == "header"
+        || flag.contains("cookie")
+        || flag == "key"
+        || flag.ends_with("_key")
+}
+
+fn looks_like_secret(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    const PREFIXES: &[&str] = &[
+        "sk-",
+        "sk_",
+        "ghp_",
+        "github_pat_",
+        "xox",
+        "glpat-",
+        "bearer ",
+    ];
+    if PREFIXES.iter().any(|prefix| lower.starts_with(prefix)) {
+        return true;
+    }
+    if value.len() >= 8
+        && (lower.contains("token") || lower.contains("secret") || lower.contains("password"))
+    {
+        return true;
+    }
+    value.len() >= 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 pub fn diff(candidate: &Candidate) -> Value {
     let mut after = candidate.binding.direct.clone();
     if let Some(map) = after.as_object_mut() {
         for field in ["command", "args", "env", "environment", "env_vars", "cwd"] {
             map.remove(field);
         }
-        map.insert("url".into(), json!("<gateway>"));
+        map.insert(
+            "url".into(),
+            json!("http://127.0.0.1:<assigned-at-setup>/mcp"),
+        );
         map.insert(
             "authentication".into(),
             json!("<private helper or file reference>"),
@@ -88,7 +280,7 @@ pub fn managed(record: &super::store::Record, hash: &str) -> Value {
     let catalog_changed = config.as_ref().map_or(true, |c| {
         crate::catalog::Catalog::load(&c.catalog_file, &c.backend).is_err()
     });
-    json!({"id":record.id,"connections":record.bindings.iter().map(target).collect::<Vec<_>>(),
+    json!({"id":record.id,"label":record.label,"connections":record.bindings.iter().map(target).collect::<Vec<_>>(),
         "gateway_binary_changed":record.binary_hash != hash,
         "backend_or_catalog_changed":catalog_changed,
         "action":if record.removing { "finish pending remove" } else if catalog_changed {

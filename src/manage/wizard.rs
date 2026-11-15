@@ -11,7 +11,7 @@ pub struct Setup {
 }
 
 #[derive(Debug)]
-struct Back;
+pub(super) struct Back;
 impl std::fmt::Display for Back {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Back to scope")
@@ -37,11 +37,21 @@ pub async fn setup(options: &mut Selection, registry: &Registry) -> Result<Optio
 
 async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Option<Setup>> {
     let interactive = ui::interactive(options);
+    let _quiet = interactive.then(ui::QuietInput::suppress);
     if interactive && !ui::scope(options)? {
         ui::canceled(false);
         return Ok(None);
     }
     let mut inventory = inventory::read(options, registry, false).await?;
+    if let Some(cwd) = options.cwd.clone() {
+        let cwd = super::context::resolve_directory(&cwd)?;
+        for candidate in &mut inventory.candidates {
+            super::context::apply_directory(candidate, &cwd)?;
+        }
+    }
+    if options.yes {
+        super::context::pending_directories(&inventory.candidates)?;
+    }
     let hash = crate::catalog::digest(&std::env::current_exe()?)?;
     let managed: Vec<_> = registry
         .gateways
@@ -52,13 +62,15 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
                 .any(|b| super::matches_binding(options, b))
         })
         .collect();
+    if interactive {
+        ui::fresh_line();
+    }
+    let needs_directory = inventory
+        .candidates
+        .iter()
+        .any(super::context::needs_directory);
     let count = inspect(&mut inventory, options, managed.len());
-    let clarifiable = interactive
-        && inventory
-            .candidates
-            .iter()
-            .any(super::context::needs_directory);
-    if count == 0 && managed.is_empty() && !clarifiable {
+    if count == 0 && managed.is_empty() && !needs_directory {
         empty(&inventory, options);
         if interactive {
             while ui::select(
@@ -77,106 +89,25 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
             "No changes applied. Run setup in a terminal to choose connections, or use --dry-run. Automation requires explicit --client and --server with --yes."
         );
     }
-    let eligible: Vec<_> = inventory
+    let mut eligible: Vec<_> = inventory
         .candidates
         .into_iter()
-        .filter(|c| c.issue.is_none() || (interactive && super::context::needs_directory(c)))
+        .filter(|c| {
+            c.issue.is_none()
+                || ((interactive || options.dry_run) && super::context::needs_directory(c))
+        })
         .collect();
-    loop {
-        let mut labels: Vec<_> = eligible
-            .iter()
-            .map(|c| {
-                format!(
-                    "{} / {} — {} [{}]",
-                    c.binding.client,
-                    ui::safe(&c.binding.name),
-                    if super::context::needs_directory(c) {
-                        "choose directory"
-                    } else {
-                        c.recipe.as_ref().map_or("session", |r| r.mode.as_str())
-                    },
-                    scope_label(&c.binding)
-                )
-            })
-            .collect();
-        labels.extend(managed.iter().map(|r| {
-            format!(
-                "Manage existing: {}",
-                r.bindings
-                    .iter()
-                    .map(|b| format!("{} / {}", b.client, ui::safe(&b.name)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }));
-        let indices = if interactive {
-            let Some(indices) = ui::multiple(
-                "Choose MCP connections (nothing selected by default):",
-                labels,
-            )?
-            else {
-                return Err(Back.into());
-            };
-            indices
-        } else {
-            (0..labels.len()).collect()
-        };
-        if indices.is_empty() {
-            ui::canceled(options.json);
-            return Ok(None);
-        }
-        let mut candidates: Vec<_> = eligible
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| indices.contains(i))
-            .map(|(_, c)| c.clone())
-            .collect();
-        if interactive {
-            let mut reviewed = Vec::new();
-            for candidate in candidates {
-                if let Some(c) = super::context::review(candidate)? {
-                    reviewed.push(c);
-                }
-            }
-            candidates = reviewed;
-        }
-        let selected: Vec<_> = managed
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| indices.contains(&(i + eligible.len())))
-            .map(|(_, r)| *r)
-            .collect();
-        if candidates.is_empty() && selected.is_empty() {
-            continue;
-        }
-        let plan = json!({"servers":candidates.iter().map(|c| { let mut v=c.summary(); if options.diff { v["diff"]=preview::diff(c); } v }).collect::<Vec<_>>(),
-            "managed":selected.iter().map(|r| preview::managed(r, &hash)).collect::<Vec<_>>(),
-            "connections":inventory.connections,"source_issues":inventory.issues,
-            "discovery":"Runs the original command; npx, uvx and Docker may download dependencies.",
-            "verification":"Gateway readiness does not confirm the application has switched."});
-        if options.dry_run {
-            if options.json {
-                println!(
-                    "{}",
-                    json!({"format_version":1,"phase":"preview","plan":plan})
-                );
-            } else {
-                preview::display(&plan);
-                println!("Dry run. No backends started and no changes applied.");
-            }
-            return Ok(None);
-        }
-        if !options.json {
-            preview::display(&plan);
-        }
-        if !interactive || review_setup(&candidates)? {
-            return Ok(Some(Setup {
-                candidates,
-                gateways: selected.iter().map(|r| r.id.clone()).collect(),
-                plan,
-            }));
-        }
-    }
+    super::labels::assign(&mut eligible, registry)?;
+    super::choose::select(super::choose::Choice {
+        options,
+        registry,
+        eligible: &eligible,
+        managed: &managed,
+        connections: &inventory.connections,
+        issues: &inventory.issues,
+        hash: &hash,
+        interactive,
+    })
 }
 
 fn inspect(inventory: &mut inventory::Inventory, options: &Selection, managed: usize) -> usize {
@@ -225,14 +156,77 @@ fn inspect(inventory: &mut inventory::Inventory, options: &Selection, managed: u
             .iter()
             .filter(|c| super::context::needs_directory(c))
             .count();
-        println!(
-            "{directories} personal connections need an explicit directory. Other connections and limitations: setup --details."
-        );
+        if directories > 0 {
+            println!("{}", directory_line(directories));
+        }
+        if !options.details && (directories > 0 || !inventory.issues.is_empty()) {
+            println!("Other connections and limitations: setup --details.");
+        }
         if options.details {
             inventory::overview(inventory, true);
         }
+        if project_hint(options, inventory) {
+            println!(
+                "For a Claude Code connection tied to a project, use setup --project <directory>."
+            );
+        }
     }
     count
+}
+
+fn directory_line(directories: usize) -> String {
+    if directories == 1 {
+        "1 personal connection needs an explicit directory.".into()
+    } else {
+        format!("{directories} personal connections need an explicit directory.")
+    }
+}
+
+fn project_hint(options: &Selection, inventory: &inventory::Inventory) -> bool {
+    if options.project.is_some() {
+        return false;
+    }
+    let listed = inventory.connections.iter().any(|connection| {
+        connection.client == crate::clients::Client::ClaudeCode && connection.project.is_some()
+    }) || inventory.candidates.iter().any(|candidate| {
+        candidate.binding.client == crate::clients::Client::ClaudeCode
+            && (candidate.binding.project.is_some() || project_issue(candidate.issue.as_deref()))
+    });
+    listed || claude_file().is_some_and(|path| crate::clients::claude_project_servers(&path))
+}
+
+fn project_issue(text: Option<&str>) -> bool {
+    text.is_some_and(|text| {
+        text.starts_with("Project file")
+            || text.starts_with("Project MCP")
+            || text.contains("project definition")
+    })
+}
+
+fn claude_file() -> Option<std::path::PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join(".claude.json"))
+        .or_else(|| {
+            super::store::home()
+                .ok()
+                .map(|home| home.join(".claude.json"))
+        })
+}
+
+pub(super) fn server_plan(candidate: &crate::clients::Candidate, diff: bool) -> Value {
+    let mut value = candidate.summary();
+    if super::context::needs_directory(candidate) {
+        value["needs_directory"] = json!(true);
+        value["directory_hint"] = json!(super::context::NEEDS_DIRECTORY);
+        // The placeholder path is not a chosen directory, and the context note
+        // describes the result of choosing one.
+        value["context_note"] = Value::Null;
+        value["working_directory"] = Value::Null;
+    }
+    if diff {
+        value["diff"] = preview::diff(candidate);
+    }
+    value
 }
 
 pub fn scope_label(binding: &crate::clients::Binding) -> String {
@@ -269,9 +263,9 @@ fn empty(inventory: &inventory::Inventory, options: &Selection) {
             ),
             super::ui::counted(http, "other HTTP connection", "other HTTP connections")
         );
-        println!(
-            "Use setup --details for source files and next steps. For a Claude Code connection tied to a project, use setup --project <directory>."
-        );
+        if !options.details {
+            println!("Use setup --details for source files and next steps.");
+        }
         if !inventory.issues.is_empty() {
             println!(
                 "{} configuration sources need attention; use --details.",
@@ -281,7 +275,7 @@ fn empty(inventory: &inventory::Inventory, options: &Selection) {
     }
 }
 
-fn review_setup(candidates: &[Candidate]) -> Result<bool> {
+pub(super) fn review_setup(candidates: &[Candidate]) -> Result<bool> {
     loop {
         match ui::select(
             "Review setup:",

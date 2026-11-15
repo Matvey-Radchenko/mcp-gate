@@ -10,11 +10,11 @@ and JSON fields are in `docs/agents.md`.
 
 ## Rules
 
-- Pass `--json` for every command whose result you will parse. Stdout is one JSON document.
+- Pass `--json` for every command whose result you will parse. It may be placed before or after the subcommand. Stdout is one JSON document.
 - A missing TTY must not block. If a command says a terminal is required, rerun it with `--dry-run` or with explicit `--client`, `--server`, and `--yes`.
 - Never invent a server name. Read `services` and `connections` from `mcp-gate status --json` first.
 - `adopt` records an existing `local.mcp-gate.<name>` LaunchAgent. Preview with `mcp-gate adopt NAME --dry-run` before `mcp-gate adopt NAME --json`.
-- `setup` has no `--all`. Apply only with `mcp-gate setup --client CLIENT --server NAME --yes --json`.
+- `setup` has no `--all`. Apply only with `mcp-gate setup --client CLIENT --server NAME --yes --json`. If the plan says `needs_directory`, add `--cwd <dir>` chosen by the user. Do not invent `$HOME` unless the user said that directory is correct.
 - `remove NAME --dry-run` previews one managed connection. If `kind` is `external`, remove cannot restore the original command; inspect `status --details` or `adopt` the LaunchAgent name.
 - `remove --all --yes --json` restores every managed connection in scope.
 - A parse error with `--json` has a one-line `error`, for example `unrecognized subcommand 'bogus'`.

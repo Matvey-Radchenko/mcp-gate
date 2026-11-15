@@ -1,7 +1,11 @@
 //! Resolve an unknown launch directory only from an explicit user decision.
 use super::ui;
 use crate::clients::Candidate;
-use anyhow::Result;
+use anyhow::{Result, ensure};
+use std::path::{Path, PathBuf};
+
+pub const NEEDS_DIRECTORY: &str =
+    "needs a working directory — the interactive setup will ask, or pass --cwd <dir>";
 
 pub fn needs_directory(candidate: &Candidate) -> bool {
     candidate.binding.project.is_none()
@@ -9,6 +13,67 @@ pub fn needs_directory(candidate: &Candidate) -> bool {
             .issue
             .as_deref()
             .is_some_and(|i| i.starts_with("Global command"))
+}
+
+/// Expand `~` and require an existing absolute directory. Home is not assumed.
+pub fn resolve_directory(path: &Path) -> Result<PathBuf> {
+    let text = path.to_string_lossy();
+    let path = if text == "~" {
+        super::store::home()?
+    } else if let Some(tail) = text.strip_prefix("~/") {
+        super::store::home()?.join(tail)
+    } else {
+        path.to_path_buf()
+    };
+    let path = crate::platform::project_path(&path).map_err(|_| {
+        anyhow::anyhow!(
+            "Working directory must be an existing absolute directory: {}",
+            path.display()
+        )
+    })?;
+    ensure!(
+        path.is_dir(),
+        "Working directory must be an existing absolute directory: {}",
+        path.display()
+    );
+    Ok(path)
+}
+
+pub fn apply_directory(candidate: &mut Candidate, cwd: &Path) -> Result<()> {
+    if !needs_directory(candidate) {
+        return Ok(());
+    }
+    candidate.cwd = cwd.to_path_buf();
+    candidate.issue = None;
+    candidate.recipe = crate::clients::recipes::matching(candidate);
+    if let Err(error) = super::launch::environment(candidate)
+        .and_then(|env| super::launch::executable(candidate, &env))
+    {
+        candidate.issue = Some(error.to_string());
+    }
+    Ok(())
+}
+
+pub fn pending_directories(candidates: &[Candidate]) -> Result<()> {
+    let pending: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| needs_directory(candidate))
+        .map(|candidate| format!("{} / {}", candidate.binding.client, candidate.binding.name))
+        .collect();
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let names = if pending.len() == 1 {
+        format!("{} needs a working directory.", pending[0])
+    } else {
+        format!(
+            "These connections need a working directory: {}.",
+            pending.join(", ")
+        )
+    };
+    anyhow::bail!(
+        "{names} Pass --cwd <dir> to set one for every selected connection that does not declare a directory."
+    )
 }
 
 pub fn review(mut candidate: Candidate) -> Result<Option<Candidate>> {

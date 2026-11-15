@@ -1,8 +1,10 @@
 mod adopt;
 mod agents;
+mod choose;
 mod context;
 mod health;
 mod inventory;
+mod labels;
 pub mod launch;
 mod legacy;
 mod preview;
@@ -24,42 +26,55 @@ use std::path::PathBuf;
 
 #[derive(Args, Default, Clone)]
 pub struct Selection {
+    /// Client to include. Repeat to select more than one.
     #[arg(long, value_enum)]
     pub client: Vec<Client>,
+    /// Limit Claude Code connections to this project directory.
     #[arg(long)]
     pub project: Option<PathBuf>,
+    /// MCP server name to include. Repeat to select more than one.
     #[arg(long)]
     pub server: Vec<String>,
+    /// Show the plan and change nothing.
     #[arg(long)]
     pub dry_run: bool,
-    /// Show a detailed structural diff with all configuration values redacted.
+    /// Show command, arguments, working directory and the gateway URL. Hide environment values, headers and secrets.
     #[arg(long)]
     pub diff: bool,
-    #[arg(long)]
+    /// Working directory for selected connections that do not already declare one.
+    #[arg(long, value_name = "DIR")]
+    pub cwd: Option<PathBuf>,
+    /// Set from the global --json flag.
+    #[arg(skip)]
     pub json: bool,
+    /// Apply without prompting. Requires both --client and --server.
     #[arg(long)]
     pub yes: bool,
     /// Set by `remove --all`. Hidden here so `setup` does not advertise it.
     #[arg(skip)]
     pub all: bool,
-    /// Show source files and explanations, including connections that cannot be migrated.
+    /// Show source files and connections that cannot be changed.
     #[arg(long)]
     pub details: bool,
 }
 #[derive(Args)]
 pub struct Status {
+    /// Client to include. Repeat to select more than one.
     #[arg(long, value_enum)]
     pub client: Vec<Client>,
+    /// Limit connections to this project directory.
     #[arg(long)]
     pub project: Option<PathBuf>,
+    /// MCP server name to include. Repeat to select more than one.
     #[arg(long)]
     pub server: Vec<String>,
-    #[arg(long)]
+    /// Set from the global --json flag.
+    #[arg(skip)]
     pub json: bool,
     /// Show source files and full diagnostic explanations.
     #[arg(long)]
     pub details: bool,
-    /// Explicitly initialize configured backends for diagnosis; never calls their tools.
+    /// Initialize configured backends for diagnosis. Does not call their tools.
     #[arg(long)]
     pub probe: bool,
     /// Legacy single-config diagnostics.
@@ -93,12 +108,16 @@ pub(crate) fn confirm(message: &str, yes: bool) -> Result<bool> {
     }
     ui::confirm(message)
 }
-pub(crate) fn explicit(options: &Selection) -> Result<()> {
-    ensure!(
-        !options.yes || (!options.server.is_empty() && !options.client.is_empty()),
-        "--yes requires explicit --client and --server selections"
-    );
-    Ok(())
+pub(crate) fn explicit(options: &Selection, remove: bool) -> Result<()> {
+    if !options.yes || (!options.server.is_empty() && !options.client.is_empty()) {
+        return Ok(());
+    }
+    if remove {
+        anyhow::bail!(
+            "--yes requires both --client and --server. To restore every managed connection, use remove --all --yes."
+        );
+    }
+    anyhow::bail!("--yes requires both --client and --server");
 }
 pub(crate) fn matches(options: &Selection, client: Client, name: &str) -> bool {
     (options.client.is_empty() || options.client.contains(&client))

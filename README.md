@@ -1,12 +1,9 @@
 <p align="center">
-  <!-- TODO: add a dark/light wordmark. Until then the typographic heading is enough. -->
-  <!--
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mcp-gate-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/mcp-gate-light.svg">
-    <img alt="mcp-gate" src="docs/assets/mcp-gate-light.svg" width="160">
+    <img alt="mcp-gate" src="docs/assets/mcp-gate-light.svg" width="240">
   </picture>
-  -->
 </p>
 
 <h1 align="center">mcp-gate</h1>
@@ -30,11 +27,13 @@ npx @matvei-radchenko/mcp-gate@latest setup
 
 In a terminal, `setup` and `remove` ask you to choose connections and show a preview before changing anything. Type to search, arrows move, Space selects, Enter reviews, Esc goes back. Nothing is selected by default.
 
-<!-- TODO: record a short GIF or asciinema of the setup wizard and put it here, e.g. ![setup wizard](docs/assets/setup-demo.gif) -->
+![Setup wizard on fixture connections: search, select, preview, then cancel](docs/assets/setup-demo.gif)
 
 ## Why a gateway
 
 A stdio MCP server that starts with the client starts on every session, even when you only needed the tool catalog. mcp-gate sits in front as a small Rust process:
+
+![Before, each session starts every stdio server. After, one lazy gateway per server starts a backend only for a real call.](docs/assets/before-after.svg)
 
 - **Lazy backends.** `initialize`, `tools/list`, and the rest of discovery are served from a reviewed catalog snapshot. The upstream process starts when a real call (`tools/call`, `resources/read`, `prompts/get`) needs it.
 - **Shared or session-owned.** A reviewed stateless API can share one serialized backend across clients. A session-owned server (browsers, anything with per-client state) gets its own MCP connection. Shared mode is opt-in and is not safe for an arbitrary browser server.
@@ -119,11 +118,13 @@ Run `setup` again with a newer or older build to update compatible background se
 | `mcp-gate remove` | Restore selected connections, or all managed ones with `--all --yes`. |
 | `mcp-gate adopt <name>` | Record an unmanaged `local.mcp-gate.<name>` LaunchAgent in the local registry. Does not restart the gateway, edit client settings, or copy the binary. |
 
-`setup --dry-run` previews selected settings without launching a backend or writing files. `--client`, `--server`, and `--project` narrow the selection. `--yes` requires both an explicit client and server, except `remove --all`. `--diff` shows a structural diff with values hidden. `--json` writes a versioned result to stdout; diagnostics go to stderr.
+`setup --dry-run` previews selected settings without launching a backend or writing files. A connection with no working directory stays in that preview: interactive setup asks for one, and `--cwd <dir>` sets it for every selected connection that does not already declare one. mcp-gate does not guess a directory. For a global `npx` or `uvx` server that does not read or write project-relative files, passing `--cwd "$HOME"` is an explicit choice; it is not the default. `--client`, `--server`, and `--project` narrow the selection. `--project` matters when Claude Code has a project-scoped server. `--yes` requires both an explicit client and server, except `remove --all`. `--diff` shows the command, arguments, working directory and gateway URL, and hides environment values, headers and anything secret-like. `--json` is global: it works before or after the subcommand and writes one versioned document to stdout. Diagnostics go to stderr.
 
-`status --details` explains sources. `status --probe` requests backend initialization only when the gateway can safely enter maintenance and has no existing backend; busy gateways are deferred. A connection kind of `external` means the client already uses a gateway this installation did not set up, so `setup` and `remove` do not own it. A healthy gateway alone does not prove that a running application has switched to it.
+`status --details` explains sources. A direct connection is reported as `health not checked` until a gateway exists. `status --probe` requests backend initialization only when the gateway can safely enter maintenance and has no existing backend; busy gateways are deferred. An explicit `--server` or `--client` that matches nothing is an error. A connection kind of `external` means the client already uses a gateway this installation did not set up, so `setup` and `remove` do not own it. A healthy gateway alone does not prove that a running application has switched to it. That note is shown only when this installation manages a connection.
 
-Each affected application needs one restart after `setup`. Claude local scope can override a selected project through personal settings; other project entries without a verified local override are skipped, as are commands with unresolved working directories or environment expansion.
+New gateways use a readable service label, `local.mcp-gate.<name>`. If that label is already taken, the next free `local.mcp-gate.<name>-2`, `-3`, … is used. The preview prints the label before anything is registered. Installations created by 0.1.0 keep their `local.mcp-gate.<uuid>` labels; status, setup and remove still manage them, and setup does not rename them. The same command, arguments, environment and working directory in more than one client share one gateway. Session mode still starts a separate backend for each MCP connection. Shared mode still uses one backend. A session-mode server is not attached to a shared-mode gateway.
+
+Each affected application needs one restart after `setup`. Claude local scope can override a selected project through personal settings; other project entries without a verified local override are skipped, as are commands whose environment still cannot be expanded. A personal command with no working directory is connected only after an explicit directory is chosen.
 
 <details>
 <summary>Non-interactive / agent use</summary>
@@ -178,6 +179,9 @@ Yes. mcp-gate does not analyze or copy arbitrary dependency trees. Reviewed reci
 
 **Can I script this from an agent?**
 Yes — with `--json`, `--dry-run`, and explicit `--yes` only after the user has chosen the targets. See [docs/agents.md](docs/agents.md).
+
+**Can another agent on this machine call a gateway?**
+Each configured server has its own loopback Streamable HTTP endpoint and its own bearer token. Another agent on the same machine can call that endpoint. The token authorizes that gateway only.
 
 ## Development
 

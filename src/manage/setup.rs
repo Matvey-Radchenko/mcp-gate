@@ -14,7 +14,7 @@ pub async fn run(mut options: Selection) -> Result<()> {
         !options.all,
         "setup does not accept --all. Select connections in the wizard or use explicit --client and --server."
     );
-    super::explicit(&options)?;
+    super::explicit(&options, false)?;
     let root = store::root()?;
     // Reading the format precedes all writes, including binary copies.
     let registry = store::load(&root)?;
@@ -76,6 +76,36 @@ pub async fn run(mut options: Selection) -> Result<()> {
     }
     Ok(())
 }
+/// The readable label is per user, not per state directory. A parallel setup can
+/// claim it after the preview, so registration walks the numeric suffix until
+/// launchd or Task Scheduler accepts the name.
+fn register_free_label(mut record: store::Record) -> Result<store::Record> {
+    let name = record
+        .bindings
+        .first()
+        .map(|binding| binding.name.clone())
+        .unwrap_or_else(|| "server".into());
+    let home = store::home()?;
+    for _ in 0..32 {
+        match service::register(&record) {
+            Ok(()) => return Ok(record),
+            Err(error) if service::label_in_use(&error) => {
+                let mut reserved = super::labels::taken(
+                    &store::Registry {
+                        format_version: 1,
+                        gateways: vec![record.clone()],
+                    },
+                    &home,
+                );
+                reserved.insert(record.label.clone());
+                record.label = super::labels::allocate(&name, &reserved);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    anyhow::bail!("Could not register a free service label")
+}
+
 async fn install(
     root: &Path,
     registry: &mut Registry,
@@ -115,11 +145,14 @@ async fn install(
                     .context("Matching shared gateway is unavailable")?;
                 record
             } else {
-                let record = runtime::prepare(root, &candidate).await?;
+                let mut record = runtime::prepare(root, &candidate).await?;
                 journal.services.push(record.clone());
                 journal.save(&path)?;
                 super::checkpoint("prepared")?;
-                service::register(&record)?;
+                record = register_free_label(record)?;
+                journal.services.pop();
+                journal.services.push(record.clone());
+                journal.save(&path)?;
                 super::checkpoint("registered")?;
                 runtime::ready(&record).await?;
                 super::checkpoint("ready")?;

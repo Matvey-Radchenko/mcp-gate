@@ -9,14 +9,19 @@ use std::{fs::OpenOptions, path::PathBuf};
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
+    /// Write one JSON document to stdout. Accepted before or after the subcommand.
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
-    command: Action,
+    command: Option<Action>,
 }
 #[derive(Subcommand)]
 enum Action {
     /// Connect installed MCP servers through local gateways.
     Setup(manage::Selection),
     /// Restore selected direct MCP connections; keep packages and data.
+    ///
+    /// `--yes` requires both `--client` and `--server`. `remove --all --yes` restores every managed connection.
     Remove {
         #[command(flatten)]
         options: manage::Selection,
@@ -27,14 +32,16 @@ enum Action {
         name: Option<String>,
     },
     /// Record an existing local.mcp-gate LaunchAgent in this installation.
+    ///
+    /// The name is the label suffix in `local.mcp-gate.<name>`, including older uuid labels.
     Adopt {
         /// Gateway name from the LaunchAgent label local.mcp-gate.<name>.
         name: String,
         /// Show the ownership change without writing the registry.
         #[arg(long)]
         dry_run: bool,
-        /// Emit one JSON document on stdout.
-        #[arg(long)]
+        /// Set from the global --json flag.
+        #[arg(skip)]
         json: bool,
     },
     /// Stage a separate configured release. Does not load launchd or change any client.
@@ -95,8 +102,8 @@ enum Action {
     Check {
         #[arg(long)]
         config: PathBuf,
-        /// Emit one JSON document on stdout.
-        #[arg(long)]
+        /// Set from the global --json flag.
+        #[arg(skip)]
         json: bool,
     },
     /// Create a private random local client token. Never overwrites an existing file.
@@ -108,8 +115,8 @@ enum Action {
 }
 #[tokio::main(worker_threads = 2)]
 async fn main() -> std::process::ExitCode {
-    let action = match Cli::try_parse() {
-        Ok(cli) => cli.command,
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
         Err(error) => {
             if error.use_stderr() && std::env::args().any(|arg| arg == "--json") {
                 println!("{}", json_parse_error(&error));
@@ -118,6 +125,11 @@ async fn main() -> std::process::ExitCode {
             error.exit();
         }
     };
+    let Some(mut action) = cli.command else {
+        print_start(cli.json);
+        return std::process::ExitCode::SUCCESS;
+    };
+    apply_json(&mut action, cli.json);
     let management = matches!(
         action,
         Action::Setup(_) | Action::Remove { .. } | Action::Adopt { .. } | Action::Status(_)
@@ -293,6 +305,40 @@ async fn serve(config: PathBuf) -> Result<()> {
     }
     drop(lock);
     Ok(())
+}
+
+fn apply_json(action: &mut Action, json: bool) {
+    match action {
+        Action::Setup(options) | Action::Remove { options, .. } => options.json = json,
+        Action::Status(options) => options.json = json,
+        Action::Adopt { json: slot, .. } | Action::Check { json: slot, .. } => *slot = json,
+        _ => {}
+    }
+}
+
+fn print_start(json: bool) {
+    const MESSAGE: &str = "\
+mcp-gate connects installed MCP servers through local gateways.
+
+Start here:
+  mcp-gate setup              Choose connections and register gateways
+  mcp-gate setup --dry-run    Preview the plan without changing anything
+  mcp-gate status             Show connections and gateways
+
+Run mcp-gate <command> --help for every flag.";
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "format_version": 1,
+                "phase": "help",
+                "message": MESSAGE,
+                "commands": ["setup", "status", "remove", "adopt"]
+            })
+        );
+    } else {
+        println!("{MESSAGE}");
+    }
 }
 
 fn json_parse_error(error: &clap::error::Error) -> String {

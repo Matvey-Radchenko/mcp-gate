@@ -10,7 +10,7 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 pub async fn run(options: Selection) -> Result<()> {
     if !options.all {
-        super::explicit(&options)?;
+        super::explicit(&options, true)?;
     }
     let root = store::root()?;
     let registry = store::load(&root)?;
