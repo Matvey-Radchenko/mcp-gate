@@ -26,6 +26,23 @@ export function verifyPublished(bytes, metadata, name, version) {
     'Published version has different bytes; refusing to continue this release');
 }
 
+// npm can take a few minutes to process a new version before the registry
+// serves it, so poll the dist-tag instead of reading it once.
+async function waitForLatest(name, version, { attempts = 40, delayMs = 15_000 } = {}) {
+  let latest;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const tags = await fetch(`https://registry.npmjs.org/-/package/${registryName(name)}/dist-tags`, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    assert(tags.ok, `Cannot inspect dist-tags for ${name}`);
+    latest = (await tags.json()).latest;
+    if (latest === version) return;
+    console.log(`Waiting for npm to serve ${name}@${version} as latest (now ${latest}); attempt ${attempt}/${attempts}`);
+    await new Promise(done => setTimeout(done, delayMs));
+  }
+  assert.equal(latest, version, `${name} latest differs; owner action required`);
+}
+
 async function publish(root, version) {
   assert.match(version, /^\d+\.\d+\.\d+$/);
   const npm = process.env.npm_execpath;
@@ -54,11 +71,7 @@ async function publish(root, version) {
       verifyPublished(bytes, await response.json(), name, version);
       console.log(`Verified identical published archive: ${name}@${version}`);
     }
-    const tags = await fetch(`https://registry.npmjs.org/-/package/${registryName(name)}/dist-tags`, {
-      signal: AbortSignal.timeout(30_000),
-    });
-    assert(tags.ok, `Cannot inspect dist-tags for ${name}`);
-    assert.equal((await tags.json()).latest, version, `${name} latest differs; owner action required`);
+    await waitForLatest(name, version);
   }
 }
 
