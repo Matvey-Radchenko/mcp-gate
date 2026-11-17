@@ -2,7 +2,7 @@
 'use strict';
 const { spawn } = require('node:child_process');
 const { readFileSync } = require('node:fs');
-const { join } = require('node:path');
+const { join, toNamespacedPath } = require('node:path');
 
 const supported = ['darwin-arm64', 'darwin-x64', 'win32-x64'];
 
@@ -34,7 +34,8 @@ function main() {
     console.error('The native mcp-gate package is missing. Reinstall with optional dependencies enabled, or download the matching GitHub Release binary.');
     process.exit(1);
   }
-  const child = spawn(binary, process.argv.slice(2), { stdio: 'inherit', windowsHide: true });
+  // pnpm caches can exceed MAX_PATH; Windows needs an extended-length executable path
+  const child = spawn(toNamespacedPath(binary), process.argv.slice(2), { stdio: 'inherit', windowsHide: true });
   child.once('error', () => {
     console.error('Cannot start the native mcp-gate binary. Check the installation and file permissions.');
     process.exitCode = 1;
