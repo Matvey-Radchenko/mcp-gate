@@ -91,41 +91,51 @@ fn screenshots(c: &Config, name: &str) -> BTreeSet<PathBuf> {
         .collect()
 }
 
-#[tokio::test]
-#[ignore = "Requires PLAYWRIGHT_ENTRYPOINT/DEVTOOLS_NODE or an empty STAGED_PLAYWRIGHT_CONFIG, CODEX_BINARY and installed Chrome"]
-async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
-    let mut owned = None;
-    let path = if let Ok(path) = std::env::var("STAGED_PLAYWRIGHT_CONFIG") {
-        PathBuf::from(path)
-    } else {
-        let mut h = support::Harness::generic("session", 4, 60, 30).await;
-        let mut backend = Config::load(&h.config).unwrap().backend;
-        backend.command = std::env::var("DEVTOOLS_NODE").unwrap().into();
-        backend.entrypoint = Some(std::env::var("PLAYWRIGHT_ENTRYPOINT").unwrap().into());
-        backend.version = "1.63.0-alpha-2026-08-31".into();
-        backend.args = vec![
-            "--isolated".into(),
+async fn playwright_harness() -> support::Harness {
+    let mut h = support::Harness::generic("session", 4, 60, 30).await;
+    let mut backend = Config::load(&h.config).unwrap().backend;
+    backend.command = std::env::var("DEVTOOLS_NODE").unwrap().into();
+    backend.entrypoint = Some(std::env::var("PLAYWRIGHT_ENTRYPOINT").unwrap().into());
+    backend.version = "1.63.0-alpha-2026-08-31".into();
+    backend.args = vec!["--isolated".into(), "--headless".into()];
+    if let Some(browser) = support::browser_executable() {
+        backend.args.extend([
             "--browser".into(),
-            "chrome".into(),
-            "--headless".into(),
-        ];
-        if cfg!(windows) {
-            // Native hosted Windows runners can exceed Playwright's 5-second
-            // screenshot default. This explicit fixture option stays below the
-            // gateway call deadline; setup never changes a user's timeout.
-            backend
-                .args
-                .extend(["--timeout-action".into(), "30000".into()]);
-        }
-        backend.working_directory = Some(h.config.parent().unwrap().to_path_buf());
-        backend.directory_env = vec!["PLAYWRIGHT_MCP_OUTPUT_DIR".into()];
-        backend.working_directory_env = Some("PLAYWRIGHT_MCP_OUTPUT_DIR".into());
-        h.replace_backend(backend).await;
-        let path = h.config.clone();
-        owned = Some(h);
-        path
+            "chromium".into(),
+            "--executable-path".into(),
+            browser,
+        ]);
+    } else {
+        backend.args.extend(["--browser".into(), "chrome".into()]);
+    }
+    if cfg!(windows) {
+        // Native hosted Windows runners can exceed Playwright's 5-second
+        // screenshot default. This explicit fixture option stays below the
+        // gateway call deadline; setup never changes a user's timeout.
+        backend
+            .args
+            .extend(["--timeout-action".into(), "30000".into()]);
+    }
+    backend.working_directory = Some(h.config.parent().unwrap().to_path_buf());
+    backend.directory_env = vec!["PLAYWRIGHT_MCP_OUTPUT_DIR".into()];
+    backend.working_directory_env = Some("PLAYWRIGHT_MCP_OUTPUT_DIR".into());
+    h.replace_backend(backend).await;
+    h
+}
+
+#[tokio::test]
+#[ignore = "Requires CODEX_BINARY and an empty STAGED_PLAYWRIGHT_CONFIG or a local Playwright fixture with Chrome or MCP_GATE_TEST_BROWSER"]
+async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
+    let staged = std::env::var_os("STAGED_PLAYWRIGHT_CONFIG").map(PathBuf::from);
+    let mut owned = if staged.is_none() {
+        Some(playwright_harness().await)
+    } else {
+        None
     };
-    let c = Config::load(&path).unwrap();
+    let path = staged
+        .as_deref()
+        .unwrap_or_else(|| &owned.as_ref().unwrap().config);
+    let c = Config::load(path).unwrap();
     assert!(c.ownership == Ownership::Session);
     assert_eq!(
         health(&c).await["sessions"],
@@ -135,12 +145,12 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     assert_eq!(health(&c).await["workers"], 0);
     let gateway_pid = health(&c).await["pid"].as_u64().unwrap() as u32;
     assert!(descendants(gateway_pid).is_empty());
-    let mut a = NativeCodex::for_config(&path).await;
+    let mut a = NativeCodex::for_config(path).await;
     assert_eq!(a.discover().await, 24);
-    let aid = discovery_sessions(&path, 1).await.pop_first().unwrap();
-    let mut b = NativeCodex::for_config(&path).await;
+    let aid = discovery_sessions(path, 1).await.pop_first().unwrap();
+    let mut b = NativeCodex::for_config(path).await;
     assert_eq!(b.discover().await, 24);
-    let both_ids = discovery_sessions(&path, 2).await;
+    let both_ids = discovery_sessions(path, 2).await;
     assert!(both_ids.contains(&aid), "First client session changed");
     let bid = both_ids.into_iter().find(|id| *id != aid).unwrap();
     assert_eq!(health(&c).await["workers"], 0, "Discovery must stay lazy");

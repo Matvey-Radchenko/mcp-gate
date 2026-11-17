@@ -1,37 +1,32 @@
 #!/usr/bin/env node
 'use strict';
 const { spawn } = require('node:child_process');
-const { readFileSync } = require('node:fs');
-const { join, toNamespacedPath } = require('node:path');
+const { toNamespacedPath } = require('node:path');
 
-const supported = ['darwin-arm64', 'darwin-x64', 'win32-x64'];
+const packagePrefix = '@matvei-radchenko/mcp-gate-bin-';
 
-function packageVersion() {
-  const { version } = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+function main() {
+  const { version, optionalDependencies = {} } = require('../package.json');
   if (typeof version !== 'string' || version === '') {
     console.error('mcp-gate package.json is missing a version.');
     process.exit(1);
   }
-  return version;
-}
-
-function unsupportedMessage(version, target) {
-  return `mcp-gate ${version} does not support ${target}. Use macOS ARM64/Intel or Windows x64.`;
-}
-
-function main() {
-  const version = packageVersion();
   const target = `${process.platform}-${process.arch}`;
-  if (!supported.includes(target)) {
-    console.error(unsupportedMessage(version, target));
+  const nativePackage = `${packagePrefix}${target}`;
+  if (!Object.hasOwn(optionalDependencies, nativePackage)) {
+    const supported = Object.keys(optionalDependencies)
+      .filter(name => name.startsWith(packagePrefix))
+      .map(name => name.slice(packagePrefix.length));
+    console.error(`mcp-gate ${version} does not support ${target}. Supported targets: ${supported.join(', ')}. Linux requires glibc (2.35+).`);
     process.exit(1);
   }
   let binary;
   try {
     const suffix = process.platform === 'win32' ? '.exe' : '';
-    binary = require.resolve(`@matvei-radchenko/mcp-gate-bin-${target}/bin/mcp-gate${suffix}`);
+    binary = require.resolve(`${nativePackage}/bin/mcp-gate${suffix}`);
   } catch {
-    console.error('The native mcp-gate package is missing. Reinstall with optional dependencies enabled, or download the matching GitHub Release binary.');
+    const linux = process.platform === 'linux' ? ' Linux requires glibc (2.35+).' : '';
+    console.error(`The native mcp-gate package is missing for ${target}.${linux} Reinstall with optional dependencies enabled, or download the matching GitHub Release binary.`);
     process.exit(1);
   }
   // pnpm caches can exceed MAX_PATH; Windows needs an extended-length executable path
@@ -49,5 +44,3 @@ function main() {
 }
 
 if (require.main === module) main();
-
-module.exports = { packageVersion, unsupportedMessage };

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -16,7 +16,7 @@ for (const longPath of [false, true]) {
     const binary = join(root, 'node_modules', '@matvei-radchenko', 'mcp-gate-bin-win32-x64', 'bin', 'mcp-gate.exe');
     mkdirSync(join(root, 'bin'), { recursive: true });
     mkdirSync(join(binary, '..'), { recursive: true });
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ version: '0.1.1' }));
+    copyFileSync(new URL('../npm/mcp-gate/package.json', import.meta.url), join(root, 'package.json'));
     copyFileSync(new URL('../npm/mcp-gate/bin/mcp-gate.cjs', import.meta.url), launcher);
     // Node is a real native executable, so this checks CreateProcess rather than a mocked spawn
     copyFileSync(process.execPath, binary);

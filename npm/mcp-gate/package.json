@@ -38,11 +38,14 @@
   },
   "os": [
     "darwin",
-    "win32"
+    "win32",
+    "linux"
   ],
   "optionalDependencies": {
     "@matvei-radchenko/mcp-gate-bin-darwin-arm64": "0.1.1",
     "@matvei-radchenko/mcp-gate-bin-darwin-x64": "0.1.1",
-    "@matvei-radchenko/mcp-gate-bin-win32-x64": "0.1.1"
+    "@matvei-radchenko/mcp-gate-bin-win32-x64": "0.1.1",
+    "@matvei-radchenko/mcp-gate-bin-linux-x64": "0.1.1",
+    "@matvei-radchenko/mcp-gate-bin-linux-arm64": "0.1.1"
   }
 }

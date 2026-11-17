@@ -118,7 +118,7 @@ async fn browser_isolation(c: &mut NativeCodex, a: &str, b: &str, url: &str) {
 }
 
 #[tokio::test]
-#[ignore = "Requires CODEX_BINARY, DEVTOOLS_NODE and Chrome; only isolated browsers/local pages"]
+#[ignore = "Requires CODEX_BINARY, DEVTOOLS_NODE and Chrome or MCP_GATE_TEST_BROWSER; only isolated browsers/local pages"]
 async fn two_threads_real_browsers_and_lifecycle() {
     let staged = std::env::var_os("STAGED_CHROME_CONFIG").map(PathBuf::from);
     let mut harness = if staged.is_none() {
