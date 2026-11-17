@@ -17,6 +17,8 @@ fn command() -> Command {
 }
 
 pub(in crate::manage) fn available() -> Result<()> {
+    crate::manage::trace::log("systemctl: probe start (show Version, 2s bound)");
+    let started = Instant::now();
     let mut child = command()
         .args(["show", "--property=Version", "--value"])
         .stdout(Stdio::piped())
@@ -37,6 +39,10 @@ pub(in crate::manage) fn available() -> Result<()> {
                 child.wait().context("Could not reap the systemctl probe")?;
                 killed.context("Could not stop the systemctl probe")?;
                 result.context("Could not wait for the systemctl probe")?;
+                crate::manage::trace::log(&format!(
+                    "systemctl: probe timed out after {}ms",
+                    started.elapsed().as_millis()
+                ));
                 bail!("systemd --user manager probe timed out");
             }
         }
@@ -44,6 +50,11 @@ pub(in crate::manage) fn available() -> Result<()> {
     let output = child
         .wait_with_output()
         .context("Cannot read systemctl response")?;
+    crate::manage::trace::log(&format!(
+        "systemctl: probe done exit={} duration_ms={}",
+        output.status,
+        started.elapsed().as_millis()
+    ));
     ensure!(
         output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
         "Cannot reach the systemd --user manager"
@@ -72,10 +83,21 @@ pub(super) fn enable(unit: &str) -> Result<()> {
 }
 
 fn invoke(args: &[&str]) -> Result<Output> {
-    command()
-        .args(args)
-        .output()
-        .context("Cannot run systemctl")
+    let label = format!("systemctl --user {}", args.join(" "));
+    crate::manage::trace::log(&format!("{label}: start"));
+    let started = Instant::now();
+    let result = command().args(args).output();
+    let duration_ms = started.elapsed().as_millis();
+    match &result {
+        Ok(output) => crate::manage::trace::log(&format!(
+            "{label}: exit={} duration_ms={duration_ms}",
+            output.status
+        )),
+        Err(error) => {
+            crate::manage::trace::log(&format!("{label}: error={error} duration_ms={duration_ms}"))
+        }
+    }
+    result.context("Cannot run systemctl")
 }
 
 fn check(action: &str, output: &Output) -> Result<()> {
@@ -129,10 +151,12 @@ pub(super) fn show(unit: &str, properties: &str) -> Result<Properties> {
 }
 
 pub(super) fn units() -> Result<BTreeSet<String>> {
+    crate::manage::trace::log("systemctl: units start");
     available()?;
     let pattern = "local.mcp-gate.*.service";
     let files = run(&["list-unit-files", "--no-legend", "--full", pattern])?;
     let loaded = run(&["list-units", "--all", "--no-legend", "--full", pattern])?;
+    crate::manage::trace::log("systemctl: units listed");
     Ok(files
         .lines()
         .chain(loaded.lines())

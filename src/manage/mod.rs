@@ -17,6 +17,7 @@ pub mod service;
 mod setup;
 mod status;
 pub mod store;
+pub(crate) mod trace;
 mod ui;
 mod upgrade;
 mod wizard;

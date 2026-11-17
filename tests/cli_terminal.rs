@@ -136,11 +136,44 @@ impl Terminal {
             .as_ref()
             .and_then(|path| fs::read_to_string(path).ok())
             .unwrap_or_default();
+        let setup = self
+            .debug_log
+            .as_ref()
+            .and_then(|path| fs::read_to_string(path.with_file_name("setup-debug.log")).ok())
+            .unwrap_or_default();
         format!(
-            "{}; last_at_send={}; MCP_GATE_DEBUG_TTY:\n{debug}",
+            "{}; last_at_send={}; MCP_GATE_DEBUG_TTY:\n{debug}\nMCP_GATE_DEBUG_SETUP:\n{setup}\n{}",
             self.termios_snapshot(),
-            self.last_termios
+            self.last_termios,
+            self.child_diagnostics()
         )
+    }
+    fn child_diagnostics(&self) -> String {
+        let pid = self.child.id();
+        let mut report = format!("child pid={pid}\n");
+        #[cfg(target_os = "linux")]
+        {
+            report.push_str(&linux_process_tree(pid, 0));
+            if let Ok(output) = Command::new("ps")
+                .args([
+                    "-o",
+                    "pid,ppid,pgid,stat,wchan:32,etime,args",
+                    "--forest",
+                    "--ppid",
+                    &pid.to_string(),
+                    "-p",
+                    &pid.to_string(),
+                ])
+                .output()
+            {
+                report.push_str("ps:\n");
+                report.push_str(&String::from_utf8_lossy(&output.stdout));
+                if !output.stderr.is_empty() {
+                    report.push_str(&String::from_utf8_lossy(&output.stderr));
+                }
+            }
+        }
+        report
     }
     fn write_master(&mut self, text: &str) {
         self.master.write_all(text.as_bytes()).unwrap();
@@ -239,6 +272,71 @@ impl Drop for Terminal {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_process_tree(pid: u32, depth: usize) -> String {
+    use std::collections::BTreeSet;
+    let prefix = "  ".repeat(depth);
+    let base = format!("/proc/{pid}");
+    let cmdline = fs::read(format!("{base}/cmdline"))
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).replace('\0', " "))
+        .unwrap_or_else(|| "<unavailable>".into());
+    let wchan = fs::read_to_string(format!("{base}/wchan"))
+        .unwrap_or_else(|_| "<unavailable>".into())
+        .trim()
+        .to_owned();
+    let state = fs::read_to_string(format!("{base}/status"))
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find(|line| line.starts_with("State:"))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "State: <unavailable>".into());
+    let mut report = format!("{prefix}pid={pid} {state} wchan={wchan} cmdline={cmdline}\n");
+    if let Ok(tasks) = fs::read_dir(format!("{base}/task")) {
+        for task in tasks.flatten() {
+            let tid = task.file_name();
+            match fs::read_to_string(task.path().join("stack")) {
+                Ok(stack) if !stack.trim().is_empty() => {
+                    report.push_str(&format!(
+                        "{prefix}  task {} stack:\n",
+                        tid.to_string_lossy()
+                    ));
+                    for line in stack.lines() {
+                        report.push_str(&format!("{prefix}    {line}\n"));
+                    }
+                }
+                Ok(_) => report.push_str(&format!(
+                    "{prefix}  task {} stack: <empty>\n",
+                    tid.to_string_lossy()
+                )),
+                Err(error) => report.push_str(&format!(
+                    "{prefix}  task {} stack: {error}\n",
+                    tid.to_string_lossy()
+                )),
+            }
+        }
+    }
+    let mut children = BTreeSet::new();
+    if let Ok(tasks) = fs::read_dir(format!("{base}/task")) {
+        for task in tasks.flatten() {
+            if let Ok(text) = fs::read_to_string(task.path().join("children")) {
+                for child in text.split_whitespace() {
+                    if let Ok(child) = child.parse::<u32>() {
+                        children.insert(child);
+                    }
+                }
+            }
+        }
+    }
+    for child in children {
+        report.push_str(&linux_process_tree(child, depth + 1));
+    }
+    report
+}
+
 fn fixture(fixed: bool) -> (tempfile::TempDir, Vec<u8>) {
     let dir = tempfile::tempdir().unwrap();
     for path in [".codex", "claude", ".config/opencode"] {
@@ -267,6 +365,7 @@ fn command(root: &std::path::Path, action: &str) -> Command {
         .env("XDG_DATA_HOME", root.join(".local/share"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
         .env("MCP_GATE_DEBUG_TTY", root.join("tty-debug.log"))
+        .env("MCP_GATE_DEBUG_SETUP", root.join("setup-debug.log"))
         .env_remove("DBUS_SESSION_BUS_ADDRESS")
         .env_remove("OPENCODE_CONFIG");
     command

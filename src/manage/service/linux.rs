@@ -301,8 +301,10 @@ pub(in crate::manage) fn resume_registered(record: &Record) -> Result<bool> {
 }
 
 pub(in crate::manage) fn definitions() -> Result<Vec<(String, Identity, ServiceState)>> {
+    crate::manage::trace::log("linux::definitions: units start");
     let mut definitions = Vec::new();
     for unit in manager::units()? {
+        crate::manage::trace::log(&format!("linux::definitions: query {unit}"));
         let current = Unit::query(&unit)?;
         if let Some(identity) = current.identity()
             && let Some(label) = label(&unit)
