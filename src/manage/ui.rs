@@ -235,8 +235,10 @@ fn set_echo(on: bool) -> Option<bool> {
         ));
         return None;
     }
+    // SAFETY: the termios value is zeroed and then fully overwritten by tcgetattr
+    // before any field is read.
     let mut after = unsafe { std::mem::zeroed::<libc::termios>() };
-    // SAFETY: after is a local termios written by tcgetattr before it is read.
+    // SAFETY: the pointer refers to the local termios above, valid for this call.
     if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut after) } == 0 {
         debug_tty(&format!("set_echo({on}): after  {}", tty_flags(&after)));
     }

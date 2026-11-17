@@ -102,7 +102,10 @@ impl Terminal {
         }
     }
     fn describe_termios(fd: i32, label: &str) -> String {
+        // SAFETY: the termios value is zeroed and then fully overwritten by tcgetattr
+        // before any field is read.
         let mut termios = unsafe { std::mem::zeroed() };
+        // SAFETY: the pointer refers to the local termios above, valid for this call.
         let rc = unsafe { libc::tcgetattr(fd, &mut termios) };
         if rc != 0 {
             return format!(
