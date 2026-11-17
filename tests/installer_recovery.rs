@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::fs;
 
 #[test]
-#[ignore = "Registers isolated temporary user services; requires a logged-in macOS/Windows user session"]
+#[ignore = "Registers isolated temporary user services; requires a logged-in user service manager"]
 fn failures_restore_owned_changes_and_allow_retry() {
     let fixture = Installation::new();
     for stage in [
@@ -71,7 +71,7 @@ fn failures_restore_owned_changes_and_allow_retry() {
 }
 
 #[test]
-#[ignore = "Registers isolated temporary user services; requires a logged-in macOS/Windows user session"]
+#[ignore = "Registers isolated temporary user services; requires a logged-in user service manager"]
 fn unavailable_previous_backend_does_not_trap_future_setup() {
     let fixture = Installation::new();
     fixture.run("setup");
@@ -98,7 +98,7 @@ fn unavailable_previous_backend_does_not_trap_future_setup() {
 }
 
 #[test]
-#[ignore = "Registers an isolated temporary user service; requires a logged-in macOS/Windows user session"]
+#[ignore = "Registers an isolated temporary user service; requires a logged-in user service manager"]
 fn removing_one_client_keeps_other_connection_and_service() {
     let fixture = Installation::new();
     fixture.run("setup");

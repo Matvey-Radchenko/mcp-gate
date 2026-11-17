@@ -12,14 +12,25 @@ use std::{fs, path::Path};
 
 fn run(fixture: &Installation, binary: &Path, action: &str) -> Value {
     let home = fixture.settings.parent().unwrap();
-    let output = fixture
-        .command_with(binary, action)
+    let mut command = fixture.command_with(binary, action);
+    command
         .env_remove("MCP_GATE_TEST_ROOT")
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env("LOCALAPPDATA", home.join("AppData/Local"))
-        .output()
-        .unwrap();
+        .env("LOCALAPPDATA", home.join("AppData/Local"));
+    #[cfg(target_os = "linux")]
+    {
+        // The user manager has its original unit search path. Override data and
+        // client home in this subprocess while keeping units visible to it.
+        let manager_config = std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| store::home().unwrap().join(".config"));
+        command
+            .env("XDG_CONFIG_HOME", manager_config)
+            .env("XDG_DATA_HOME", home.join(".local/share"));
+    }
+    let output = command.output().unwrap();
     Installation::check(&output);
     assert!(
         output.status.success(),
@@ -47,10 +58,17 @@ async fn separately_versioned_releases_update_and_downgrade_without_replay() {
     let previous = Path::new(&previous);
     let version = env!("CARGO_PKG_VERSION");
     let older = format!("{version}-compat-fixture");
+    // Production binaries ignore the test-only label scope. Give the Linux
+    // fixture a unique server name even when running the two release builds.
+    #[cfg(target_os = "linux")]
+    let mut fixture = Installation::with_server(format!("fixture-{}", uuid::Uuid::new_v4()));
+    #[cfg(not(target_os = "linux"))]
     let mut fixture = Installation::new();
     let home = fixture.settings.parent().unwrap();
     fixture.root = home.join(if cfg!(windows) {
         "AppData/Local/mcp-gate"
+    } else if cfg!(target_os = "linux") {
+        ".local/share/mcp-gate"
     } else {
         "Library/Application Support/mcp-gate"
     });

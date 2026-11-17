@@ -25,6 +25,11 @@ pub async fn run(options: Status) -> Result<()> {
         None
     };
     let operations = super::recovery::diagnostics(&root).await?;
+    let discovery = super::agents::discover(&store::home()?, &registry).await;
+    let (services, manager_issue) = match discovery {
+        Ok(services) => (services, None),
+        Err(error) => (vec![], Some(format!("Cannot query user services: {error}"))),
+    };
     let mut results = Vec::new();
     let selection = super::Selection {
         client: options.client.clone(),
@@ -83,19 +88,56 @@ pub async fn run(options: Status) -> Result<()> {
         if health.is_none() {
             issues.push("Gateway is not reachable".into());
         }
-        if !service::installed(record).unwrap_or(false) {
-            issues.push("Autostart service is missing".into());
-        }
-        results.push(json!({"id":record.id,"clients":record.bindings.iter().map(|b|json!({"client":b.client,"name":b.name})).collect::<Vec<_>>(),
-            "health":health,"issues":issues,"verification":"Reachability does not prove a restarted application has called a tool"}));
+        let mut summary = json!({"id":record.id,
+            "clients":record.bindings.iter().map(|b|json!({"client":b.client,"name":b.name})).collect::<Vec<_>>(),
+            "health":health,"verification":"Reachability does not prove a restarted application has called a tool"});
+        describe_service(record, &mut summary, &mut issues);
+        summary["issues"] = json!(issues);
+        results.push(summary);
     }
-    let services = super::agents::discover(&store::home()?, &registry).await;
     display(
-        &options, &selection, &registry, results, operations, services,
+        &options,
+        &selection,
+        &registry,
+        results,
+        operations,
+        services,
+        manager_issue,
     )
     .await?;
 
     Ok(())
+}
+
+fn describe_service(
+    record: &store::Record,
+    summary: &mut serde_json::Value,
+    issues: &mut Vec<String>,
+) {
+    #[cfg(target_os = "linux")]
+    match service::linux::state(record) {
+        Ok(state) => {
+            if !state.registered {
+                issues.push(
+                    "Autostart service is missing or no longer matches its definition".into(),
+                );
+            }
+            summary["service"] = json!(state);
+        }
+        Err(error) => {
+            summary["service"] = json!({"registered":null,"enabled":null,"active":null});
+            issues.push(format!(
+                "Cannot query systemd --user service state: {error}"
+            ));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = summary;
+        if !service::installed(record).unwrap_or(false) {
+            issues.push("Autostart service is missing".into());
+        }
+    }
 }
 
 async fn display(
@@ -105,6 +147,7 @@ async fn display(
     results: Vec<serde_json::Value>,
     operations: Vec<serde_json::Value>,
     services: Vec<super::agents::Service>,
+    manager_issue: Option<String>,
 ) -> Result<()> {
     let mut inventory = super::inventory::read(selection, registry, true).await?;
     for connection in &mut inventory.connections {
@@ -141,12 +184,16 @@ async fn display(
     if options.json {
         println!(
             "{}",
-            json!({"format_version":1,"gateways":results,"services":services,"operations":operations,
+            json!({"format_version":1,"gateways":results,"services":services,"operations":operations,"service_manager_issue":manager_issue,
             "connections":inventory.connections,"source_issues":inventory.issues,
             "verification":"Gateway health does not confirm a particular application has switched."})
         );
     } else {
-        super::agents::explain(&services);
+        if let Some(issue) = manager_issue {
+            println!("{issue}");
+        } else {
+            super::agents::explain(&services);
+        }
         println!("\nMCP connections on this computer");
         super::inventory::overview(&inventory, options.details);
         let managed = inventory

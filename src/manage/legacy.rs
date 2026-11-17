@@ -142,7 +142,27 @@ pub fn config_argument(plist: &Value) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn configurations(_home: &Path) -> Vec<PathBuf> {
+    let Ok(services) = super::service::linux::definitions() else {
+        // Legacy discovery is optional when the user manager cannot be queried.
+        return vec![];
+    };
+    services
+        .into_iter()
+        .filter_map(|(_, identity, _)| {
+            matches!(
+                identity.binary.file_name()?.to_str()?,
+                "mcp-session-gateway" | "mcp-gate"
+            )
+            .then_some(identity.config)
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn configurations(_home: &Path) -> Vec<PathBuf> {
     vec![]
 }

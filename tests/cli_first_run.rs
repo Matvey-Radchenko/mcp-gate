@@ -24,6 +24,9 @@ impl Fixture {
             .env("CODEX_HOME", root.join(".codex"))
             .env("CLAUDE_CONFIG_DIR", root.join("claude"))
             .env("XDG_CONFIG_HOME", root.join(".config"))
+            .env("XDG_DATA_HOME", root.join(".local/share"))
+            .env("XDG_RUNTIME_DIR", root.join("runtime"))
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
             .env_remove("OPENCODE_CONFIG");
         command
     }

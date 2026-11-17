@@ -1,4 +1,4 @@
-//! Adoption records an existing LaunchAgent. It does not rewrite the gateway or its clients.
+//! Adoption records the identity of an existing per-user gateway service.
 use super::{agents, store};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::json;
@@ -11,12 +11,15 @@ pub async fn run(name: String, dry_run: bool, json: bool) -> Result<()> {
     let home = store::home()?;
     let root = store::root()?;
     let registry = store::load(&root)?;
+    let missing =
+        || format!("No local.mcp-gate.{name} user service with a readable definition was found");
     let service = agents::discover(&home, &registry)
         .await
+        .with_context(missing)?
         .into_iter()
         .find(|service| service.name == name);
     let Some(service) = service else {
-        bail!("No LaunchAgent local.mcp-gate.{name} with a readable definition was found");
+        bail!("{}", missing());
     };
     ensure!(
         service.state != "config unreadable",
@@ -30,6 +33,11 @@ pub async fn run(name: String, dry_run: bool, json: bool) -> Result<()> {
     {
         ensure!(
             existing.config() == service.config,
+            "Gateway name {name} is already used by a different installation"
+        );
+        #[cfg(target_os = "linux")]
+        ensure!(
+            existing.label == service.label && existing.binary == service.binary,
             "Gateway name {name} is already used by a different installation"
         );
         report(
@@ -59,6 +67,11 @@ pub async fn run(name: String, dry_run: bool, json: bool) -> Result<()> {
         binary: service.binary.clone(),
         bindings: Vec::new(),
     };
+    #[cfg(target_os = "linux")]
+    ensure!(
+        record.config() == service.config,
+        "Adoption requires the gateway configuration to be named config.toml"
+    );
     if dry_run {
         report(
             json,
@@ -69,6 +82,17 @@ pub async fn run(name: String, dry_run: bool, json: bool) -> Result<()> {
         return Ok(());
     }
     store::prepare(&root)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(root.join("setup.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&lock).context("Another setup/remove operation is running")?;
+    #[cfg(target_os = "linux")]
+    ensure!(
+        super::service::installed(&record)?,
+        "The systemd user service changed during adoption"
+    );
     let mut registry = store::load(&root)?;
     ensure!(
         !registry

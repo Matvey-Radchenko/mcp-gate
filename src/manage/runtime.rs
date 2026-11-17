@@ -179,8 +179,9 @@ pub async fn ready(record: &Record) -> Result<()> {
         return result;
     }
     anyhow::bail!(
-        "Gateway did not become healthy: {}. Inspect its private service logs",
-        super::service::diagnostics(record)
+        "Gateway did not become healthy: {}. {}",
+        super::service::diagnostics(record),
+        super::service::log_hint(record)
     )
 }
 

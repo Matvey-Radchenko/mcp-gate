@@ -9,7 +9,7 @@ pub async fn restore(journal: &mut Journal, journal_path: &std::path::Path) -> R
     let mut recovery = journal.restore();
     if recovery.is_empty() {
         for record in journal.services.iter().rev() {
-            match runtime::stop_idle(record).await {
+            match rollback_service(record).await {
                 Ok(true) => {}
                 Ok(false) => recovery.push(format!(
                     "Service {} retained: busy or health unknown",
@@ -22,7 +22,7 @@ pub async fn restore(journal: &mut Journal, journal_path: &std::path::Path) -> R
     let settings_restored = recovery.is_empty();
     if settings_restored {
         for record in &journal.restart {
-            if service::register(record).is_err() || runtime::ready(record).await.is_err() {
+            if restore_service(record).await.is_err() {
                 recovery.push(format!(
                     "Previous service {} could not be restored; its backend may have changed",
                     record.id
@@ -43,6 +43,34 @@ pub async fn restore(journal: &mut Journal, journal_path: &std::path::Path) -> R
     .into();
     journal.save(journal_path)?;
     Ok(recovery)
+}
+
+async fn rollback_service(record: &store::Record) -> Result<bool> {
+    #[cfg(target_os = "linux")]
+    if !service::linux::rollback_needed(record)? {
+        return Ok(true);
+    }
+    runtime::stop_idle(record).await
+}
+
+async fn restore_service(record: &store::Record) -> Result<()> {
+    // A crash may precede the stop, or a previous recovery may already
+    // have re-registered the original fragment.
+    #[cfg(target_os = "linux")]
+    if service::linux::resume_registered(record)? {
+        if let Ok(value) = runtime::health(record).await {
+            if value["maintenance"] == true {
+                ensure!(
+                    runtime::maintenance(record, false).await?,
+                    "Could not resume the previous service"
+                );
+            }
+            return Ok(());
+        }
+        return runtime::ready(record).await;
+    }
+    service::register(record)?;
+    runtime::ready(record).await
 }
 
 pub async fn pending(root: &Path) -> Result<()> {
