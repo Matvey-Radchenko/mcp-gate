@@ -29,7 +29,7 @@ impl Drop for Installation {
     }
 }
 #[test]
-#[ignore = "Registers an isolated temporary user service; requires a logged-in macOS/Windows user session"]
+#[ignore = "Registers an isolated temporary user service; requires a logged-in user service manager"]
 fn actual_service_setup_repeat_remove_without_changing_project_files() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project space Юникод");
@@ -77,6 +77,7 @@ fn actual_service_setup_repeat_remove_without_changing_project_files() {
             process.arg("--dry-run");
         }
         let output = process.output().unwrap();
+        #[cfg(not(target_os = "linux"))]
         if !output.status.success()
             && let Ok(releases) = fs::read_dir(root.join("releases"))
         {

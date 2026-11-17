@@ -13,9 +13,14 @@ pub struct Installation {
     pub settings: PathBuf,
     pub backend: PathBuf,
     pub original: Vec<u8>,
+    server: String,
 }
 impl Installation {
     pub fn new() -> Self {
+        Self::with_server("fixture".into())
+    }
+
+    pub fn with_server(server: String) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let project = directory.path().join("project space Юникод");
         fs::create_dir(&project).unwrap();
@@ -30,7 +35,7 @@ impl Installation {
         fs::copy(env!("CARGO_BIN_EXE_mock-backend"), &backend).unwrap();
         mcp_gate::platform::executable(&backend).unwrap();
         let original = serde_json::to_vec(&json!({"projects":{mcp_gate::clients::claude_project_key(&project).unwrap():{
-            "mcpServers":{"fixture":{"type":"stdio","command":backend,"args":[],"env":{"FIXTURE_SECRET":"never-print-fixture-secret"}}},
+            "mcpServers":{(&server):{"type":"stdio","command":backend,"args":[],"env":{"FIXTURE_SECRET":"never-print-fixture-secret"}}},
             "allowedTools":[],"deniedTools":["mcp__fixture__danger"]}}})).unwrap();
         let settings = personal.join(".claude.json");
         fs::write(&settings, &original).unwrap();
@@ -42,6 +47,7 @@ impl Installation {
             settings,
             backend,
             original,
+            server,
         }
     }
     pub fn command(&self, action: &str) -> Command {
@@ -59,7 +65,7 @@ impl Installation {
                 "--client",
                 "claude-code",
                 "--server",
-                "fixture",
+                &self.server,
                 "--yes",
                 "--project",
             ])
@@ -90,17 +96,26 @@ impl Installation {
 }
 impl Drop for Installation {
     fn drop(&mut self) {
+        if let Ok(registry) = store::load(&self.root) {
+            for record in registry.gateways {
+                cleanup_service(&record);
+            }
+        }
         if self.root.join("operations").exists() {
             for j in self.journals() {
                 for record in j.services {
-                    let _ = service::unregister(&record);
+                    cleanup_service(&record);
                 }
             }
         }
-        if let Ok(registry) = store::load(&self.root) {
-            for record in registry.gateways {
-                let _ = service::unregister(&record);
-            }
-        }
+    }
+}
+
+fn cleanup_service(record: &store::Record) {
+    if let Err(error) = service::unregister(record) {
+        eprintln!(
+            "Could not unregister temporary service {}: {error}",
+            record.label
+        );
     }
 }

@@ -1,7 +1,8 @@
-//! Read-only discovery of local.mcp-gate LaunchAgents. Helpers are never executed.
+//! Read-only discovery of local.mcp-gate user services. Helpers are never executed.
 use super::store::Registry;
 use crate::config::Config;
 use serde::Serialize;
+#[cfg(not(target_os = "linux"))]
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -14,21 +15,18 @@ pub struct Service {
     pub listen: Option<String>,
     pub ownership: &'static str,
     pub state: &'static str,
+    #[cfg(target_os = "linux")]
+    #[serde(flatten)]
+    registration: super::service::linux::ServiceState,
 }
 
-pub async fn discover(home: &Path, registry: &Registry) -> Vec<Service> {
+pub async fn discover(home: &Path, registry: &Registry) -> anyhow::Result<Vec<Service>> {
     let mut services = Vec::new();
-    for path in plists(home) {
-        let Some(plist) = read_plist(&path) else {
-            continue;
-        };
-        let Some(launch) = launch(&plist) else {
-            continue;
-        };
+    for launch in launches(home)? {
         let owned = registry
             .gateways
             .iter()
-            .any(|record| record.id == launch.name || record.label == launch.label);
+            .any(|record| launch.is_recorded_as(record));
         let (listen, state) = describe(&launch.config).await;
         services.push(Service {
             name: launch.name,
@@ -38,15 +36,17 @@ pub async fn discover(home: &Path, registry: &Registry) -> Vec<Service> {
             listen,
             ownership: if owned { "managed" } else { "unmanaged" },
             state,
+            #[cfg(target_os = "linux")]
+            registration: launch.registration,
         });
     }
     services.sort_by(|left, right| left.name.cmp(&right.name));
-    services
+    Ok(services)
 }
 
 pub fn explain(services: &[Service]) {
     if services.is_empty() {
-        println!("No local.mcp-gate LaunchAgents found.");
+        println!("No local.mcp-gate user services found.");
         return;
     }
     println!("Gateways");
@@ -74,8 +74,50 @@ struct Launch {
     label: String,
     binary: PathBuf,
     config: PathBuf,
+    #[cfg(target_os = "linux")]
+    registration: super::service::linux::ServiceState,
 }
 
+impl Launch {
+    fn is_recorded_as(&self, record: &super::store::Record) -> bool {
+        #[cfg(target_os = "linux")]
+        return record.label == self.label
+            && record.binary == self.binary
+            && record.config() == self.config;
+        #[cfg(not(target_os = "linux"))]
+        return record.id == self.name || record.label == self.label;
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn launches(_home: &Path) -> anyhow::Result<Vec<Launch>> {
+    Ok(super::service::linux::definitions()?
+        .into_iter()
+        .filter_map(|(label, identity, registration)| {
+            if identity.binary.file_name()?.to_str()? != "mcp-gate" {
+                return None;
+            }
+            let name = label.strip_prefix("local.mcp-gate.")?.to_owned();
+            Some(Launch {
+                name,
+                label,
+                binary: identity.binary,
+                config: identity.config,
+                registration,
+            })
+        })
+        .collect())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn launches(home: &Path) -> anyhow::Result<Vec<Launch>> {
+    Ok(plists(home)
+        .into_iter()
+        .filter_map(|path| launch(&read_plist(&path)?))
+        .collect())
+}
+
+#[cfg(not(target_os = "linux"))]
 fn launch(plist: &Value) -> Option<Launch> {
     let label = plist.get("Label")?.as_str()?;
     let name = label.strip_prefix("local.mcp-gate.")?;
@@ -101,6 +143,16 @@ fn launch(plist: &Value) -> Option<Launch> {
     })
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn recorded_labels(_home: &Path) -> std::collections::BTreeSet<String> {
+    // A preview can still propose a label without a user bus. Registration
+    // checks the live manager and the target path again before claiming it.
+    super::service::linux::labels()
+        .map(Iterator::collect)
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_os = "linux"))]
 pub(super) fn recorded_labels(home: &Path) -> std::collections::BTreeSet<String> {
     let mut labels = std::collections::BTreeSet::new();
     for path in plists(home) {
@@ -132,10 +184,9 @@ async fn describe(path: &Path) -> (Option<String>, &'static str) {
     (listen, state)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn plists(home: &Path) -> Vec<PathBuf> {
-    // Only launchd reads ~/Library/LaunchAgents. Windows logon tasks and Linux
-    // have no equivalent directory. `test-backend` is enabled on every CI OS, so
-    // it must not turn a JSON plist into a discovered service off macOS.
+    // Only launchd reads ~/Library/LaunchAgents.
     if !cfg!(target_os = "macos") {
         return Vec::new();
     }
@@ -153,6 +204,7 @@ fn plists(home: &Path) -> Vec<PathBuf> {
     paths
 }
 
+#[cfg(not(target_os = "linux"))]
 fn read_plist(path: &Path) -> Option<Value> {
     let bytes = std::fs::read(path).ok()?;
     if let Ok(value) = serde_json::from_slice::<Value>(&bytes)

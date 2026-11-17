@@ -17,6 +17,17 @@ pub const BASE_ENVIRONMENT: &[&str] = &[
     "TMPDIR",
     "LANG",
     "LC_ALL",
+    "XDG_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "USER",
+    "LOGNAME",
     "SystemRoot",
     "SystemDrive",
     "WINDIR",
@@ -68,4 +79,28 @@ pub fn project_path(path: &std::path::Path) -> std::io::Result<std::path::PathBu
         }
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BASE_ENVIRONMENT;
+
+    #[test]
+    fn linux_desktop_and_user_context_are_allowlisted() {
+        for name in [
+            "XDG_RUNTIME_DIR",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_STATE_HOME",
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "XAUTHORITY",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "USER",
+            "LOGNAME",
+        ] {
+            assert!(BASE_ENVIRONMENT.contains(&name), "{name}");
+        }
+    }
 }

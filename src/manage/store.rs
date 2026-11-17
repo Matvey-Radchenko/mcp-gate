@@ -46,8 +46,23 @@ pub fn root() -> Result<PathBuf> {
         PathBuf::from(std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA is missing")?)
             .join("mcp-gate"),
     );
-    #[cfg(not(any(target_os = "macos", windows)))]
-    anyhow::bail!("Automatic setup supports macOS and Windows only")
+    #[cfg(target_os = "linux")]
+    return Ok(xdg_home("XDG_DATA_HOME", ".local/share")?.join("mcp-gate"));
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+    anyhow::bail!("Automatic setup is unsupported on this platform")
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn xdg_home(variable: &str, fallback: &str) -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os(variable)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+    {
+        return Ok(path);
+    }
+    let home = home()?;
+    ensure!(home.is_absolute(), "User home directory must be absolute");
+    Ok(home.join(fallback))
 }
 pub fn home() -> Result<PathBuf> {
     #[cfg(feature = "test-backend")]

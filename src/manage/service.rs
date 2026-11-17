@@ -1,6 +1,8 @@
 //! Per-user service registration. Never installs a system service or kills a client.
 use super::store::Record;
 use anyhow::Result;
+#[cfg(target_os = "linux")]
+pub(super) mod linux;
 #[cfg(any(target_os = "macos", windows))]
 use anyhow::{Context, ensure};
 #[cfg(target_os = "macos")]
@@ -36,6 +38,12 @@ fn run(command: &mut Command) -> Result<()> {
 
 /// Only service state/error codes are returned; command lines and environments
 /// from the service manager's verbose response never reach user diagnostics.
+#[cfg(target_os = "linux")]
+pub fn diagnostics(record: &Record) -> String {
+    linux::diagnostics(record)
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn diagnostics(record: &Record) -> String {
     #[cfg(target_os = "macos")]
     if let Ok(output) = Command::new("launchctl")
@@ -116,7 +124,9 @@ pub fn register(record: &Record) -> Result<()> {
         run(Command::new("schtasks.exe").args(["/Run", "/TN", &record.label]))
             .context("Task Scheduler start failed")?;
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    return linux::register(record);
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     anyhow::bail!("Unsupported service platform: {}", record.label);
     #[cfg(any(target_os = "macos", windows))]
     Ok(())
@@ -149,7 +159,9 @@ pub fn unregister(record: &Record) -> Result<()> {
             run(Command::new("schtasks.exe").args(["/Delete", "/TN", &record.label, "/F"]))?;
         }
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    return linux::unregister(record);
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     anyhow::bail!("Unsupported service platform: {}", record.label);
     #[cfg(any(target_os = "macos", windows))]
     {
@@ -167,12 +179,20 @@ pub fn unregister(record: &Record) -> Result<()> {
 /// Another installation already owns this per-user service name.
 pub fn label_in_use(error: &anyhow::Error) -> bool {
     let text = error.to_string().to_ascii_lowercase();
-    text.contains("already in use")
-        || text.contains("already exists")
-        || text.contains("bootstrap failed: 5")
+    #[cfg(target_os = "linux")]
+    {
+        text.starts_with("service label ") && text.ends_with(" is already in use")
+            || text.lines().any(linux::collision)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        text.contains("already in use")
+            || text.contains("already exists")
+            || text.contains("bootstrap failed: 5")
+    }
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn label_taken(label: &str) -> anyhow::Error {
     anyhow::anyhow!("Service label {label} is already in use")
 }
@@ -203,7 +223,9 @@ pub fn installed(record: &Record) -> Result<bool> {
         .output()?
         .status
         .success());
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(target_os = "linux")]
+    return Ok(linux::state(record)?.registered);
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
     anyhow::bail!("Unsupported service platform: {}", record.label)
 }
 
@@ -224,6 +246,10 @@ pub fn restart_command(record: &Record) -> String {
         let label = shell_literal(&record.label);
         format!("schtasks.exe /End /TN {label}; schtasks.exe /Run /TN {label}")
     }
+    #[cfg(target_os = "linux")]
+    if linux::available().is_ok() {
+        return linux::restart_command(record);
+    }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         format!(
@@ -232,6 +258,13 @@ pub fn restart_command(record: &Record) -> String {
             shell_literal(&record.config().to_string_lossy())
         )
     }
+}
+
+pub(super) fn log_hint(_record: &Record) -> String {
+    #[cfg(target_os = "linux")]
+    return linux::log_hint(_record);
+    #[cfg(not(target_os = "linux"))]
+    "Inspect its private service logs".into()
 }
 
 fn shell_literal(value: &str) -> String {

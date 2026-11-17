@@ -1,5 +1,7 @@
+#[cfg(not(target_os = "linux"))]
+use super::service;
 use super::{
-    Selection, recovery, runtime, service,
+    Selection, recovery, runtime,
     store::{self, Journal},
 };
 use crate::clients::{Binding, document};
@@ -37,12 +39,11 @@ pub async fn run(options: Selection) -> Result<()> {
             keep.push(record);
             continue;
         }
-        let absent = !service::installed(&record).unwrap_or(true);
-        if absent || runtime::stop_idle(&record).await.unwrap_or(false) {
-            continue;
+        match cleanup(&record).await {
+            Ok(true) => continue,
+            Ok(false) => pending.push(format!("{}: direct settings restored; service cleanup pending until clients release it. Rerun remove after restart.",record.id)),
+            Err(error) => pending.push(format!("{}: direct settings restored; service cleanup pending: {error}", record.id)),
         }
-        let _ = runtime::maintenance(&record, false).await;
-        pending.push(format!("{}: direct settings restored; service cleanup pending until clients release it. Rerun remove after restart.",record.id));
         keep.push(record);
     }
     registry.gateways = keep;
@@ -62,6 +63,16 @@ pub async fn run(options: Selection) -> Result<()> {
     }
     Ok(())
 }
+async fn cleanup(record: &store::Record) -> Result<bool> {
+    #[cfg(not(target_os = "linux"))]
+    if !service::installed(record).unwrap_or(true) {
+        return Ok(true);
+    }
+    // On Linux, an incomplete stop may leave a fragment or loaded process
+    // even when the registration can no longer be confirmed.
+    runtime::stop_idle(record).await
+}
+
 fn restore_connections(
     root: &Path,
     registry: &mut store::Registry,

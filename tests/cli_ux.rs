@@ -30,6 +30,9 @@ impl Fixture {
             .env("CODEX_HOME", root.join(".codex"))
             .env("CLAUDE_CONFIG_DIR", root.join("claude"))
             .env("XDG_CONFIG_HOME", root.join(".config"))
+            .env("XDG_DATA_HOME", root.join(".local/share"))
+            .env("XDG_RUNTIME_DIR", root.join("runtime"))
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
             .env_remove("OPENCODE_CONFIG");
         command
     }
@@ -480,7 +483,8 @@ fn launchagent_plists_are_not_discovered() {
     );
     let text = String::from_utf8(status.stdout).unwrap();
     assert!(
-        text.contains("No local.mcp-gate LaunchAgents found."),
+        text.contains("No local.mcp-gate user services found.")
+            || (cfg!(target_os = "linux") && text.contains("Cannot query user services")),
         "status stdout:\n{text}"
     );
     assert!(!text.contains("unmanaged"), "status stdout:\n{text}");
@@ -488,7 +492,7 @@ fn launchagent_plists_are_not_discovered() {
     assert!(!adopt.status.success());
     let err = String::from_utf8_lossy(&adopt.stderr);
     assert!(
-        err.contains("No LaunchAgent local.mcp-gate.alpha with a readable definition was found"),
+        err.contains("No local.mcp-gate.alpha user service with a readable definition was found"),
         "{err}"
     );
 }

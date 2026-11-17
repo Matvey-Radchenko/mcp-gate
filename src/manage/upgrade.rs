@@ -86,7 +86,13 @@ pub async fn apply(
             changes: vec![],
         };
         journal.save(&path)?;
-        if !runtime::stop_idle(&old).await.unwrap_or(false) {
+        #[cfg(target_os = "linux")]
+        let stopped = runtime::stop_idle(&old)
+            .await
+            .with_context(|| format!("Update incomplete. Private journal: {}", path.display()))?;
+        #[cfg(not(target_os = "linux"))]
+        let stopped = runtime::stop_idle(&old).await.unwrap_or(false);
+        if !stopped {
             journal.phase = "complete".into();
             journal.save(&path)?;
             results.push(format!(

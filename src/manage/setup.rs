@@ -21,6 +21,8 @@ pub async fn run(mut options: Selection) -> Result<()> {
     let Some(chosen) = super::wizard::setup(&mut options, &registry).await? else {
         return Ok(());
     };
+    #[cfg(target_os = "linux")]
+    require_user_manager(&registry, &chosen.gateways)?;
     let plan = chosen.plan;
     if !options.json {
         println!(
@@ -76,27 +78,73 @@ pub async fn run(mut options: Selection) -> Result<()> {
     }
     Ok(())
 }
+#[cfg(target_os = "linux")]
+fn require_user_manager(registry: &Registry, selected: &[String]) -> Result<()> {
+    if service::linux::available().is_ok() {
+        return Ok(());
+    }
+    let commands: Vec<_> = registry
+        .gateways
+        .iter()
+        .filter(|record| selected.contains(&record.id))
+        .map(|record| {
+            let path = record.config();
+            // Protect the real path from shell expansions inside double quotes.
+            let mut escaped = String::with_capacity(path.as_os_str().len());
+            for c in path.to_string_lossy().chars() {
+                if matches!(c, '\\' | '"' | '$' | '`') {
+                    escaped.push('\\');
+                }
+                escaped.push(c);
+            }
+            format!("mcp-gate serve --config \"{escaped}\"")
+        })
+        .collect();
+    let manual = if commands.is_empty() {
+        "Prepare a private state directory and a config with absolute paths, then run mcp-gate serve --config \"/absolute/path/config.toml\".".into()
+    } else {
+        format!(
+            "To run an existing gateway manually:\n  {}",
+            commands.join("\n  ")
+        )
+    };
+    anyhow::bail!(
+        "Automatic setup needs a reachable systemd --user manager. Client configs were not changed. {manual}"
+    )
+}
+
 /// The readable label is per user, not per state directory. A parallel setup can
 /// claim it after the preview, so registration walks the numeric suffix until
-/// launchd or Task Scheduler accepts the name.
-fn register_free_label(mut record: store::Record) -> Result<store::Record> {
+/// the user service manager accepts the name.
+fn register_free_label(
+    mut record: store::Record,
+    journal: &mut Journal,
+    path: &Path,
+) -> Result<store::Record> {
     let name = record
         .bindings
         .first()
         .map(|binding| binding.name.clone())
         .unwrap_or_else(|| "server".into());
     let home = store::home()?;
+    let mut reserved = super::labels::taken(
+        &Registry {
+            format_version: 1,
+            gateways: Vec::new(),
+        },
+        &home,
+    );
     for _ in 0..32 {
+        // Recovery must know which label this attempt could have published,
+        // even if the installer exits before registration returns.
+        *journal
+            .services
+            .last_mut()
+            .context("Missing prepared service")? = record.clone();
+        journal.save(path)?;
         match service::register(&record) {
             Ok(()) => return Ok(record),
             Err(error) if service::label_in_use(&error) => {
-                let mut reserved = super::labels::taken(
-                    &store::Registry {
-                        format_version: 1,
-                        gateways: vec![record.clone()],
-                    },
-                    &home,
-                );
                 reserved.insert(record.label.clone());
                 record.label = super::labels::allocate(&name, &reserved);
             }
@@ -149,10 +197,7 @@ async fn install(
                 journal.services.push(record.clone());
                 journal.save(&path)?;
                 super::checkpoint("prepared")?;
-                record = register_free_label(record)?;
-                journal.services.pop();
-                journal.services.push(record.clone());
-                journal.save(&path)?;
+                record = register_free_label(record, &mut journal, &path)?;
                 super::checkpoint("registered")?;
                 runtime::ready(&record).await?;
                 super::checkpoint("ready")?;
@@ -214,3 +259,6 @@ async fn install(
     }
     Ok(affected)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests;
