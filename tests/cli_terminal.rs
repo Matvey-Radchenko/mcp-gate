@@ -97,11 +97,33 @@ impl Terminal {
         self.cursor_requests = count;
         assert!(!self.output.contains("never-print-fixture-secret"));
     }
+    fn settle(&mut self) {
+        // Wait until the prompt has finished drawing. On a slower ARM runner,
+        // Enter sent at the first painted frame can be lost while the PTY is
+        // still in canonical mode; Ctrl-C still works because ISIG is on.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let mut last_len = self.output.len();
+        let mut quiet_since = Instant::now();
+        loop {
+            self.read();
+            if self.output.len() != last_len {
+                last_len = self.output.len();
+                quiet_since = Instant::now();
+            } else if quiet_since.elapsed() >= Duration::from_millis(80) {
+                return;
+            }
+            if Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     fn expect(&mut self, message: &str) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             self.read();
             if self.output.contains(message) {
+                self.settle();
                 return;
             }
             assert!(
