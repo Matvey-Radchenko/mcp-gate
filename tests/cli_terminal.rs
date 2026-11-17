@@ -45,6 +45,9 @@ impl Terminal {
         // SAFETY: transfer sole ownership of the second fresh descriptor to File.
         let slave = unsafe { File::from_raw_fd(slave) };
         // SAFETY: master is live; only nonblocking and close-on-exec flags are changed.
+        // The slave starts in raw mode so Enter is delivered immediately. A default
+        // canonical PTY can hold CR until the child enables raw mode; Ctrl-C still
+        // works in that window because ISIG is on, which is what failed on ARM CI.
         unsafe {
             assert_ne!(
                 libc::fcntl(master.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK),
@@ -53,6 +56,13 @@ impl Terminal {
             assert_ne!(
                 libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC),
                 -1
+            );
+            let mut termios = std::mem::zeroed();
+            assert_eq!(libc::tcgetattr(slave.as_raw_fd(), &mut termios), 0);
+            libc::cfmakeraw(&mut termios);
+            assert_eq!(
+                libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &termios),
+                0
             );
         }
         command
@@ -98,18 +108,19 @@ impl Terminal {
         assert!(!self.output.contains("never-print-fixture-secret"));
     }
     fn settle(&mut self) {
-        // Wait until the prompt has finished drawing. On a slower ARM runner,
-        // Enter sent at the first painted frame can be lost while the PTY is
-        // still in canonical mode; Ctrl-C still works because ISIG is on.
-        let deadline = Instant::now() + Duration::from_millis(500);
+        // Wait until drawing and cursor-position reports have gone quiet, so
+        // the next key is not sent while the UI is blocked on a CPR reply.
+        let deadline = Instant::now() + Duration::from_millis(750);
         let mut last_len = self.output.len();
+        let mut last_cpr = self.cursor_requests;
         let mut quiet_since = Instant::now();
         loop {
             self.read();
-            if self.output.len() != last_len {
+            if self.output.len() != last_len || self.cursor_requests != last_cpr {
                 last_len = self.output.len();
+                last_cpr = self.cursor_requests;
                 quiet_since = Instant::now();
-            } else if quiet_since.elapsed() >= Duration::from_millis(80) {
+            } else if quiet_since.elapsed() >= Duration::from_millis(120) {
                 return;
             }
             if Instant::now() >= deadline {
@@ -135,6 +146,7 @@ impl Terminal {
         }
     }
     fn next(&mut self, keys: &str, message: &str) {
+        self.settle();
         self.output.clear();
         self.cursor_requests = 0;
         self.send(keys);
