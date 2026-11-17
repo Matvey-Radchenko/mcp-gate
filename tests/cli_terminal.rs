@@ -15,8 +15,11 @@ use std::{
 struct Terminal {
     child: Child,
     master: File,
+    slave: File,
     output: String,
     cursor_requests: usize,
+    last_termios: String,
+    debug_log: Option<std::path::PathBuf>,
 }
 impl Terminal {
     fn start(mut command: Command) -> Self {
@@ -65,6 +68,10 @@ impl Terminal {
                 0
             );
         }
+        let debug_log = command
+            .get_current_dir()
+            .map(|path| path.join("tty-debug.log"));
+        let slave_keep = slave.try_clone().unwrap();
         command
             .stdin(Stdio::from(slave.try_clone().unwrap()))
             .stdout(Stdio::from(slave.try_clone().unwrap()))
@@ -87,12 +94,58 @@ impl Terminal {
         Self {
             child,
             master,
+            slave: slave_keep,
             output: String::new(),
             cursor_requests: 0,
+            last_termios: String::new(),
+            debug_log,
         }
     }
-    fn send(&mut self, text: &str) {
+    fn describe_termios(fd: i32, label: &str) -> String {
+        let mut termios = unsafe { std::mem::zeroed() };
+        let rc = unsafe { libc::tcgetattr(fd, &mut termios) };
+        if rc != 0 {
+            return format!(
+                "{label} fd={fd} tcgetattr failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        format!(
+            "{label} fd={fd} ICANON={} ECHO={} ICRNL={} ISIG={} VMIN={} VTIME={}",
+            termios.c_lflag & libc::ICANON != 0,
+            termios.c_lflag & libc::ECHO != 0,
+            termios.c_iflag & libc::ICRNL != 0,
+            termios.c_lflag & libc::ISIG != 0,
+            termios.c_cc[libc::VMIN],
+            termios.c_cc[libc::VTIME]
+        )
+    }
+    fn termios_snapshot(&self) -> String {
+        format!(
+            "{}; {}",
+            Self::describe_termios(self.master.as_raw_fd(), "master"),
+            Self::describe_termios(self.slave.as_raw_fd(), "slave")
+        )
+    }
+    fn termios_report(&self) -> String {
+        let debug = self
+            .debug_log
+            .as_ref()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .unwrap_or_default();
+        format!(
+            "{}; last_at_send={}; MCP_GATE_DEBUG_TTY:\n{debug}",
+            self.termios_snapshot(),
+            self.last_termios
+        )
+    }
+    fn write_master(&mut self, text: &str) {
         self.master.write_all(text.as_bytes()).unwrap();
+    }
+    fn send(&mut self, text: &str) {
+        // Snapshot termios at the moment test keys are written, not later CPR replies.
+        self.last_termios = self.termios_snapshot();
+        self.write_master(text);
     }
     fn read(&mut self) {
         let mut bytes = [0; 16384];
@@ -102,7 +155,7 @@ impl Terminal {
         }
         let count = self.output.matches("\x1b[6n").count();
         for _ in self.cursor_requests..count {
-            self.send("\x1b[1;1R");
+            self.write_master("\x1b[1;1R");
         }
         self.cursor_requests = count;
         assert!(!self.output.contains("never-print-fixture-secret"));
@@ -139,8 +192,9 @@ impl Terminal {
             }
             assert!(
                 Instant::now() < deadline,
-                "Terminal did not show {message}: {}",
-                self.output
+                "Terminal did not show {message}: {}\n{}",
+                self.output,
+                self.termios_report()
             );
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -157,10 +211,20 @@ impl Terminal {
         loop {
             self.read();
             if let Some(status) = self.child.try_wait().unwrap() {
-                assert!(status.success(), "{}", self.output);
+                assert!(
+                    status.success(),
+                    "{}\n{}",
+                    self.output,
+                    self.termios_report()
+                );
                 return;
             }
-            assert!(Instant::now() < deadline, "Terminal did not exit");
+            assert!(
+                Instant::now() < deadline,
+                "Terminal did not exit\n{}\n{}",
+                self.output,
+                self.termios_report()
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -199,6 +263,7 @@ fn command(root: &std::path::Path, action: &str) -> Command {
         .env("XDG_CONFIG_HOME", root.join(".config"))
         .env("XDG_DATA_HOME", root.join(".local/share"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .env("MCP_GATE_DEBUG_TTY", root.join("tty-debug.log"))
         .env_remove("DBUS_SESSION_BUS_ADDRESS")
         .env_remove("OPENCODE_CONFIG");
     command
