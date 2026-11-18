@@ -43,7 +43,7 @@ For example, one Telegram MCP backend (Java + TDLib) used about 400 MB on a main
 - **Shared or session-owned.** A reviewed stateless API can share one serialized backend across clients. A session-owned server (browsers, anything with per-client state) gets its own MCP connection. Shared mode is opt-in and is not safe for an arbitrary browser server.
 - **Idle backends close.** [`idle_seconds`](docs/configurable-runtime.md#backend-idle-policy) defaults to 900 for session-owned backends and off for shared ones; `0` disables it. Only executable requests extend the timer. An open GET stream also keeps a session-owned recording alive. Shared non-Docker backends can opt in while keeping HTTP sessions open. When every slot is busy, `session_idle_evict_seconds` (default 120) lets the longest-idle session backend make room. Running calls are never evicted.
 - **No automatic replay.** Actions are never retried or replayed. After a backend crash or a restart, sessions and unfinished work are not restored.
-- **Managed client setup.** `setup` copies the binary into permanent versioned storage (independent of the npx cache), registers a user service (LaunchAgent on macOS, a logon Task Scheduler task on Windows), checks readiness, and only then changes personal client connections. Names and permission settings are preserved. Project files intended for Git are left untouched.
+- **Managed client setup.** `setup` copies the binary into permanent versioned storage (independent of the npx cache), registers a user service (LaunchAgent on macOS, a systemd --user unit on Linux, or a logon Task Scheduler task on Windows), checks readiness, and only then changes personal client connections. Names and permission settings are preserved. Project files intended for Git are left untouched.
 - **Yours to undo.** `remove` restores direct connections. It does not delete MCP packages, user data, logs, browser artifacts, or old releases.
 
 You still install and update MCP packages, interpreters, Docker, and browsers. Setup's discovery runs the existing command, so `npx`, `uvx`, or Docker may download their own dependencies.
@@ -52,7 +52,7 @@ You still install and update MCP packages, interpreters, Docker, and browsers. S
 
 The command is `mcp-gate`; `@matvei-radchenko/mcp-gate` is only the npm package name. Installing or updating the package does not switch existing connections by itself: run `setup` from the build you want (an older build downgrades compatibly).
 
-Release targets are **macOS ARM64**, **macOS Intel**, and **Windows x64**. Linux is not included.
+Release targets are **macOS ARM64**, **macOS Intel**, **Windows x64**, **Linux x64**, and **Linux ARM64**. Linux binaries require glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, and later). musl-based systems such as Alpine are not supported.
 
 <details>
 <summary>npm (recommended)</summary>
@@ -70,18 +70,20 @@ npm i -g @matvei-radchenko/mcp-gate
 mcp-gate setup
 ```
 
-The scoped packages are `@matvei-radchenko/mcp-gate` and the platform binaries `@matvei-radchenko/mcp-gate-bin-darwin-arm64`, `@matvei-radchenko/mcp-gate-bin-darwin-x64`, and `@matvei-radchenko/mcp-gate-bin-win32-x64`.
+The scoped packages are `@matvei-radchenko/mcp-gate` and the platform binaries `@matvei-radchenko/mcp-gate-bin-darwin-arm64`, `@matvei-radchenko/mcp-gate-bin-darwin-x64`, `@matvei-radchenko/mcp-gate-bin-win32-x64`, `@matvei-radchenko/mcp-gate-bin-linux-x64`, and `@matvei-radchenko/mcp-gate-bin-linux-arm64`.
 
 </details>
 
 <details>
 <summary>GitHub Release binary</summary>
 
-Download the archive for your platform from the [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases) page (`mcp-gate-*-darwin-arm64.tar.gz`, `*-darwin-x64.tar.gz`, or `*-win32-x64.tar.gz`) and verify it against the attached `SHA256SUMS`. Put `mcp-gate` on your `PATH`, then run `mcp-gate setup`.
+Download the archive for your platform from the [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases) page (`mcp-gate-*-darwin-arm64.tar.gz`, `*-darwin-x64.tar.gz`, `*-win32-x64.tar.gz`, `*-linux-x64.tar.gz`, or `*-linux-arm64.tar.gz`) and verify it against the attached `SHA256SUMS`. Put `mcp-gate` on your `PATH`, then run `mcp-gate setup`.
 
 </details>
 
-State lives in `~/Library/Application Support/mcp-gate` or `%LOCALAPPDATA%\mcp-gate`. Gateways start after login; MCP backends stay lazy.
+State lives in `~/Library/Application Support/mcp-gate`, `%LOCALAPPDATA%\mcp-gate`, or `~/.local/share/mcp-gate` (`$XDG_DATA_HOME/mcp-gate`). Gateways start after login; MCP backends stay lazy.
+
+On Linux, setup registers a `systemd --user` unit under `~/.config/systemd/user` (or `$XDG_CONFIG_HOME/systemd/user`), with `WantedBy=default.target`. Units start with your user session after login. To keep the user manager — and those units — available after logout and at boot, run `loginctl enable-linger "$USER"`. If `systemd --user` is not reachable, setup leaves client configs unchanged and prints a manual fallback: prepare a private state directory and a config with absolute paths, then run `mcp-gate serve --config "/absolute/path/config.toml"`.
 
 Run `setup` again with a newer or older build to update compatible background services. An idle service enters maintenance before replacement; a busy service waits until a later setup. Unsupported state formats are rejected. Operation journals keep recoverable changes and do not overwrite later edits.
 
@@ -90,9 +92,9 @@ Run `setup` again with a newer or older build to update compatible background se
 | Command | What it does |
 | --- | --- |
 | `mcp-gate setup` | Preview, then register services and rewrite selected personal client connections. |
-| `mcp-gate status` | List client connections. On macOS, also list `local.mcp-gate.*` LaunchAgents. |
+| `mcp-gate status` | List client connections and `local.mcp-gate.*` user services (LaunchAgents on macOS, systemd --user units on Linux). |
 | `mcp-gate remove` | Restore selected connections, or all managed ones with `--all --yes`. |
-| `mcp-gate adopt <name>` | Record an unmanaged `local.mcp-gate.<name>` LaunchAgent in the local registry. Does not restart the gateway, edit client settings, or copy the binary. |
+| `mcp-gate adopt <name>` | Record an unmanaged `local.mcp-gate.<name>` user service in the local registry. Does not restart the gateway, edit client settings, or copy the binary. |
 | `mcp-gate idle <name> [15m\|off]` | Show or set backend idle expiry. Use `--dry-run` to preview or `--yes` to save; prints the required gateway restart command. |
 
 **Setup and remove options**
@@ -167,13 +169,13 @@ One request runs at a time per backend. Catalog drift fails closed until you reg
 
 ## When to pick something else
 
-mcp-gate is for one person's machine: you already run stdio MCP servers from Codex, OpenCode, or Claude Code on macOS or Windows, and you want fewer idle processes without hand-editing client configs. It does not convert transports, connect remote or OAuth servers, or run on Linux. To expose a stdio server over SSE or Streamable HTTP, look at [Supergateway](https://github.com/supercorp-ai/supergateway) or [mcp-proxy](https://github.com/sparfenyuk/mcp-proxy); to plug a remote server into a stdio-only client, [mcp-remote](https://github.com/punkpeye/mcp-remote); to run and govern servers in containers or on Kubernetes, [ToolHive](https://github.com/stacklok/toolhive).
+mcp-gate is for one person's machine: you already run stdio MCP servers from Codex, OpenCode, or Claude Code on macOS, Windows, or Linux, and you want fewer idle processes without hand-editing client configs. It does not convert transports, connect remote or OAuth servers, or run as a multi-user cluster service. To expose a stdio server over SSE or Streamable HTTP, look at [Supergateway](https://github.com/supercorp-ai/supergateway) or [mcp-proxy](https://github.com/sparfenyuk/mcp-proxy); to plug a remote server into a stdio-only client, [mcp-remote](https://github.com/punkpeye/mcp-remote); to run and govern servers in containers or on Kubernetes, [ToolHive](https://github.com/stacklok/toolhive).
 
 ## Compatibility
 
-Releases are published on [npm](https://www.npmjs.com/package/@matvei-radchenko/mcp-gate) and [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases). Native login acceptance is **macOS ARM64 only**. The Intel x86_64 check under Rosetta 2 has not been run; Windows x64 was smoke-tested under Wine, not on a native Windows login. Stability on native Intel Macs and Windows is not guaranteed, and reports are welcome.
+Releases are published on [npm](https://www.npmjs.com/package/@matvei-radchenko/mcp-gate) and [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases). Native login acceptance is **macOS ARM64 only**. The Intel x86_64 check under Rosetta 2 has not been run; Windows x64 was smoke-tested under Wine, not on a native Windows login; Linux is exercised on Ubuntu 22.04 GitHub runners (x64 and ARM64), not as a desktop login test. Stability on native Intel Macs, Windows, and Linux desktops is not guaranteed, and reports are welcome.
 
-CI runs formatting, Clippy, fixtures, and client/browser checks on all three release platforms; that is not the same thing as a native login test. The evidence table, tested client versions, and recipe constraints are in [docs/compatibility.md](docs/compatibility.md). Automatic shared-ownership recipes currently carry reviewed `macos-aarch64` conditions only.
+CI runs formatting, Clippy, fixtures, and client/browser checks on all supported release platforms; that is not the same thing as a native login test. The evidence table, tested client versions, and recipe constraints are in [docs/compatibility.md](docs/compatibility.md). Automatic shared-ownership recipes currently carry reviewed `macos-aarch64` conditions only.
 
 ## FAQ
 
@@ -206,8 +208,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 cargo xtask check
 ```
 
-This runs formatting, strict Clippy, source-size budgets, and ordinary fixture/unit tests. GitHub CI runs native checks on all three release platforms and verifies a clean npm archive installation. A workflow definition is not evidence that its acceptance runs passed.
+This runs formatting, strict Clippy, source-size budgets, and ordinary fixture/unit tests. GitHub CI runs native checks on all supported release platforms and verifies a clean npm archive installation. A workflow definition is not evidence that its acceptance runs passed.
 
 ## License
 
-MIT. Issues and reports are welcome, especially from Intel Macs and native Windows logins, which have not been fully accepted yet.
+MIT. Issues and reports are welcome, especially from Intel Macs, native Windows logins, and Linux desktops, which have not been fully accepted yet.
