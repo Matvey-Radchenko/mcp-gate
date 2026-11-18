@@ -1,7 +1,7 @@
 //! Select and review exact targets before any service, backend or client mutation.
 use super::{Selection, inventory, preview, store::Registry, ui};
 use crate::clients::Candidate;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 
 pub struct Setup {
@@ -54,8 +54,15 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
     if options.yes {
         super::context::pending_directories(&inventory.candidates)?;
     }
-    super::trace::log("setup_scope: digest start");
-    let hash = crate::catalog::digest(&std::env::current_exe()?)?;
+    let exe = std::env::current_exe()?;
+    let size = std::fs::metadata(&exe).map(|meta| meta.len()).unwrap_or(0);
+    super::trace::log(&format!(
+        "setup_scope: digest start path={} size={size}",
+        exe.display()
+    ));
+    let hash = tokio::task::spawn_blocking(move || crate::catalog::digest(&exe))
+        .await
+        .context("Binary digest task failed")??;
     super::trace::log("setup_scope: digest done");
     let managed: Vec<_> = registry
         .gateways

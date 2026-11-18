@@ -150,6 +150,7 @@ impl Terminal {
     }
     fn child_diagnostics(&self) -> String {
         let pid = self.child.id();
+        #[allow(unused_mut)]
         let mut report = format!("child pid={pid}\n");
         #[cfg(target_os = "linux")]
         {

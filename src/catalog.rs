@@ -3,7 +3,7 @@ use anyhow::{Result, ensure};
 use rmcp::model::{Prompt, Resource, ResourceTemplate, ServerInfo, Tool};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::{io::Read, path::Path};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,7 +24,18 @@ pub struct Catalog {
     pub invocation_sha256: Option<String>,
 }
 pub fn digest(path: &Path) -> Result<String> {
-    Ok(format!("{:x}", Sha256::digest(std::fs::read(path)?)))
+    // Stream so a large debug executable is not loaded in one allocation.
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 impl Catalog {
     pub fn load(path: &Path, backend: &Backend) -> Result<Self> {
