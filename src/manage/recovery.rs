@@ -7,6 +7,9 @@ use std::path::Path;
 
 pub async fn restore(journal: &mut Journal, journal_path: &std::path::Path) -> Result<Vec<String>> {
     let mut recovery = journal.restore();
+    if journal.migration.is_some() {
+        return restore_migration(journal, journal_path, recovery).await;
+    }
     if recovery.is_empty() {
         for record in journal.services.iter().rev() {
             match rollback_service(record).await {
@@ -43,6 +46,43 @@ pub async fn restore(journal: &mut Journal, journal_path: &std::path::Path) -> R
     .into();
     journal.save(journal_path)?;
     Ok(recovery)
+}
+
+async fn restore_migration(
+    journal: &mut Journal,
+    path: &Path,
+    mut issues: Vec<String>,
+) -> Result<Vec<String>> {
+    if issues.is_empty() {
+        let change = journal
+            .migration
+            .as_ref()
+            .expect("Migration recovery requires a binary change");
+        if let [record] = journal.restart.as_slice() {
+            match change.restore(record).await {
+                Ok(()) => {
+                    let phase = match service::resume(record).await {
+                        Ok(()) => "restored",
+                        Err(_) => {
+                            issues.push(format!(
+                                "Previous service {} could not be restored",
+                                record.id
+                            ));
+                            "restored-service-unavailable"
+                        }
+                    };
+                    journal.finish_migration(path, phase)?;
+                    return Ok(issues);
+                }
+                Err(error) => issues.push(format!("Service {} retained: {error}", record.id)),
+            }
+        } else {
+            issues.push("Migration journal is missing its previous service".into());
+        }
+    }
+    journal.phase = "needs-attention".into();
+    journal.save(path)?;
+    Ok(issues)
 }
 
 async fn rollback_service(record: &store::Record) -> Result<bool> {

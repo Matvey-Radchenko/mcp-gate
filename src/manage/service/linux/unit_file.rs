@@ -1,7 +1,10 @@
 //! Render private service fragments and read only literal ExecStart identities.
 use super::Record;
 use anyhow::{Context, Result, ensure};
-use std::path::{Path, PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 pub(super) fn render(record: &Record) -> Result<String> {
     Ok(format!(
@@ -9,12 +12,12 @@ pub(super) fn render(record: &Record) -> Result<String> {
          Restart=always\nRestartSec=10s\nTimeoutStopSec=20s\nUMask=0077\n\
          StandardOutput=journal\nStandardError=journal\nKillMode=mixed\n\n\
          [Install]\nWantedBy=default.target\n",
-        quote(&record.binary, true)?,
-        quote(&record.config(), false)?,
+        quote(&record.binary, ":")?,
+        quote(&record.config(), "")?,
     ))
 }
 
-fn quote(path: &Path, executable: bool) -> Result<String> {
+fn quote(path: &Path, prefix: &str) -> Result<String> {
     ensure!(path.is_absolute(), "Service paths must be absolute");
     let path = path.to_str().context("Service paths must be UTF-8")?;
     ensure!(
@@ -23,7 +26,8 @@ fn quote(path: &Path, executable: bool) -> Result<String> {
     );
     // ':' disables environment expansion for the whole command, including
     // argv[0]. Doubling '$' in the executable would change the path systemd opens.
-    let mut encoded = String::from(if executable { "\":" } else { "\"" });
+    let mut encoded = String::from("\"");
+    encoded.push_str(prefix);
     for c in path.chars() {
         match c {
             '"' | '\\' => encoded.push('\\'),
@@ -49,6 +53,10 @@ impl Identity {
 }
 
 pub(super) fn identity(fragment: &Path, drop_ins: &str) -> Option<Identity> {
+    effective(fragment, drop_ins).map(|(identity, _, _)| identity)
+}
+
+pub(super) fn effective(fragment: &Path, drop_ins: &str) -> Option<(Identity, PathBuf, String)> {
     let mut commands = Vec::new();
     let paths = words(drop_ins, true)?;
     for path in std::iter::once(fragment).chain(paths.iter().map(Path::new)) {
@@ -57,28 +65,75 @@ pub(super) fn identity(fragment: &Path, drop_ins: &str) -> Option<Identity> {
         if !path.is_absolute() || !path.metadata().ok()?.is_file() {
             return None;
         }
-        read_commands(&std::fs::read_to_string(path).ok()?, &mut commands)?;
+        let text = std::fs::read_to_string(path).ok()?;
+        let entries = commands_in(&text)?;
+        for entry in entries {
+            match entry {
+                Some(command) => commands.push((path.to_path_buf(), command, text.clone())),
+                None => commands.clear(),
+            }
+        }
     }
-    let [command] = commands.as_slice() else {
+    let [(path, command, text)] = commands.as_slice() else {
         return None;
     };
-    literal(command)
+    Some((literal(&command.value)?, path.clone(), text.clone()))
 }
 
-fn read_commands(text: &str, commands: &mut Vec<String>) -> Option<()> {
+struct Command {
+    value: String,
+    executable: Option<Range<usize>>,
+}
+
+pub(super) fn with_binary(text: &str, old: &Path, target: &Path) -> Result<String> {
+    let mut commands = Vec::new();
+    for command in commands_in(text).context("Invalid systemd unit; values hidden")? {
+        match command {
+            Some(command) => commands.push(command),
+            None => commands.clear(),
+        }
+    }
+    let [command] = commands.as_slice() else {
+        anyhow::bail!("Expected a single effective ExecStart in the gateway unit");
+    };
+    let identity =
+        literal(&command.value).context("Unsupported gateway ExecStart; values hidden")?;
+    ensure!(identity.binary == old, "Systemd gateway executable changed");
+    let (first, _) = word(&command.value, false).context("Unsupported gateway ExecStart")?;
+    let range = command
+        .executable
+        .clone()
+        .context("Systemd executable spans multiple lines")?;
+    let mut replacement = text.to_owned();
+    let (prefix, _) = executable_parts(&first);
+    replacement.replace_range(range, &quote(target, prefix)?);
+    Ok(replacement)
+}
+
+fn commands_in(text: &str) -> Option<Vec<Option<Command>>> {
     if text.contains('\0') {
         return None;
     }
+    let mut commands = Vec::new();
     let mut service = false;
     let mut pending = String::new();
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    for line in text.lines() {
-        if line
-            .trim_start_matches([' ', '\t', '\r'])
-            .starts_with(['#', ';'])
-        {
+    let mut segments = Vec::new();
+    let mut offset = 0;
+    for physical in text.split_inclusive('\n') {
+        let line_start = offset;
+        offset += physical.len();
+        let line = physical.trim_end_matches(['\r', '\n']);
+        let line = if line_start == 0 {
+            line.trim_start_matches('\u{feff}')
+        } else {
+            line
+        };
+        if line.trim_start_matches([' ', '\t']).starts_with(['#', ';']) {
             continue;
         }
+        let bom = usize::from(line_start == 0 && physical.starts_with('\u{feff}'))
+            * '\u{feff}'.len_utf8();
+        segments.push((pending.len(), line_start + bom, line.len()));
         pending.push_str(line);
         let trailing_backslashes = pending.bytes().rev().take_while(|&b| b == b'\\').count();
         if trailing_backslashes % 2 == 1 {
@@ -89,39 +144,63 @@ fn read_commands(text: &str, commands: &mut Vec<String>) -> Option<()> {
         let line = pending.trim_matches([' ', '\t', '\r']);
         if line.starts_with('[') {
             service = line == "[Service]";
-        } else if service
-            && let Some((key, value)) = line.split_once('=')
-            && key.trim_end_matches([' ', '\t', '\r']) == "ExecStart"
-        {
-            let value = value.trim_matches([' ', '\t', '\r']);
-            if value.is_empty() {
-                commands.clear();
-            } else {
-                commands.push(value.to_owned());
-            }
+        } else if service && let Some(command) = exec_start(&pending, &segments) {
+            commands.push(command);
         }
         pending.clear();
+        segments.clear();
     }
-    pending.is_empty().then_some(())
+    pending.is_empty().then_some(commands)
+}
+
+fn exec_start(text: &str, segments: &[(usize, usize, usize)]) -> Option<Option<Command>> {
+    let (key, value) = text.split_once('=')?;
+    if key.trim_matches([' ', '\t', '\r']) != "ExecStart" {
+        return None;
+    }
+    let value = value.trim_start_matches([' ', '\t', '\r']);
+    if value.is_empty() {
+        return Some(None);
+    }
+    let start = text.len() - value.len();
+    let executable = word(value, false).and_then(|(_, rest)| {
+        let end = text.len() - rest.len();
+        segments.iter().find_map(|&(logical, physical, len)| {
+            (start >= logical && end <= logical + len)
+                .then(|| physical + start - logical..physical + end - logical)
+        })
+    });
+    Some(Some(Command {
+        value: value.to_owned(),
+        executable,
+    }))
 }
 
 fn literal(command: &str) -> Option<Identity> {
     let words = words(command, false)?;
-    let [binary, serve, flag, config] = words.as_slice() else {
-        return None;
-    };
-    let literal_env = binary.starts_with(':');
-    let binary = undouble(binary.strip_prefix(':').unwrap_or(binary), '%')?;
-    let config = undouble(config, '%')?;
+    let (binary, arguments) = words.split_first()?;
+    let (prefix, binary) = executable_parts(binary);
+    let literal_env = prefix.contains(':');
+    let binary = undouble(binary, '%')?;
+    let skip_argv0 = usize::from(prefix.contains('@'));
+    let config =
+        super::super::config_argument(arguments.iter().skip(skip_argv0).map(String::as_str))?;
+    let config = undouble(config.to_str()?, '%')?;
     let config = if literal_env {
         config
     } else {
         undouble(&config, '$')?
     };
     let binary = PathBuf::from(binary);
-    let config = PathBuf::from(config);
-    (serve == "serve" && flag == "--config" && binary.is_absolute() && config.is_absolute())
-        .then_some(Identity { binary, config })
+    binary.is_absolute().then_some(Identity {
+        binary,
+        config: PathBuf::from(config),
+    })
+}
+
+fn executable_parts(executable: &str) -> (&str, &str) {
+    let path = executable.trim_start_matches([':', '-', '@', '+', '!']);
+    executable.split_at(executable.len() - path.len())
 }
 
 fn undouble(value: &str, special: char) -> Option<String> {
@@ -168,7 +247,12 @@ fn word(input: &str, property: bool) -> Option<(String, &str)> {
                 return (rest.is_empty() || rest.starts_with(|c: char| c.is_ascii_whitespace()))
                     .then_some((value, rest));
             }
-            c if quote.is_none() && c.is_ascii_whitespace() => break,
+            c if quote.is_none() && c.is_ascii_whitespace() => {
+                return Some((
+                    value,
+                    &input[input.len() - chars.as_str().len() - c.len_utf8()..],
+                ));
+            }
             '"' | '\'' if quote.is_none() => return None,
             '\\' => value.push(match chars.next()? {
                 c @ ('\\' | '"' | '\'') => c,

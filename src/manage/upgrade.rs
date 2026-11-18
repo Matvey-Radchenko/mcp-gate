@@ -1,4 +1,8 @@
 //! Existing installations retain endpoints, credentials and backend state across upgrades.
+mod migration;
+
+pub(super) use migration::{BinaryState, binary_state, selected};
+
 use super::{
     Selection, runtime, service,
     store::{self, Record, Registry},
@@ -16,6 +20,12 @@ pub struct Outcome {
     pub restart: std::collections::BTreeSet<crate::clients::Client>,
 }
 
+pub(super) fn binary_path(root: &Path, hash: &str) -> PathBuf {
+    root.join("binaries")
+        .join(format!("{}-{hash}", env!("CARGO_PKG_VERSION")))
+        .join(crate::platform::binary_name())
+}
+
 pub fn binary(root: &Path) -> Result<PathBuf> {
     let parent = root.join("binaries");
     if !parent.exists() {
@@ -29,8 +39,10 @@ pub fn binary(root: &Path) -> Result<PathBuf> {
             staged = Some(file);
             Ok(hash)
         })?;
-        let directory = parent.join(format!("{}-{hash}", env!("CARGO_PKG_VERSION")));
-        let target = directory.join(crate::platform::binary_name());
+        let target = binary_path(root, &hash);
+        let directory = target
+            .parent()
+            .context("Missing managed binary directory")?;
         if target.exists() {
             ensure!(
                 catalog::digest(&target)? == hash,
@@ -40,13 +52,13 @@ pub fn binary(root: &Path) -> Result<PathBuf> {
         }
         store::ensure_replaceable(&target)?;
         if !directory.exists() {
-            crate::platform::private_dir(&directory)?;
+            crate::platform::private_dir(directory)?;
         }
         let file = match staged {
             Some(file) => file,
             None => {
                 let mut source = fs::File::open(std::env::current_exe()?)?;
-                let mut file = temporary.open(&directory)?;
+                let mut file = temporary.open(directory)?;
                 io::copy(&mut source, &mut file)?;
                 file
             }
@@ -77,6 +89,18 @@ pub async fn apply(
             ));
             continue;
         }
+        let target = binary_path(root, &hash);
+        if let Some((message, restart_clients)) =
+            migration::apply(root, registry, index, &old, &target, &hash).await?
+        {
+            results.push(message);
+            if restart_clients {
+                outcome
+                    .restart
+                    .extend(old.bindings.iter().map(|binding| binding.client));
+            }
+            continue;
+        }
         let config = crate::config::Config::load(&old.config())?;
         let changed = crate::catalog::Catalog::load(&config.catalog_file, &config.backend).is_err();
         if old.binary_hash == hash
@@ -103,6 +127,7 @@ pub async fn apply(
             phase: "upgrading".into(),
             services: vec![new.clone()],
             restart: vec![old.clone()],
+            migration: None,
             changes: vec![],
         };
         journal.save(&path)?;

@@ -87,12 +87,16 @@ On Linux, setup registers a `systemd --user` unit under `~/.config/systemd/user`
 
 Run `setup` again with a newer or older build to update compatible background services. An idle service enters maintenance before replacement; a busy service waits until a later setup. Unsupported state formats are rejected. Operation journals keep recoverable changes and do not overwrite later edits.
 
+For a legacy user service, run `mcp-gate adopt <name>` once to record its identity. Then run `mcp-gate setup` with the official executable and select the adopted gateway. Use `setup --dry-run --json` to preview the migration. Setup points the service at `binaries/<version>-<sha256>/` and preserves its label, endpoint, credentials, backend, and service settings. Adoption saves no client bindings, so existing client entries stay `external` and require no app restart. A subsequent setup leaves a gateway on the current managed binary running.
+
+For unattended setup, select the external connection with the usual `--client`, `--server`, and `--yes` options. Setup matches the service by its endpoint. If the gateway has no matching client entry, use the adopted gateway name or service label as the `--server` value and supply `--client`.
+
 ## Everyday commands
 
 | Command | What it does |
 | --- | --- |
-| `mcp-gate setup` | Preview, then register services and rewrite selected personal client connections. |
-| `mcp-gate status` | List client connections and `local.mcp-gate.*` user services (LaunchAgents on macOS, systemd --user units on Linux). |
+| `mcp-gate setup` | Preview and apply selected client connections, service updates, and adopted gateway migrations. |
+| `mcp-gate status` | List client connections and `local.mcp-gate.*` user services (LaunchAgents on macOS, systemd --user units on Linux, and logon tasks on Windows). |
 | `mcp-gate remove` | Restore selected connections, or all managed ones with `--all --yes`. |
 | `mcp-gate adopt <name>` | Record an unmanaged `local.mcp-gate.<name>` user service in the local registry. Does not restart the gateway, edit client settings, or copy the binary. |
 | `mcp-gate idle <name> [15m\|off]` | Show or set backend idle expiry. Use `--dry-run` to preview or `--yes` to save; prints the required gateway restart command. |

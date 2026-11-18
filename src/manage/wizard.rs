@@ -3,6 +3,7 @@ use super::{Selection, inventory, preview, store::Registry, ui};
 use crate::clients::Candidate;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
+use std::path::Path;
 
 pub struct Setup {
     pub candidates: Vec<Candidate>,
@@ -19,10 +20,14 @@ impl std::fmt::Display for Back {
 }
 impl std::error::Error for Back {}
 
-pub async fn setup(options: &mut Selection, registry: &Registry) -> Result<Option<Setup>> {
+pub async fn setup(
+    options: &mut Selection,
+    registry: &Registry,
+    root: &Path,
+) -> Result<Option<Setup>> {
     let project_filter = options.project.clone();
     loop {
-        match setup_scope(options, registry).await {
+        match setup_scope(options, registry, root).await {
             Err(error) if error.is::<Back>() && project_filter.is_none() => {
                 options.project = None;
             }
@@ -35,7 +40,11 @@ pub async fn setup(options: &mut Selection, registry: &Registry) -> Result<Optio
     }
 }
 
-async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Option<Setup>> {
+async fn setup_scope(
+    options: &mut Selection,
+    registry: &Registry,
+    root: &Path,
+) -> Result<Option<Setup>> {
     let exe = std::env::current_exe()?;
     let size = std::fs::metadata(&exe).map(|meta| meta.len()).unwrap_or(0);
     super::trace::log(&format!(
@@ -67,11 +76,7 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
     let managed: Vec<_> = registry
         .gateways
         .iter()
-        .filter(|r| {
-            r.bindings
-                .iter()
-                .any(|b| super::matches_binding(options, b))
-        })
+        .filter(|r| super::upgrade::selected(r, options, &inventory.connections))
         .collect();
     if interactive {
         ui::fresh_line();
@@ -126,6 +131,7 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
         connections: &inventory.connections,
         issues: &inventory.issues,
         hash: &hash,
+        root,
         interactive,
     })
 }
@@ -167,7 +173,7 @@ fn inspect(inventory: &mut inventory::Inventory, options: &Selection, managed: u
         .count();
     if !options.json {
         println!(
-            "Found {} connections: {count} ready to connect, {} managed.",
+            "Found {} connections, with {count} ready to connect. {} existing gateways are available for setup.",
             inventory.connections.len(),
             managed
         );
@@ -318,7 +324,7 @@ pub(super) fn review_setup(candidates: &[Candidate]) -> Result<bool> {
                 }
                 if candidates.is_empty() {
                     println!(
-                        "Existing gateway update preserves client configuration, endpoint and credentials. Changed backend catalogs are reviewed separately during discovery."
+                        "Existing gateway updates preserve client configuration, endpoint and credentials. A binary migration also preserves the service settings."
                     );
                 }
             }

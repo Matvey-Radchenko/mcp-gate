@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Setup migrates selected adopted and legacy gateway services to the managed binary store. LaunchAgent, systemd user unit, and Windows logon task settings stay intact. Connections with no saved bindings stay external.
+- Setup previews adopted gateway migrations with `--dry-run` and leaves already-current services running.
+
 ## 0.1.2 — 2026-11-18
 
 - Unified backend idle expiry as `idle_seconds`: session-owned defaults to 900 seconds, shared defaults to off, and `0` disables either. Accept `"off"` on input and the legacy `session_idle_seconds` / `shared_idle_seconds` aliases; serialize only the new key and reject duplicate idle keys.

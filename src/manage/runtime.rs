@@ -227,18 +227,28 @@ pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result
 /// A live maintenance barrier or the daemon's exclusive state lock prevents a
 /// new owner from accepting work while its service registration is removed.
 pub async fn stop_idle(record: &Record) -> Result<bool> {
+    stop_with(record, || super::service::unregister(record)).await
+}
+
+pub(super) async fn stop_with(record: &Record, stop: impl FnOnce() -> Result<()>) -> Result<bool> {
     let config = Config::load(&record.config())?;
-    let offline = match hold_for_stop(record, &config).await? {
+    let (paused, offline) = match hold_for_stop(record, &config).await? {
         StopHold::Busy => return Ok(false),
-        StopHold::Paused => None,
-        StopHold::Offline(lock) => Some(lock),
+        StopHold::Paused => (true, None),
+        StopHold::Offline(lock) => (false, Some(lock)),
     };
-    let result = super::service::unregister(record);
-    if result.is_err() {
-        let _ = maintenance(record, false).await;
-    }
+    let result = stop();
     drop(offline);
-    result?;
+    if let Err(error) = result {
+        if paused
+            && !maintenance(record, false)
+                .await
+                .is_ok_and(|resumed| resumed)
+        {
+            anyhow::bail!("{error}; could not confirm that gateway maintenance was released");
+        }
+        return Err(error);
+    }
     await_state_release(&config).await
 }
 

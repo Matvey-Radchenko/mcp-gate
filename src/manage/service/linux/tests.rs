@@ -172,3 +172,55 @@ fn startup_state_distinguishes_first_activation_from_exit_and_restart() {
         assert_eq!(startup::failed_start(&fields), failed, "{state}");
     }
 }
+
+#[test]
+fn rewrites_effective_executable_without_changing_arguments_or_directives() {
+    let original = concat!(
+        "\u{feff}[Service]\r\n",
+        "ExecStart=\r\n",
+        "ExecStart=\\\r\n",
+        "# continue after a comment\r\n",
+        " \"/legacy path/mcp-gate\" serve --config \"/state/config.toml\" --header \"fixture secret\"\r\n",
+        "Environment=FIXTURE_VALUE=private\r\n",
+        "WorkingDirectory=/legacy working directory\r\n",
+        "Restart=no\r\n",
+        "[Install]\r\nWantedBy=custom.target\r\n",
+    );
+    let updated = unit_file::with_binary(
+        original,
+        Path::new("/legacy path/mcp-gate"),
+        Path::new(r#"/managed path/quoted"$%/mcp-gate"#),
+    )
+    .unwrap();
+    assert_eq!(
+        updated,
+        original.replace(
+            r#""/legacy path/mcp-gate""#,
+            r#""/managed path/quoted\"$%%/mcp-gate""#
+        )
+    );
+}
+
+#[test]
+fn refuses_an_unrelated_execstart_without_echoing_arguments() {
+    let fixture_arg = "private-fixture-argument";
+    let unit = format!("[Service]\nExecStart=/bin/sh -c '{fixture_arg}'");
+    let error = unit_file::with_binary(&unit, Path::new("/legacy"), Path::new("/new")).unwrap_err();
+    assert!(!format!("{error:#}").contains(fixture_arg));
+}
+
+#[test]
+fn rewrites_a_prefixed_execstart_and_keeps_the_custom_argv0() {
+    let unit =
+        "[Service]\nExecStart=-@:/legacy/mcp-gate custom-argv0 serve --config=/state/config.toml\n";
+    let changed = unit_file::with_binary(
+        unit,
+        Path::new("/legacy/mcp-gate"),
+        Path::new("/managed/mcp-gate"),
+    )
+    .unwrap();
+    assert_eq!(
+        changed,
+        unit.replace("-@:/legacy/mcp-gate", "\"-@:/managed/mcp-gate\"")
+    );
+}

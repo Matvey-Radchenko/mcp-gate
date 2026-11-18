@@ -1,7 +1,7 @@
 #![cfg(feature = "test-backend")]
 use mcp_gate::{
     clients::document,
-    manage::{service, store},
+    manage::{runtime, service, store},
 };
 use serde_json::json;
 use std::{fs, process::Command};
@@ -215,4 +215,93 @@ fn probe_detects_drift_without_replacing_catalog(
     );
     assert_eq!(fs::read(&config.catalog_file).unwrap(), changed);
     store::atomic(&config.catalog_file, &original_catalog).unwrap();
+}
+
+#[path = "support/installation.rs"]
+#[allow(dead_code, reason = "Shared temporary installation fixture")]
+mod migration_fixture;
+
+#[tokio::test]
+#[ignore = "Registers an isolated temporary user service; requires a logged-in user service manager"]
+async fn adopted_gateway_runs_from_managed_store_without_client_changes() {
+    let fixture = migration_fixture::Installation::new();
+    fixture.run("setup");
+    let mut registry = store::load(&fixture.root).unwrap();
+    let current = registry.gateways[0].clone();
+    let legacy_dir = fixture.root.join("legacy binary");
+    fs::create_dir(&legacy_dir).unwrap();
+    let mut legacy = current.clone();
+    legacy.binary = legacy_dir.join(current.binary.file_name().unwrap());
+    fs::copy(&current.binary, &legacy.binary).unwrap();
+    mcp_gate::platform::executable(&legacy.binary).unwrap();
+    legacy.bindings.clear();
+    service::unregister(&current).unwrap();
+    registry.gateways[0] = legacy.clone();
+    store::save(&fixture.root, &registry).unwrap();
+    service::register(&legacy).unwrap();
+    runtime::ready(&legacy).await.unwrap();
+
+    let clients = fs::read(&fixture.settings).unwrap();
+    let config = fs::read(legacy.config()).unwrap();
+    let catalog = fs::read(legacy.release.join("catalog.json")).unwrap();
+    let auth = fs::read(legacy.release.join("client-token")).unwrap();
+    let old_health = runtime::health(&legacy).await.unwrap();
+    assert!(
+        fixture.run("status")["connections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|connection| connection["name"] == "fixture" && connection["kind"] == "external")
+    );
+
+    let preview = fixture
+        .command("setup")
+        .args(["--dry-run", "--diff"])
+        .output()
+        .unwrap();
+    migration_fixture::Installation::check(&preview);
+    assert!(preview.status.success());
+    let plan: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(plan["plan"]["managed"][0]["managed_store_migration"], true);
+    assert_eq!(
+        runtime::health(&legacy).await.unwrap()["pid"],
+        old_health["pid"]
+    );
+    assert_eq!(
+        store::load(&fixture.root).unwrap().gateways[0].binary,
+        legacy.binary
+    );
+
+    let result = fixture.run("setup");
+    assert_eq!(result["restart_clients"], json!([]));
+    assert!(
+        result["updates"][0]
+            .as_str()
+            .unwrap()
+            .contains("migrated to the managed store")
+    );
+    let migrated = store::load(&fixture.root).unwrap().gateways.remove(0);
+    assert_eq!(migrated.binary, current.binary);
+    assert_eq!(migrated.binary_hash, current.binary_hash);
+    assert_eq!(migrated.label, legacy.label);
+    assert!(migrated.bindings.is_empty());
+    assert!(service::installed(&migrated).unwrap());
+    let health = runtime::health(&migrated).await.unwrap();
+    assert_ne!(health["pid"], old_health["pid"]);
+    assert_eq!(health["workers"], 0);
+    assert!(fs::read(migrated.config()).unwrap() == config);
+    assert!(fs::read(migrated.release.join("catalog.json")).unwrap() == catalog);
+    assert!(fs::read(migrated.release.join("client-token")).unwrap() == auth);
+    assert!(fs::read(&fixture.settings).unwrap() == clients);
+
+    assert!(
+        fixture.run("setup")["updates"][0]
+            .as_str()
+            .unwrap()
+            .contains("already current")
+    );
+    assert_eq!(
+        runtime::health(&migrated).await.unwrap()["pid"],
+        health["pid"]
+    );
 }

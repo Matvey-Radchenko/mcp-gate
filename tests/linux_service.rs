@@ -272,3 +272,254 @@ esac
     assert_eq!(registry.gateways[0].binary, Path::new(binary));
     assert_eq!(run(&["status"])["services"][0]["ownership"], "managed");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn setup_migrates_an_adopted_unit_and_keeps_its_external_connection() {
+    let fixture = Fixture::new();
+    let path = fixture.mock_systemctl(include_str!("support/migration_systemctl.sh"));
+    let (listen, busy, server) = migration_api().await;
+    let root = fixture.root();
+    let data = root.join("data/mcp-gate");
+    let bin = root.join("legacy/mcp-gate");
+    fs::create_dir_all(bin.parent().unwrap()).unwrap();
+    // Identical hashes still require a migration from outside the store.
+    fs::copy(env!("CARGO_BIN_EXE_mcp-gate"), &bin).unwrap();
+    let unit = root.join("config/systemd/user/local.mcp-gate.historical-id.service");
+    let drop_in = unit.with_extension("service.d").join("override.conf");
+    fs::create_dir_all(drop_in.parent().unwrap()).unwrap();
+    let config = root.join("config.toml");
+    let (config_bytes, token_bytes, catalog_bytes) = migration_config(root, &config, &bin, listen);
+    let base = b"[Service]\nExecStart=/bin/false\nRestart=no\n[Install]\nWantedBy=custom.target\n";
+    fs::write(&unit, base).unwrap();
+    let definition = format!(
+        "[Service]\nExecStart=\nExecStart=\"{}\" serve --config \"{}\" --header never-print-migration-fixture\nEnvironment=FIXTURE=never-print-migration-fixture\nWorkingDirectory={}\n",
+        bin.display(),
+        config.display(),
+        root.display()
+    );
+    fs::write(&drop_in, &definition).unwrap();
+    let settings = fixture.write_settings(&json!({
+        "url":format!("http://{listen}/mcp"),
+        "http_headers":{"Authorization":"never-print-migration-fixture"}
+    }));
+    fs::write(root.join("manager-state"), "active\n").unwrap();
+    let run = |args: &[&str], flags: &[&str], failure: Option<&str>| {
+        let mut command = fixture.command(args);
+        command.env("PATH", &path).args(flags);
+        if let Some(failure) = failure {
+            command.env("MCP_GATE_TEST_FAIL", failure);
+        }
+        let output = command.output().unwrap();
+        for bytes in [&output.stdout, &output.stderr] {
+            assert!(!String::from_utf8_lossy(bytes).contains("never-print-migration-fixture"));
+        }
+        output_json(output, failure.is_none())
+    };
+    assert_eq!(
+        run(&["adopt", "historical-id"], &[], None)["phase"],
+        "complete"
+    );
+    let registry_path = data.join("registry.json");
+    let original_registry = fs::read(&registry_path).unwrap();
+    let preview = run(SETUP, &["--dry-run", "--diff"], None);
+    assert_eq!(preview["phase"], "preview");
+    assert_eq!(preview["plan"]["connections"][0]["kind"], "external");
+    assert_eq!(
+        preview["plan"]["managed"][0]["managed_store_migration"],
+        true
+    );
+    assert_eq!(preview["plan"]["managed"][0]["connections"], json!([]));
+    assert_eq!(fs::read(&registry_path).unwrap(), original_registry);
+    assert_eq!(fs::read_to_string(&drop_in).unwrap(), definition);
+    assert!(!data.join("binaries").exists());
+    assert!(!root.join("manager-actions").exists());
+
+    let pending = run(SETUP, &[], None);
+    assert!(
+        pending["updates"][0]
+            .as_str()
+            .unwrap()
+            .contains("migration pending")
+    );
+    assert_eq!(fs::read(&registry_path).unwrap(), original_registry);
+    assert!(!root.join("manager-actions").exists());
+    busy.store(false, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(feature = "test-backend")]
+    {
+        let rolled_back = run(SETUP, &[], Some("upgrade-registered"));
+        assert!(
+            rolled_back["error"]
+                .as_str()
+                .unwrap()
+                .contains("previous settings/service restored")
+        );
+        assert_eq!(fs::read(&registry_path).unwrap(), original_registry);
+        assert_eq!(fs::read_to_string(&drop_in).unwrap(), definition);
+    }
+
+    let result = run(SETUP, &[], None);
+    assert!(
+        result["updates"][0]
+            .as_str()
+            .unwrap()
+            .contains("migrated to the managed store")
+    );
+    assert!(
+        result["updates"][0]
+            .as_str()
+            .unwrap()
+            .contains("client settings left alone")
+    );
+    assert_eq!(result["restart_clients"], json!([]));
+    let record = store::load(&data).unwrap().gateways.remove(0);
+    let hash = mcp_gate::catalog::digest(&bin).unwrap();
+    let target = data.join(format!(
+        "binaries/{}-{hash}/mcp-gate",
+        env!("CARGO_PKG_VERSION")
+    ));
+    assert_eq!(record.binary_hash, hash);
+    assert_eq!(record.binary, target);
+    assert!(record.bindings.is_empty());
+    assert_eq!(
+        fs::read_to_string(&drop_in).unwrap(),
+        definition.replace(bin.to_str().unwrap(), target.to_str().unwrap())
+    );
+    assert_eq!(fs::read(&unit).unwrap(), base);
+    assert_eq!(fs::read(&config).unwrap(), config_bytes);
+    assert_eq!(fs::read(root.join("token")).unwrap(), token_bytes);
+    assert_eq!(fs::read(root.join("catalog.json")).unwrap(), catalog_bytes);
+    assert_eq!(fs::read(fixture.settings()).unwrap(), settings);
+    assert_eq!(
+        run(&["status"], &[], None)["connections"][0]["kind"],
+        "external"
+    );
+    let actions_path = root.join("manager-actions");
+    let actions = fs::read_to_string(&actions_path).unwrap();
+    assert!(actions.ends_with("stop\ndaemon-reload\nreset-failed\nstart\n"));
+    assert_eq!(
+        run(SETUP, &[], None)["plan"]["managed"][0]["managed_store_migration"],
+        false
+    );
+    assert_eq!(fs::read_to_string(&actions_path).unwrap(), actions);
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
+}
+
+async fn migration_api() -> (
+    std::net::SocketAddr,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+    tokio::task::JoinHandle<()>,
+) {
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listen = listener.local_addr().unwrap();
+    let busy = Arc::new(AtomicBool::new(true));
+    let maintenance = busy.clone();
+    let api = Router::new()
+        .route(
+            "/health",
+            get(|| async { Json(json!({"service":"mcp-gate","workers":0})) }),
+        )
+        .route(
+            "/admin/maintenance",
+            post(move || async move {
+                if maintenance.load(Ordering::Relaxed) {
+                    axum::http::StatusCode::CONFLICT
+                } else {
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+    let server = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
+    (listen, busy, server)
+}
+
+fn migration_config(
+    root: &Path,
+    config: &Path,
+    binary: &Path,
+    listen: std::net::SocketAddr,
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let token = root.join("token");
+    let token_bytes = "ab".repeat(32).into_bytes();
+    fs::write(&token, &token_bytes).unwrap();
+    mcp_gate::platform::private_permissions(&token).unwrap();
+    let state = root.join("state");
+    fs::create_dir(&state).unwrap();
+    fs::write(state.join("gateway.lock"), b"").unwrap();
+    let catalog = root.join("catalog.json");
+    let catalog_bytes = b"retained legacy catalog".to_vec();
+    fs::write(&catalog, &catalog_bytes).unwrap();
+    let config_bytes = toml::to_string(&json!({
+        "format_version":2,"listen":listen.to_string(),
+        "token_file":token,"catalog_file":catalog,"state_dir":state,
+        "backend":{"profile":"stdio","command":binary,"version":"fixture",
+            "working_directory":root, "env":{"FIXTURE":"never-print-migration-fixture"}}
+    }))
+    .unwrap()
+    .into_bytes();
+    fs::write(config, &config_bytes).unwrap();
+    (config_bytes, token_bytes, catalog_bytes)
+}
+
+#[test]
+fn adopted_gateway_dry_run_is_read_only_without_a_reachable_gateway() {
+    let fixture = Fixture::new();
+    let root = fixture.root();
+    let data = root.join("data/mcp-gate");
+    let bin = Path::new(env!("CARGO_BIN_EXE_mcp-gate"));
+    let config = root.join("config.toml");
+    let address = "127.0.0.1:5".parse().unwrap();
+    migration_config(root, &config, bin, address);
+    fs::remove_file(root.join("token")).unwrap();
+    fs::write(root.join("manager-state"), "inactive\n").unwrap();
+    let unit = root.join("config/systemd/user/local.mcp-gate.historical-id.service");
+    let drop_in = unit.with_extension("service.d").join("override.conf");
+    fs::create_dir_all(drop_in.parent().unwrap()).unwrap();
+    fs::write(&unit, "[Service]\n").unwrap();
+    let before = format!(
+        "[Service]\nExecStart=\"{}\" serve --config \"{}\"\nEnvironment=FIXTURE=never-print-migration-fixture\n",
+        bin.display(),
+        config.display()
+    );
+    fs::write(&drop_in, &before).unwrap();
+    let settings = fixture.write_settings(&json!({"url":format!("http://{address}/mcp")}));
+    let path = fixture.mock_systemctl(include_str!("support/migration_systemctl.sh"));
+    let run = |args: &[&str]| {
+        let output = fixture.command(args).env("PATH", &path).output().unwrap();
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("never-print-migration-fixture"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("never-print-migration-fixture"));
+        output_json(output, true)
+    };
+    assert_eq!(run(&["adopt", "historical-id"])["phase"], "complete");
+    let registry = data.join("registry.json");
+    let registry_bytes = fs::read(&registry).unwrap();
+    let dry_run = run(&[
+        "setup",
+        "--client",
+        "codex",
+        "--server",
+        "fixture",
+        "--dry-run",
+        "--diff",
+    ]);
+    assert_eq!(
+        dry_run["plan"]["managed"][0]["managed_store_migration"],
+        true
+    );
+    assert_eq!(dry_run["plan"]["managed"][0]["connections"], json!([]));
+    assert_eq!(dry_run["plan"]["connections"][0]["kind"], "external");
+    assert_eq!(fs::read_to_string(drop_in).unwrap(), before);
+    assert_eq!(fs::read(registry).unwrap(), registry_bytes);
+    assert_eq!(fs::read(fixture.settings()).unwrap(), settings);
+    assert!(!root.join("manager-actions").exists());
+    assert!(!data.join("binaries").exists());
+}

@@ -76,12 +76,7 @@ pub(super) fn enable_with(
     unit: &str,
     mut invoke: impl FnMut(&[&str]) -> Result<Output>,
 ) -> Result<()> {
-    // Clear the start-rate limit before asking systemd to start this unit.
-    // An unloaded unit has no failed state or start-rate counter to clear.
-    let reset = invoke(&["reset-failed", unit])?;
-    if !reset.status.success() && !unloaded_unit(unit, &reset.stderr) {
-        check("reset-failed", &reset)?;
-    }
+    reset_failed(unit, &mut invoke)?;
 
     let output = invoke(&["enable", "--now", unit])?;
     if !output.status.success()
@@ -94,6 +89,23 @@ pub(super) fn enable_with(
         ));
     }
     check("enable --now", &output)
+}
+
+pub(super) fn start(unit: &str) -> Result<()> {
+    reset_failed(unit, &mut invoke)?;
+    run(&["start", unit])?;
+    Ok(())
+}
+
+fn reset_failed(unit: &str, invoke: &mut impl FnMut(&[&str]) -> Result<Output>) -> Result<()> {
+    // Clear the start-rate limit before asking systemd to start this unit.
+    // An unloaded unit has no failed state or start-rate counter to clear.
+    let reset = invoke(&["reset-failed", unit])?;
+    if !reset.status.success() && !unloaded_unit(unit, &reset.stderr) {
+        check("reset-failed", &reset)?;
+    }
+
+    Ok(())
 }
 
 fn unloaded_unit(unit: &str, stderr: &[u8]) -> bool {

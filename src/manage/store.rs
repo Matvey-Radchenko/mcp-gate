@@ -191,6 +191,11 @@ pub(super) fn with_temporary<T>(operation: impl FnOnce(&mut Temporary) -> Result
 }
 
 impl Temporary {
+    #[cfg(target_os = "macos")]
+    pub(super) fn path(&self) -> Result<&Path> {
+        self.path.as_deref().context("Missing staged file")
+    }
+
     pub(super) fn open(&mut self, parent: &Path) -> Result<fs::File> {
         ensure!(self.path.is_none(), "Temporary file already open");
         let path = parent.join(format!(".mcp-gate-{}.tmp", uuid::Uuid::new_v4()));
@@ -271,9 +276,22 @@ pub struct Journal {
     pub services: Vec<Record>,
     #[serde(default)]
     pub restart: Vec<Record>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration: Option<super::service::BinaryChange>,
     pub changes: Vec<FileChange>,
 }
 impl Journal {
+    /// Completed operations need no copy of the original service definition.
+    pub(super) fn finish_migration(&mut self, path: &Path, phase: &str) -> Result<()> {
+        let migration = self.migration.take();
+        self.phase = phase.into();
+        if let Err(error) = self.save(path) {
+            self.migration = migration;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn save(&self, path: &Path) -> Result<()> {
         atomic(path, &serde_json::to_vec_pretty(self)?)
     }

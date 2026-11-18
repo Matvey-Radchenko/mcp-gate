@@ -1,5 +1,6 @@
 //! Own only the matching fragment in the user's XDG systemd directory.
 mod manager;
+pub(super) mod replacement;
 mod startup;
 mod unit_file;
 

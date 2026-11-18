@@ -2,8 +2,6 @@
 use super::store::Registry;
 use crate::config::Config;
 use serde::Serialize;
-#[cfg(not(target_os = "linux"))]
-use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
@@ -80,12 +78,7 @@ struct Launch {
 
 impl Launch {
     fn is_recorded_as(&self, record: &super::store::Record) -> bool {
-        #[cfg(target_os = "linux")]
-        return record.label == self.label
-            && record.binary == self.binary
-            && record.config() == self.config;
-        #[cfg(not(target_os = "linux"))]
-        return record.id == self.name || record.label == self.label;
+        record.label == self.label && record.binary == self.binary && record.config() == self.config
     }
 }
 
@@ -109,38 +102,47 @@ fn launches(_home: &Path) -> anyhow::Result<Vec<Launch>> {
         .collect())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn launches(home: &Path) -> anyhow::Result<Vec<Launch>> {
     Ok(plists(home)
         .into_iter()
-        .filter_map(|path| launch(&read_plist(&path)?))
+        .filter_map(|path| {
+            let (label, binary, config) = super::service::launchd::identity(&path).ok()?;
+            launch(label, binary, config)
+        })
         .collect())
 }
 
-#[cfg(not(target_os = "linux"))]
-fn launch(plist: &Value) -> Option<Launch> {
-    let label = plist.get("Label")?.as_str()?;
+#[cfg(windows)]
+fn launches(_home: &Path) -> anyhow::Result<Vec<Launch>> {
+    Ok(super::service::scheduler::definitions()?
+        .into_iter()
+        .filter_map(|(label, binary, config)| launch(label, binary, config))
+        .collect())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn launches(_home: &Path) -> anyhow::Result<Vec<Launch>> {
+    Ok(Vec::new())
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn launch(label: String, binary: PathBuf, config: PathBuf) -> Option<Launch> {
     let name = label.strip_prefix("local.mcp-gate.")?;
-    if !valid_name(name) {
-        return None;
-    }
-    let args = plist.get("ProgramArguments")?.as_array()?;
-    let binary = PathBuf::from(args.first()?.as_str()?);
-    let file = binary.file_name()?.to_str()?;
-    if !matches!(file, "mcp-gate" | "mcp-gate.exe") {
-        return None;
-    }
-    let index = args.iter().position(|value| value == "--config")?;
-    let config = PathBuf::from(args.get(index + 1)?.as_str()?);
-    if !binary.is_absolute() || !config.is_absolute() {
-        return None;
-    }
-    Some(Launch {
-        name: name.to_string(),
-        label: label.to_string(),
+    (valid_name(name) && gateway_binary(&binary) && config.is_absolute()).then(|| Launch {
+        name: name.to_owned(),
+        label,
         binary,
         config,
     })
+}
+
+pub(super) fn gateway_binary(path: &Path) -> bool {
+    path.is_absolute()
+        && matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("mcp-gate" | "mcp-gate.exe" | "mcp-session-gateway" | "mcp-session-gateway.exe")
+        )
 }
 
 #[cfg(target_os = "linux")]
@@ -152,7 +154,7 @@ pub(super) fn recorded_labels(_home: &Path) -> std::collections::BTreeSet<String
         .unwrap_or_default()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub(super) fn recorded_labels(home: &Path) -> std::collections::BTreeSet<String> {
     let mut labels = std::collections::BTreeSet::new();
     for path in plists(home) {
@@ -163,6 +165,16 @@ pub(super) fn recorded_labels(home: &Path) -> std::collections::BTreeSet<String>
         }
     }
     labels
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(super) fn recorded_labels(_home: &Path) -> std::collections::BTreeSet<String> {
+    #[cfg(windows)]
+    return super::service::scheduler::definitions()
+        .map(|tasks| tasks.into_iter().map(|(label, _, _)| label).collect())
+        .unwrap_or_default();
+    #[cfg(not(windows))]
+    std::collections::BTreeSet::new()
 }
 
 pub(super) fn valid_name(name: &str) -> bool {
@@ -184,12 +196,8 @@ async fn describe(path: &Path) -> (Option<String>, &'static str) {
     (listen, state)
 }
 
-#[cfg(not(target_os = "linux"))]
-fn plists(home: &Path) -> Vec<PathBuf> {
-    // Only launchd reads ~/Library/LaunchAgents.
-    if !cfg!(target_os = "macos") {
-        return Vec::new();
-    }
+#[cfg(target_os = "macos")]
+pub(super) fn plists(home: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(home.join("Library/LaunchAgents")) else {
         return Vec::new();
     };
@@ -202,26 +210,4 @@ fn plists(home: &Path) -> Vec<PathBuf> {
     }
     paths.sort();
     paths
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_plist(path: &Path) -> Option<Value> {
-    let bytes = std::fs::read(path).ok()?;
-    if let Ok(value) = serde_json::from_slice::<Value>(&bytes)
-        && (value.get("Label").is_some() || value.get("ProgramArguments").is_some())
-    {
-        return Some(value);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("/usr/bin/plutil")
-            .args(["-convert", "json", "-o", "-"])
-            .arg(path)
-            .output()
-            .ok()?;
-        if output.status.success() {
-            return serde_json::from_slice(&output.stdout).ok();
-        }
-    }
-    None
 }

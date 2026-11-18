@@ -1,4 +1,13 @@
 //! Per-user service registration. Never installs a system service or kills a client.
+mod definition;
+#[cfg(target_os = "macos")]
+pub(super) mod launchd;
+#[cfg(windows)]
+pub(super) mod scheduler;
+
+pub use definition::BinaryChange;
+pub(super) use definition::{resume, snapshot};
+
 use super::store::Record;
 use anyhow::Result;
 #[cfg(target_os = "linux")]
@@ -299,4 +308,31 @@ fn windows_xml(record: &Record) -> Result<String> {
         arguments = xml(&format!("serve --config \"{}\"", record.config().display())),
         cwd = xml(&record.release.to_string_lossy())
     ))
+}
+
+/// Recognize only a literal gateway invocation and a single absolute config.
+pub(super) fn config_argument<'a>(
+    mut args: impl Iterator<Item = &'a str>,
+) -> Option<std::path::PathBuf> {
+    if args.next()? != "serve" {
+        return None;
+    }
+    let mut config = None;
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            break;
+        }
+        let value = if arg == "--config" {
+            Some(args.next()?)
+        } else {
+            arg.strip_prefix("--config=")
+        };
+        if let Some(value) = value {
+            let path = std::path::PathBuf::from(value);
+            if !path.is_absolute() || config.replace(path).is_some() {
+                return None;
+            }
+        }
+    }
+    config
 }

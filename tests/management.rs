@@ -122,6 +122,7 @@ fn journals_recover_only_owned_writes_and_reject_future_formats() {
         phase: "preparing".into(),
         services: vec![],
         restart: vec![],
+        migration: None,
         changes: vec![],
     };
     journal
@@ -139,6 +140,7 @@ fn journals_recover_only_owned_writes_and_reject_future_formats() {
         phase: "preparing".into(),
         services: vec![],
         restart: vec![],
+        migration: None,
         changes: vec![],
     };
     new.write(&journal_file, &created, vec![], b"new".to_vec())

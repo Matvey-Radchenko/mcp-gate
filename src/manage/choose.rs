@@ -11,6 +11,7 @@ pub(super) struct Choice<'a> {
     pub managed: &'a [&'a super::store::Record],
     pub connections: &'a [inventory::Connection],
     pub issues: &'a [SourceIssue],
+    pub root: &'a std::path::Path,
     pub hash: &'a str,
     pub interactive: bool,
 }
@@ -46,6 +47,12 @@ pub(super) fn select(choice: Choice<'_>) -> Result<Option<wizard::Setup>> {
 fn selected_indices(choice: &Choice<'_>) -> Result<Option<Vec<usize>>> {
     let mut labels: Vec<_> = choice.eligible.iter().map(choice_label).collect();
     labels.extend(choice.managed.iter().map(|record| {
+        if record.bindings.is_empty() {
+            return format!(
+                "Manage existing gateway: {} (no saved client bindings)",
+                ui::safe(&record.label)
+            );
+        }
         format!(
             "Manage existing: {}",
             record
@@ -128,7 +135,7 @@ fn selection_plan(
         .collect();
     super::labels::note_shared_gateways(&mut servers, choice.registry);
     json!({"servers":servers,
-        "managed":selected.iter().map(|record| preview::managed(record, choice.hash)).collect::<Vec<_>>(),
+        "managed":selected.iter().map(|record| preview::managed(record, choice.root, choice.hash)).collect::<Vec<_>>(),
         "connections":choice.connections,"source_issues":choice.issues,
         "discovery":"Runs the original command; npx, uvx and Docker may download dependencies.",
         "verification":"Gateway readiness does not confirm the application has switched."})
