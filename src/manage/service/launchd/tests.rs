@@ -30,6 +30,17 @@ fn rewrites_program_and_matching_argv0_while_preserving_typed_settings() {
     assert_eq!(identity(&plist).unwrap().1, old);
     fs::write(&plist, rewrite(&definition, old, target).unwrap()).unwrap();
     assert_eq!(identity(&plist).unwrap().1, target);
+    assert_eq!(
+        arguments(&plist).unwrap(),
+        [
+            target.to_str().unwrap(),
+            "serve",
+            "--config",
+            "/private/config.toml",
+            "--header",
+            "fixture only",
+        ]
+    );
     let converted = Command::new("/usr/bin/plutil")
         .args(["-convert", "xml1", "-o", "-"])
         .arg(&plist)
@@ -39,11 +50,11 @@ fn rewrites_program_and_matching_argv0_while_preserving_typed_settings() {
     let after = String::from_utf8(converted.stdout).unwrap();
     assert_eq!(after.matches("/managed path/mcp-gate").count(), 2);
     for expected in [
-        "fixture only",
         "private fixture",
         "/legacy directory",
         "<integer>44</integer>",
         "SuccessfulExit",
+        "<false/>",
     ] {
         assert!(after.contains(expected));
     }

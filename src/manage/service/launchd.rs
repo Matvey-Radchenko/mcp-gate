@@ -20,10 +20,7 @@ pub(in crate::manage) fn identity(path: &Path) -> Result<(String, PathBuf, PathB
 }
 
 pub(in crate::manage) fn invocation(path: &Path) -> Result<(PathBuf, PathBuf)> {
-    let args =
-        extract(path, "ProgramArguments", "json")?.context("LaunchAgent has no arguments")?;
-    let args: Vec<String> = serde_json::from_str(&args)
-        .map_err(|_| anyhow::anyhow!("Invalid LaunchAgent arguments; values hidden"))?;
+    let args = arguments(path)?;
     let program = extract(path, "Program", "raw")?;
     let binary = PathBuf::from(
         program
@@ -42,18 +39,18 @@ pub(in crate::manage) fn invocation(path: &Path) -> Result<(PathBuf, PathBuf)> {
     Ok((binary, config))
 }
 
+fn arguments(path: &Path) -> Result<Vec<String>> {
+    let args =
+        extract(path, "ProgramArguments", "json")?.context("LaunchAgent has no arguments")?;
+    serde_json::from_str(&args)
+        .map_err(|_| anyhow::anyhow!("Invalid LaunchAgent arguments; values hidden"))
+}
+
 fn extract(path: &Path, key: &str, format: &str) -> Result<Option<String>> {
     let Some(document) = document(path)? else {
         return Ok(None);
     };
-    let value = key.split('.').try_fold(&document, |value, name| {
-        if let Ok(index) = name.parse::<usize>() {
-            value.get(index)
-        } else {
-            value.get(name)
-        }
-    });
-    Ok(value.and_then(|value| {
+    Ok(document.get(key).and_then(|value| {
         if format == "raw" {
             value.as_str().map(str::to_owned)
         } else {
@@ -139,27 +136,37 @@ pub(super) fn rewrite(definition: &Definition, old: &Path, target: &Path) -> Res
         drop(file);
         let path = temporary.path()?;
         let program = extract(path, "Program", "raw")?;
-        let first = extract(path, "ProgramArguments.0", "raw")?;
+        let mut args = arguments(path)?;
         ensure!(
             program
                 .as_ref()
-                .or(first.as_ref())
+                .or(args.first())
                 .is_some_and(|value| Path::new(value) == old),
             "LaunchAgent executable changed"
         );
         if program.is_some() {
-            replace(path, "Program", target)?;
+            replace(path, "Program", "-string", target)?;
         }
-        if first.as_ref().is_some_and(|value| Path::new(value) == old) {
-            replace(path, "ProgramArguments.0", target)?;
+        if let Some(first) = args
+            .first_mut()
+            .filter(|value| Path::new(value.as_str()) == old)
+        {
+            *first = target.to_owned();
+            // Replacing an array index with plutil can drop the remaining arguments.
+            replace(
+                path,
+                "ProgramArguments",
+                "-json",
+                &serde_json::to_string(&args)?,
+            )?;
         }
         Ok(fs::read(path)?)
     })
 }
 
-fn replace(path: &Path, key: &str, value: &str) -> Result<()> {
+fn replace(path: &Path, key: &str, format: &str, value: &str) -> Result<()> {
     let output = Command::new("/usr/bin/plutil")
-        .args(["-replace", key, "-string", value, "--"])
+        .args(["-replace", key, format, value, "--"])
         .arg(path)
         .output()?;
     ensure!(
