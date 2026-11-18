@@ -17,12 +17,12 @@ function acceptance(overrides = {}) {
   };
 }
 
-test('0.1.1 reuses the 0.1.0 login and Documents evidence without new passed claims', () => {
+test('0.1.2 reuses the 0.1.0 login and Documents evidence without new passed claims', () => {
   const realManifest = JSON.parse(readFileSync('npm/mcp-gate/package.json', 'utf8'));
   const real = JSON.parse(readFileSync('release/acceptance.json', 'utf8'));
-  assert.equal(real.version, '0.1.1');
+  assert.equal(real.version, '0.1.2');
   assert.equal(real.reused_evidence, '0.1.0');
-  assertReleaseEvidence(realManifest, real, '0.1.1');
+  assertReleaseEvidence(realManifest, real, '0.1.2');
   for (const file of [
     'release/arm64-reboot-2026-09-09.json',
     'release/windows-whisky-smoke-2026-11-13.json',

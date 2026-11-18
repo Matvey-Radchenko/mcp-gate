@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 — 2026-11-18
+
 - Unified backend idle expiry as `idle_seconds`: session-owned defaults to 900 seconds, shared defaults to off, and `0` disables either. Accept `"off"` on input and the legacy `session_idle_seconds` / `shared_idle_seconds` aliases; serialize only the new key and reject duplicate idle keys.
 - Only executable requests extend either idle timer. Session-owned backends retain the open GET-stream exception for recordings; idle expiry still closes that HTTP session. Capacity eviction remains session-only and available with idle disabled. Shared Docker cannot enable idle expiry.
 - `mcp-gate idle NAME [DURATION|off]` shows or saves the policy, supports `s`/`m`/`h`, `--dry-run`, `--yes` and `--json`, and prints the required service restart command without restarting it.
