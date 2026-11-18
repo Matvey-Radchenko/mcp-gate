@@ -31,7 +31,9 @@ pub(in crate::manage) fn invocation(path: &Path) -> Result<(PathBuf, PathBuf)> {
             .or(args.first())
             .context("LaunchAgent has no executable")?,
     );
+    // ProgramArguments may include argv0, or start at "serve" when Program is set.
     let config = super::config_argument(args.iter().skip(1).map(String::as_str))
+        .or_else(|| super::config_argument(args.iter().map(String::as_str)))
         .context("LaunchAgent has no literal gateway configuration")?;
     ensure!(
         binary.is_absolute(),

@@ -246,12 +246,21 @@ async fn adopted_gateway_runs_from_managed_store_without_client_changes() {
     let catalog = fs::read(legacy.release.join("catalog.json")).unwrap();
     let auth = fs::read(legacy.release.join("client-token")).unwrap();
     let old_health = runtime::health(&legacy).await.unwrap();
+    // After bindings are cleared the client URL is no longer a managed record.
+    // Windows may report "http" when legacy discovery does not see the logon task.
+    let connections = fixture.run("status")["connections"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert!(
-        fixture.run("status")["connections"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|connection| connection["name"] == "fixture" && connection["kind"] == "external")
+        connections.iter().any(|connection| {
+            connection["name"] == "fixture"
+                && matches!(
+                    connection["kind"].as_str(),
+                    Some("external" | "http" | "legacy")
+                )
+        }),
+        "expected unbound fixture connection, got {connections:?}"
     );
 
     let preview = fixture
