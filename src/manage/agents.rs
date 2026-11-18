@@ -128,9 +128,9 @@ fn launches(_home: &Path) -> anyhow::Result<Vec<Launch>> {
 
 #[cfg(any(target_os = "macos", windows))]
 fn launch(label: String, binary: PathBuf, config: PathBuf) -> Option<Launch> {
-    let name = label.strip_prefix("local.mcp-gate.")?;
-    (valid_name(name) && gateway_binary(&binary) && config.is_absolute()).then(|| Launch {
-        name: name.to_owned(),
+    let name = label.strip_prefix("local.mcp-gate.")?.to_owned();
+    (valid_name(&name) && gateway_binary(&binary) && config.is_absolute()).then(|| Launch {
+        name,
         label,
         binary,
         config,
