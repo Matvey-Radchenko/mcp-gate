@@ -43,37 +43,43 @@ pub(in crate::manage) fn invocation(path: &Path) -> Result<(PathBuf, PathBuf)> {
 }
 
 fn extract(path: &Path, key: &str, format: &str) -> Result<Option<String>> {
-    #[cfg(feature = "test-backend")]
+    let Some(document) = document(path)? else {
+        return Ok(None);
+    };
+    let value = key.split('.').try_fold(&document, |value, name| {
+        if let Ok(index) = name.parse::<usize>() {
+            value.get(index)
+        } else {
+            value.get(name)
+        }
+    });
+    Ok(value.and_then(|value| {
+        if format == "raw" {
+            value.as_str().map(str::to_owned)
+        } else {
+            Some(value.to_string())
+        }
+    }))
+}
+
+/// JSON fixtures are used in tests. Binary and XML LaunchAgents are converted
+/// with plutil so typed keys are preserved and `-extract` format differences
+/// cannot hide ProgramArguments.
+fn document(path: &Path) -> Result<Option<serde_json::Value>> {
     if let Ok(bytes) = fs::read(path)
-        && let Ok(document) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        && let Ok(document) = serde_json::from_slice(&bytes)
     {
-        // Old discovery fixtures use JSON plists with the same literal keys.
-        let value = key.split('.').try_fold(&document, |value, name| {
-            if let Ok(index) = name.parse::<usize>() {
-                value.get(index)
-            } else {
-                value.get(name)
-            }
-        });
-        return Ok(value.and_then(|value| {
-            if format == "raw" {
-                value.as_str().map(str::to_owned)
-            } else {
-                Some(value.to_string())
-            }
-        }));
+        return Ok(Some(document));
     }
-    let mut command = Command::new("/usr/bin/plutil");
-    command.args(["-extract", key, format]);
-    if format == "raw" {
-        command.args(["-expect", "string", "-n"]);
-    }
-    let output = command.args(["-o", "-", "--"]).arg(path).output()?;
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-convert", "json", "-o", "-", "--"])
+        .arg(path)
+        .output()?;
     if !output.status.success() {
         return Ok(None);
     }
     Ok(Some(
-        String::from_utf8(output.stdout).context("Invalid LaunchAgent encoding")?,
+        serde_json::from_slice(&output.stdout).context("Invalid LaunchAgent encoding")?,
     ))
 }
 
