@@ -11,7 +11,7 @@ node packaging/compat-build.mjs
 ```
 
 The second build uses this reviewed tree with version `<package>-compat-fixture`
-(currently `0.1.1-compat-fixture`) in a generated Cargo manifest and lockfile. It
+(currently `0.1.2-compat-fixture`) in a generated Cargo manifest and lockfile. It
 is an unpublished compatibility fixture, not a historical public release. Both
 binaries use the production release profile without the `test-backend` feature.
 The mock MCP itself is built by the ordinary harness. The compatibility

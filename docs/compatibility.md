@@ -135,6 +135,12 @@ and the TCC first-prompt/deny path not observed. No 0.1.1 check is newly marked
 passed. Pending checks still cannot be relabelled as passed. Publication of the
 npm packages and the GitHub Release does not change those limits.
 
+0.1.2 also reuses the 0.1.0 evidence, with the same `passed-with-limitations` and
+the same remaining limits. Linux x64 and ARM64 are now in the native and registry
+CI matrices (`ubuntu-22.04` and `ubuntu-22.04-arm`, glibc 2.35+). That does not
+add native login or protected-folder evidence, and no 0.1.2 check is newly
+marked passed. Publication still does not change those limits.
+
 Reference contracts: [Claude scope precedence and headers helpers](https://code.claude.com/docs/en/mcp),
 [GitHub native runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
 [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
