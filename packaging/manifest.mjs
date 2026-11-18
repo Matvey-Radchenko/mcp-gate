@@ -1,5 +1,5 @@
 // Shared identity rules for the meta package and generated platform packages.
-export const nativeTargets = ['darwin-arm64', 'darwin-x64', 'win32-x64'];
+export const nativeTargets = ['darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64', 'linux-arm64'];
 export const npmScope = '@matvei-radchenko';
 export const launcherPackage = `${npmScope}/mcp-gate`;
 
@@ -19,7 +19,7 @@ export function registryName(name) {
 }
 
 export function platformPackage(manifest, target) {
-  // os and cpu select this binary. The Node engine requirement stays on the launcher.
+  // os, cpu and (on Linux) libc select this binary. The launcher owns the Node engine requirement.
   const [os, cpu] = target.split('-');
   return {
     name: platformPackageName(target),
@@ -34,6 +34,7 @@ export function platformPackage(manifest, target) {
     repository: manifest.repository,
     os: [os],
     cpu: [cpu],
+    ...(os === 'linux' ? { libc: ['glibc'] } : {}),
     files: ['bin/', 'LICENSE', 'README.md'],
   };
 }
@@ -60,13 +61,14 @@ export function assertReleaseManifest(manifest, cargoToml, launcherSource) {
   if (typeof manifest.engines?.node !== 'string' || manifest.engines.node === '') {
     throw Error('npm manifest is missing engines.node');
   }
-  if (!launcherSource.includes('package.json') || /(['"`])\d+\.\d+\.\d+\1/.test(launcherSource)) {
+  if (!launcherSource.includes('package.json') || !/\bversion\b/.test(launcherSource)
+    || /\b\d+\.\d+\.\d+\b/.test(launcherSource)) {
     throw Error('Launcher must read its version from package.json');
   }
-  if (!launcherSource.includes(`${npmScope}/mcp-gate-bin-`)) {
+  if (!launcherSource.includes('require.resolve(') || !launcherSource.includes(`${npmScope}/mcp-gate-bin-`)) {
     throw Error('Launcher must resolve the scoped platform package');
   }
-  for (const target of nativeTargets) {
-    if (!launcherSource.includes(target)) throw Error(`Launcher is missing support for ${target}`);
+  if (!launcherSource.includes('optionalDependencies')) {
+    throw Error('Launcher must read supported targets from optionalDependencies');
   }
 }

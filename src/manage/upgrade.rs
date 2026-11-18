@@ -3,8 +3,12 @@ use super::{
     Selection, runtime, service,
     store::{self, Record, Registry},
 };
+use crate::catalog;
 use anyhow::{Context, Result, ensure};
-use std::path::{Path, PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 #[derive(Default)]
 pub struct Outcome {
@@ -13,28 +17,44 @@ pub struct Outcome {
 }
 
 pub fn binary(root: &Path) -> Result<PathBuf> {
-    let current = std::env::current_exe()?;
-    let hash = crate::catalog::digest(&current)?;
     let parent = root.join("binaries");
     if !parent.exists() {
         crate::platform::private_dir(&parent)?;
     }
-    let directory = parent.join(format!("{}-{}", env!("CARGO_PKG_VERSION"), hash));
-    let target = directory.join(crate::platform::binary_name());
-    if target.exists() {
-        ensure!(
-            crate::catalog::digest(&target)? == hash,
-            "Permanent binary was modified"
-        );
-        return Ok(target);
-    }
-    if !directory.exists() {
-        crate::platform::private_dir(&directory)?;
-    }
-    let bytes = std::fs::read(current)?;
-    store::atomic(&target, &bytes)?;
-    crate::platform::executable(&target)?;
-    Ok(target)
+    store::with_temporary(|temporary| {
+        let mut staged = None;
+        let hash = catalog::current_exe_digest_with(|current| {
+            let mut file = temporary.open(&parent)?;
+            let hash = catalog::copy_digest(current, &mut file)?;
+            staged = Some(file);
+            Ok(hash)
+        })?;
+        let directory = parent.join(format!("{}-{hash}", env!("CARGO_PKG_VERSION")));
+        let target = directory.join(crate::platform::binary_name());
+        if target.exists() {
+            ensure!(
+                catalog::digest(&target)? == hash,
+                "Permanent binary was modified"
+            );
+            return Ok(target);
+        }
+        store::ensure_replaceable(&target)?;
+        if !directory.exists() {
+            crate::platform::private_dir(&directory)?;
+        }
+        let file = match staged {
+            Some(file) => file,
+            None => {
+                let mut source = fs::File::open(std::env::current_exe()?)?;
+                let mut file = temporary.open(&directory)?;
+                io::copy(&mut source, &mut file)?;
+                file
+            }
+        };
+        temporary.publish(file, &target)?;
+        crate::platform::executable(&target)?;
+        Ok(target)
+    })
 }
 pub async fn apply(
     root: &Path,
@@ -42,7 +62,7 @@ pub async fn apply(
     options: &Selection,
     selected: &[String],
 ) -> Result<Outcome> {
-    let hash = crate::catalog::digest(&std::env::current_exe()?)?;
+    let hash = catalog::current_exe_digest()?;
     let mut outcome = Outcome::default();
     let results = &mut outcome.messages;
     for index in 0..registry.gateways.len() {
@@ -215,4 +235,63 @@ async fn refresh(
         store::read_optional(&target)?,
         toml::to_string_pretty(&config)?.into_bytes(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expected_target(root: &Path) -> PathBuf {
+        let hash = catalog::current_exe_digest().unwrap();
+        root.join("binaries")
+            .join(format!("{}-{hash}", env!("CARGO_PKG_VERSION")))
+            .join(crate::platform::binary_name())
+    }
+
+    #[test]
+    fn binary_installs_and_reuses_versioned_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let target = binary(root.path()).unwrap();
+        assert_eq!(target, expected_target(root.path()));
+        assert_eq!(binary(root.path()).unwrap(), target);
+        assert_eq!(
+            fs::read_dir(root.path().join("binaries")).unwrap().count(),
+            1
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+        }
+    }
+
+    #[test]
+    fn binary_rejects_modified_target() {
+        let root = tempfile::tempdir().unwrap();
+        let target = binary(root.path()).unwrap();
+        fs::write(&target, b"modified binary").unwrap();
+        assert_eq!(
+            binary(root.path()).unwrap_err().to_string(),
+            "Permanent binary was modified"
+        );
+        assert_eq!(fs::read(target).unwrap(), b"modified binary");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_refuses_to_replace_a_dangling_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let target = expected_target(root.path());
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let missing = root.path().join("missing");
+        std::os::unix::fs::symlink(&missing, &target).unwrap();
+        assert_eq!(
+            binary(root.path()).unwrap_err().to_string(),
+            "Refusing to replace a symlink"
+        );
+        assert_eq!(fs::read_link(target).unwrap(), missing);
+    }
 }

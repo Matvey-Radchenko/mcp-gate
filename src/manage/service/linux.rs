@@ -1,5 +1,6 @@
 //! Own only the matching fragment in the user's XDG systemd directory.
 mod manager;
+mod startup;
 mod unit_file;
 
 use super::{Record, label_taken, shell_literal};
@@ -15,6 +16,7 @@ use std::{
 
 pub(in crate::manage) use manager::available;
 pub(super) use manager::collision;
+pub(super) use startup::{diagnostics, startup_failure};
 pub(in crate::manage) use unit_file::Identity;
 
 const STATE: &str = "Id,LoadState,ActiveState,UnitFileState,MainPID,ControlPID,FragmentPath,DropInPaths,NeedDaemonReload";
@@ -301,8 +303,10 @@ pub(in crate::manage) fn resume_registered(record: &Record) -> Result<bool> {
 }
 
 pub(in crate::manage) fn definitions() -> Result<Vec<(String, Identity, ServiceState)>> {
+    crate::manage::trace::log("linux::definitions: units start");
     let mut definitions = Vec::new();
     for unit in manager::units()? {
+        crate::manage::trace::log(&format!("linux::definitions: query {unit}"));
         let current = Unit::query(&unit)?;
         if let Some(identity) = current.identity()
             && let Some(label) = label(&unit)
@@ -331,29 +335,6 @@ pub(super) fn log_hint(record: &Record) -> String {
         "Inspect service logs with journalctl --user -u {}",
         shell_literal(&unit_name(record))
     )
-}
-
-pub(super) fn diagnostics(record: &Record) -> String {
-    let unit = unit_name(record);
-    if label(&unit).is_some()
-        && let Ok(fields) = manager::show(&unit, "ActiveState,Result,ExecMainStatus")
-    {
-        let safe: Vec<_> = ["ActiveState", "Result", "ExecMainStatus"]
-            .into_iter()
-            .filter_map(|key| {
-                let value = fields.get(key)?;
-                (!value.is_empty()
-                    && value
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
-                .then(|| format!("{key}={value}"))
-            })
-            .collect();
-        if !safe.is_empty() {
-            return safe.join("; ");
-        }
-    }
-    "systemd --user service state unavailable".into()
 }
 
 #[cfg(test)]

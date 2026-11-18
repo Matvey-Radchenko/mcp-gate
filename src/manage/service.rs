@@ -71,6 +71,14 @@ pub fn diagnostics(record: &Record) -> String {
         "service is not registered".into()
     }
 }
+
+pub(super) async fn startup_failure(_record: &Record) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    return linux::startup_failure(_record).await;
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
 pub fn register(record: &Record) -> Result<()> {
     #[cfg(target_os = "macos")]
     {

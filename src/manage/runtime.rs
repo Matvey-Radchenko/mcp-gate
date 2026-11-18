@@ -161,6 +161,13 @@ fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Res
 const SERVICE_HANDOFF: Duration = Duration::from_secs(30);
 
 pub async fn ready(record: &Record) -> Result<()> {
+    ready_with(record, || super::service::startup_failure(record)).await
+}
+
+async fn ready_with(
+    record: &Record,
+    mut startup_failure: impl AsyncFnMut() -> Option<String>,
+) -> Result<()> {
     // Bound elapsed time, not retries: refused connections on Windows can take
     // seconds each, and multiplying those delays would stall safe recovery.
     let wait = async {
@@ -171,6 +178,12 @@ pub async fn ready(record: &Record) -> Result<()> {
                     "New gateway unexpectedly started a backend"
                 );
                 return Ok(());
+            }
+            if let Some(diagnostics) = startup_failure().await {
+                anyhow::bail!(
+                    "Gateway did not become healthy: {diagnostics}. {}",
+                    super::service::log_hint(record)
+                );
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -286,6 +299,31 @@ async fn await_state_release(config: &Config) -> Result<bool> {
 mod tests {
     use super::*;
     use fs2::FileExt;
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn readiness_returns_before_sleeping_when_the_unit_failed() {
+        let root = tempfile::tempdir().unwrap();
+        let record = Record {
+            removing: false,
+            id: "fixture".into(),
+            release: root.path().into(),
+            label: "local.mcp-gate.fixture".into(),
+            binary_hash: "unused".into(),
+            binary: root.path().join("mcp-gate"),
+            bindings: Vec::new(),
+        };
+        // No config means health fails without I/O that could suspend the future.
+        let mut wait = std::pin::pin!(ready_with(&record, || async {
+            Some("ActiveState=failed".into())
+        }));
+        let std::task::Poll::Ready(Err(error)) = futures::poll!(wait.as_mut()) else {
+            panic!("readiness must return the failure before sleeping");
+        };
+        let message = error.to_string();
+        assert!(message.contains("ActiveState=failed"));
+        assert!(message.contains(&super::super::service::log_hint(&record)));
+    }
 
     #[tokio::test]
     async fn a_starting_process_lock_is_not_a_busy_gateway() {

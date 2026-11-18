@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
-import { launcherPackage, npmTarball, platformPackageName, registryName } from './manifest.mjs';
+import { launcherPackage, nativeTargets, npmTarball, platformPackageName, registryName } from './manifest.mjs';
 
 export function publishCommand(archive) {
   return ['publish', archive, '--access', 'public', '--tag', 'latest', '--provenance'];
@@ -47,8 +47,7 @@ async function publish(root, version) {
   assert.match(version, /^\d+\.\d+\.\d+$/);
   const npm = process.env.npm_execpath;
   assert(npm, 'Run through npm exec -- node packaging/publish.mjs');
-  const targets = ['darwin-arm64', 'darwin-x64', 'win32-x64'];
-  const packages = targets.map(target => ({
+  const packages = nativeTargets.map(target => ({
     name: platformPackageName(target), target,
   }));
   packages.push({ name: launcherPackage, target: 'darwin-arm64' });

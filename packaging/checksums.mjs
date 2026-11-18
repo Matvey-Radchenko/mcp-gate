@@ -4,6 +4,7 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, basename } from 'node:path';
+import { nativeTargets } from './manifest.mjs';
 
 const root = process.argv[2] ?? 'artifacts';
 const rows = [];
@@ -20,9 +21,12 @@ for (const directory of readdirSync(root, { withFileTypes: true }).filter(entry 
 }
 const packages = rows.filter(row => row.name.endsWith('.tgz'));
 const archives = rows.filter(row => row.name.endsWith('.tar.gz'));
-if (packages.length !== 4 || archives.length !== 3 || rows.length !== 7) {
+const expectedArchives = nativeTargets.length;
+const expectedPackages = expectedArchives + 1;
+if (packages.length !== expectedPackages || archives.length !== expectedArchives
+  || rows.length !== expectedPackages + expectedArchives) {
   const found = `${rows.length} files (${packages.length} npm packages and ${archives.length} native archives)`;
-  throw Error(`Expected four npm packages and three native archives; found ${found}`);
+  throw Error(`Expected ${expectedPackages} npm packages and ${expectedArchives} native archives; found ${found}`);
 }
 const lines = archives
   .sort((left, right) => left.name.localeCompare(right.name))

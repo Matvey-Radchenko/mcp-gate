@@ -15,8 +15,11 @@ use std::{
 struct Terminal {
     child: Child,
     master: File,
+    slave: File,
     output: String,
     cursor_requests: usize,
+    last_termios: String,
+    debug_log: Option<std::path::PathBuf>,
 }
 impl Terminal {
     fn start(mut command: Command) -> Self {
@@ -45,6 +48,9 @@ impl Terminal {
         // SAFETY: transfer sole ownership of the second fresh descriptor to File.
         let slave = unsafe { File::from_raw_fd(slave) };
         // SAFETY: master is live; only nonblocking and close-on-exec flags are changed.
+        // The slave starts in raw mode so Enter is delivered immediately. A default
+        // canonical PTY can hold CR until the child enables raw mode; Ctrl-C still
+        // works in that window because ISIG is on, which is what failed on ARM CI.
         unsafe {
             assert_ne!(
                 libc::fcntl(master.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK),
@@ -54,7 +60,18 @@ impl Terminal {
                 libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC),
                 -1
             );
+            let mut termios = std::mem::zeroed();
+            assert_eq!(libc::tcgetattr(slave.as_raw_fd(), &mut termios), 0);
+            libc::cfmakeraw(&mut termios);
+            assert_eq!(
+                libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &termios),
+                0
+            );
         }
+        let debug_log = command
+            .get_current_dir()
+            .map(|path| path.join("tty-debug.log"));
+        let slave_keep = slave.try_clone().unwrap();
         command
             .stdin(Stdio::from(slave.try_clone().unwrap()))
             .stdout(Stdio::from(slave.try_clone().unwrap()))
@@ -77,12 +94,95 @@ impl Terminal {
         Self {
             child,
             master,
+            slave: slave_keep,
             output: String::new(),
             cursor_requests: 0,
+            last_termios: String::new(),
+            debug_log,
         }
     }
-    fn send(&mut self, text: &str) {
+    fn describe_termios(fd: i32, label: &str) -> String {
+        // SAFETY: the termios value is zeroed and then fully overwritten by tcgetattr
+        // before any field is read.
+        let mut termios = unsafe { std::mem::zeroed() };
+        // SAFETY: the pointer refers to the local termios above, valid for this call.
+        let rc = unsafe { libc::tcgetattr(fd, &mut termios) };
+        if rc != 0 {
+            return format!(
+                "{label} fd={fd} tcgetattr failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        format!(
+            "{label} fd={fd} ICANON={} ECHO={} ICRNL={} ISIG={} VMIN={} VTIME={}",
+            termios.c_lflag & libc::ICANON != 0,
+            termios.c_lflag & libc::ECHO != 0,
+            termios.c_iflag & libc::ICRNL != 0,
+            termios.c_lflag & libc::ISIG != 0,
+            termios.c_cc[libc::VMIN],
+            termios.c_cc[libc::VTIME]
+        )
+    }
+    fn termios_snapshot(&self) -> String {
+        format!(
+            "{}; {}",
+            Self::describe_termios(self.master.as_raw_fd(), "master"),
+            Self::describe_termios(self.slave.as_raw_fd(), "slave")
+        )
+    }
+    fn termios_report(&self) -> String {
+        let debug = self
+            .debug_log
+            .as_ref()
+            .and_then(|path| fs::read_to_string(path).ok())
+            .unwrap_or_default();
+        let setup = self
+            .debug_log
+            .as_ref()
+            .and_then(|path| fs::read_to_string(path.with_file_name("setup-debug.log")).ok())
+            .unwrap_or_default();
+        format!(
+            "{}; last_at_send={}; MCP_GATE_DEBUG_TTY:\n{debug}\nMCP_GATE_DEBUG_SETUP:\n{setup}\n{}",
+            self.termios_snapshot(),
+            self.last_termios,
+            self.child_diagnostics()
+        )
+    }
+    fn child_diagnostics(&self) -> String {
+        let pid = self.child.id();
+        #[allow(unused_mut)]
+        let mut report = format!("child pid={pid}\n");
+        #[cfg(target_os = "linux")]
+        {
+            report.push_str(&linux_process_tree(pid, 0));
+            if let Ok(output) = Command::new("ps")
+                .args([
+                    "-o",
+                    "pid,ppid,pgid,stat,wchan:32,etime,args",
+                    "--forest",
+                    "--ppid",
+                    &pid.to_string(),
+                    "-p",
+                    &pid.to_string(),
+                ])
+                .output()
+            {
+                report.push_str("ps:\n");
+                report.push_str(&String::from_utf8_lossy(&output.stdout));
+                if !output.stderr.is_empty() {
+                    report.push_str(&String::from_utf8_lossy(&output.stderr));
+                }
+            }
+        }
+        report
+    }
+    fn write_master(&mut self, text: &str) {
         self.master.write_all(text.as_bytes()).unwrap();
+    }
+    fn send(&mut self, text: &str) {
+        // Snapshot termios at the moment test keys are written, not later CPR replies.
+        self.last_termios = self.termios_snapshot();
+        self.write_master(text);
     }
     fn read(&mut self) {
         let mut bytes = [0; 16384];
@@ -92,27 +192,52 @@ impl Terminal {
         }
         let count = self.output.matches("\x1b[6n").count();
         for _ in self.cursor_requests..count {
-            self.send("\x1b[1;1R");
+            self.write_master("\x1b[1;1R");
         }
         self.cursor_requests = count;
         assert!(!self.output.contains("never-print-fixture-secret"));
+    }
+    fn settle(&mut self) {
+        // Wait until drawing and cursor-position reports have gone quiet, so
+        // the next key is not sent while the UI is blocked on a CPR reply.
+        let deadline = Instant::now() + Duration::from_millis(750);
+        let mut last_len = self.output.len();
+        let mut last_cpr = self.cursor_requests;
+        let mut quiet_since = Instant::now();
+        loop {
+            self.read();
+            if self.output.len() != last_len || self.cursor_requests != last_cpr {
+                last_len = self.output.len();
+                last_cpr = self.cursor_requests;
+                quiet_since = Instant::now();
+            } else if quiet_since.elapsed() >= Duration::from_millis(120) {
+                return;
+            }
+            if Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
     fn expect(&mut self, message: &str) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             self.read();
             if self.output.contains(message) {
+                self.settle();
                 return;
             }
             assert!(
                 Instant::now() < deadline,
-                "Terminal did not show {message}: {}",
-                self.output
+                "Terminal did not show {message}: {}\n{}",
+                self.output,
+                self.termios_report()
             );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
     fn next(&mut self, keys: &str, message: &str) {
+        self.settle();
         self.output.clear();
         self.cursor_requests = 0;
         self.send(keys);
@@ -123,10 +248,20 @@ impl Terminal {
         loop {
             self.read();
             if let Some(status) = self.child.try_wait().unwrap() {
-                assert!(status.success(), "{}", self.output);
+                assert!(
+                    status.success(),
+                    "{}\n{}",
+                    self.output,
+                    self.termios_report()
+                );
                 return;
             }
-            assert!(Instant::now() < deadline, "Terminal did not exit");
+            assert!(
+                Instant::now() < deadline,
+                "Terminal did not exit\n{}\n{}",
+                self.output,
+                self.termios_report()
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -136,6 +271,71 @@ impl Drop for Terminal {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_tree(pid: u32, depth: usize) -> String {
+    use std::collections::BTreeSet;
+    let prefix = "  ".repeat(depth);
+    let base = format!("/proc/{pid}");
+    let cmdline = fs::read(format!("{base}/cmdline"))
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).replace('\0', " "))
+        .unwrap_or_else(|| "<unavailable>".into());
+    let wchan = fs::read_to_string(format!("{base}/wchan"))
+        .unwrap_or_else(|_| "<unavailable>".into())
+        .trim()
+        .to_owned();
+    let state = fs::read_to_string(format!("{base}/status"))
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find(|line| line.starts_with("State:"))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "State: <unavailable>".into());
+    let mut report = format!("{prefix}pid={pid} {state} wchan={wchan} cmdline={cmdline}\n");
+    if let Ok(tasks) = fs::read_dir(format!("{base}/task")) {
+        for task in tasks.flatten() {
+            let tid = task.file_name();
+            match fs::read_to_string(task.path().join("stack")) {
+                Ok(stack) if !stack.trim().is_empty() => {
+                    report.push_str(&format!(
+                        "{prefix}  task {} stack:\n",
+                        tid.to_string_lossy()
+                    ));
+                    for line in stack.lines() {
+                        report.push_str(&format!("{prefix}    {line}\n"));
+                    }
+                }
+                Ok(_) => report.push_str(&format!(
+                    "{prefix}  task {} stack: <empty>\n",
+                    tid.to_string_lossy()
+                )),
+                Err(error) => report.push_str(&format!(
+                    "{prefix}  task {} stack: {error}\n",
+                    tid.to_string_lossy()
+                )),
+            }
+        }
+    }
+    let mut children = BTreeSet::new();
+    if let Ok(tasks) = fs::read_dir(format!("{base}/task")) {
+        for task in tasks.flatten() {
+            if let Ok(text) = fs::read_to_string(task.path().join("children")) {
+                for child in text.split_whitespace() {
+                    if let Ok(child) = child.parse::<u32>() {
+                        children.insert(child);
+                    }
+                }
+            }
+        }
+    }
+    for child in children {
+        report.push_str(&linux_process_tree(child, depth + 1));
+    }
+    report
 }
 
 fn fixture(fixed: bool) -> (tempfile::TempDir, Vec<u8>) {
@@ -165,6 +365,8 @@ fn command(root: &std::path::Path, action: &str) -> Command {
         .env("XDG_CONFIG_HOME", root.join(".config"))
         .env("XDG_DATA_HOME", root.join(".local/share"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .env("MCP_GATE_DEBUG_TTY", root.join("tty-debug.log"))
+        .env("MCP_GATE_DEBUG_SETUP", root.join("setup-debug.log"))
         .env_remove("DBUS_SESSION_BUS_ADDRESS")
         .env_remove("OPENCODE_CONFIG");
     command

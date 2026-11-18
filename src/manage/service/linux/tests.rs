@@ -1,5 +1,8 @@
 use super::*;
-use std::os::unix::fs::PermissionsExt;
+use std::{
+    os::unix::{fs::PermissionsExt, process::ExitStatusExt},
+    process::{ExitStatus, Output},
+};
 
 fn record() -> Record {
     Record {
@@ -79,5 +82,93 @@ fn treats_unit_files_symlinks_and_specific_manager_errors_as_collisions() {
             !super::super::label_in_use(&anyhow::anyhow!(message)),
             "{message}"
         );
+    }
+}
+
+fn response(code: i32, stderr: &str) -> Output {
+    Output {
+        status: ExitStatus::from_raw(code << 8),
+        stdout: Vec::new(),
+        stderr: stderr.as_bytes().to_vec(),
+    }
+}
+
+#[test]
+fn enable_resets_failure_and_start_limit_before_starting() {
+    let unit = unit_name(&record());
+    for detail in [None, Some("not loaded."), Some("not found.")] {
+        let mut commands = Vec::new();
+        manager::enable_with(&unit, |args| {
+            commands.push(args.join(" "));
+            Ok(match (args[0], detail) {
+                ("reset-failed", Some(detail)) => response(
+                    1,
+                    &format!("Failed to reset failed state of unit {unit}: Unit {unit} {detail}"),
+                ),
+                _ => response(0, ""),
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            commands,
+            [
+                format!("reset-failed {unit}"),
+                format!("enable --now {unit}")
+            ]
+        );
+    }
+}
+
+#[test]
+fn reset_failure_stops_enable_and_hides_manager_stderr() {
+    let error = manager::enable_with(&unit_name(&record()), |args| {
+        assert_eq!(args[0], "reset-failed");
+        Ok(response(1, "arbitrary unit text"))
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("reset-failed failed"));
+    assert!(!error.contains("arbitrary unit text"));
+}
+
+#[test]
+fn startup_state_distinguishes_first_activation_from_exit_and_restart() {
+    for (state, failed) in [
+        (
+            "ActiveState=inactive SubState=dead MainPID=0 Result=success ExecMainCode=0",
+            false,
+        ),
+        (
+            "ActiveState=activating SubState=start MainPID=0 Result=success ExecMainCode=0",
+            false,
+        ),
+        (
+            "ActiveState=active SubState=running MainPID=42 Result=success NRestarts=0",
+            false,
+        ),
+        ("ActiveState=failed", true),
+        (
+            "ActiveState=activating SubState=auto-restart MainPID=0 NRestarts=0",
+            true,
+        ),
+        (
+            "ActiveState=active SubState=running MainPID=42 NRestarts=1",
+            true,
+        ),
+        (
+            "ActiveState=inactive MainPID=0 Result=exit-code ExecMainStatus=1",
+            true,
+        ),
+        (
+            "ActiveState=deactivating MainPID=0 Result=success ExecMainCode=1 ExecMainStatus=0",
+            true,
+        ),
+    ] {
+        let fields = state
+            .split_whitespace()
+            .map(|field| field.split_once('=').unwrap())
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect();
+        assert_eq!(startup::failed_start(&fields), failed, "{state}");
     }
 }

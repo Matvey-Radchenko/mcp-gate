@@ -137,7 +137,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel, windows-2025]
+        runner: [macos-15, macos-15-intel, windows-2025, ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4

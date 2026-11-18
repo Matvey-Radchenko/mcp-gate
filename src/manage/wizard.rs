@@ -1,7 +1,7 @@
 //! Select and review exact targets before any service, backend or client mutation.
 use super::{Selection, inventory, preview, store::Registry, ui};
 use crate::clients::Candidate;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 
 pub struct Setup {
@@ -36,13 +36,25 @@ pub async fn setup(options: &mut Selection, registry: &Registry) -> Result<Optio
 }
 
 async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Option<Setup>> {
+    let exe = std::env::current_exe()?;
+    let size = std::fs::metadata(&exe).map(|meta| meta.len()).unwrap_or(0);
+    super::trace::log(&format!(
+        "setup_scope: digest thread start path={} size={size}",
+        exe.display()
+    ));
+    let digest = std::thread::Builder::new()
+        .name("mcp-gate-digest".into())
+        .spawn(crate::catalog::current_exe_digest)
+        .context("Cannot start binary digest")?;
     let interactive = ui::interactive(options);
     let _quiet = interactive.then(ui::QuietInput::suppress);
     if interactive && !ui::scope(options)? {
         ui::canceled(false);
         return Ok(None);
     }
+    super::trace::log("setup_scope: after ui::scope");
     let mut inventory = inventory::read(options, registry, false).await?;
+    super::trace::log("setup_scope: inventory::read done");
     if let Some(cwd) = options.cwd.clone() {
         let cwd = super::context::resolve_directory(&cwd)?;
         for candidate in &mut inventory.candidates {
@@ -52,7 +64,6 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
     if options.yes {
         super::context::pending_directories(&inventory.candidates)?;
     }
-    let hash = crate::catalog::digest(&std::env::current_exe()?)?;
     let managed: Vec<_> = registry
         .gateways
         .iter()
@@ -69,7 +80,9 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
         .candidates
         .iter()
         .any(super::context::needs_directory);
+    super::trace::log("setup_scope: inspect start");
     let count = inspect(&mut inventory, options, managed.len());
+    super::trace::log(&format!("setup_scope: inspect done count={count}"));
     if count == 0 && managed.is_empty() && !needs_directory {
         empty(&inventory, options);
         if interactive {
@@ -97,7 +110,14 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
                 || ((interactive || options.dry_run) && super::context::needs_directory(c))
         })
         .collect();
+    super::trace::log("setup_scope: labels::assign start");
     super::labels::assign(&mut eligible, registry)?;
+    super::trace::log("setup_scope: digest thread join");
+    let hash = digest
+        .join()
+        .map_err(|_| anyhow::anyhow!("Binary digest thread failed"))??;
+    super::trace::log("setup_scope: digest done");
+    super::trace::log("setup_scope: choose::select start");
     super::choose::select(super::choose::Choice {
         options,
         registry,

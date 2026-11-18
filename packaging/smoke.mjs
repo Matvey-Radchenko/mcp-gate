@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -20,6 +20,8 @@ const packages = readdirSync('dist').filter(name => name.endsWith('.tgz')).map(n
 assert.equal(packages.length, 2);
 try {
   mkdirSync(local);
+  // npm 11 needs a named project when resolving local archives in an empty directory.
+  writeFileSync(join(local, 'package.json'), JSON.stringify({ name: 'mcp-gate-smoke', private: true }));
   mkdirSync(globalRun);
   run(process.execPath, [npm, 'install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--no-package-lock', ...packages]);
   // Exercise npm's real bin link / Windows .cmd shim, including executable mode.

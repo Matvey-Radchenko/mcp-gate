@@ -35,9 +35,22 @@ pub async fn read(
     let project = crate::platform::project_path(
         &options.project.clone().unwrap_or(std::env::current_dir()?),
     )?;
+    super::trace::log("inventory: inventory_current start");
     let scan =
         clients::inventory_current(&home, &project, &options.client, options.project.is_some())?;
+    super::trace::log(&format!(
+        "inventory: inventory_current done candidates={} issues={}",
+        scan.candidates.len(),
+        scan.issues.len()
+    ));
+    super::trace::log(&format!(
+        "inventory: legacy::discover start probe={check_legacy}"
+    ));
     let legacy = legacy::discover(&home, check_legacy).await;
+    super::trace::log(&format!(
+        "inventory: legacy::discover done n={}",
+        legacy.len()
+    ));
     let mut candidates = Vec::new();
     let mut connections = Vec::new();
     for c in scan

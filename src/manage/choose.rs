@@ -59,6 +59,7 @@ fn selected_indices(choice: &Choice<'_>) -> Result<Option<Vec<usize>>> {
     if !choice.interactive {
         return Ok(Some((0..labels.len()).collect()));
     }
+    super::trace::log("choose: ui::multiple start");
     match ui::multiple(
         "Choose MCP connections (nothing selected by default):",
         labels,

@@ -3,7 +3,12 @@ use anyhow::{Result, ensure};
 use rmcp::model::{Prompt, Resource, ResourceTemplate, ServerInfo, Tool};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::{
+    io::{self, Read, Write},
+    path::Path,
+    sync::{Mutex, PoisonError},
+    time::Instant,
+};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,8 +28,87 @@ pub struct Catalog {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invocation_sha256: Option<String>,
 }
+fn debug_setup(message: &str) {
+    let Ok(dest) = std::env::var("MCP_GATE_DEBUG_SETUP") else {
+        return;
+    };
+    if dest.is_empty() || dest == "1" {
+        if dest == "1" {
+            eprintln!("{message}");
+        }
+        return;
+    }
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&dest)
+        .and_then(|mut file| {
+            std::io::Write::write_all(&mut file, format!("{message}\n").as_bytes())
+        });
+}
+
 pub fn digest(path: &Path) -> Result<String> {
-    Ok(format!("{:x}", Sha256::digest(std::fs::read(path)?)))
+    copy_digest(path, &mut io::sink())
+}
+
+pub(crate) fn current_exe_digest() -> Result<String> {
+    current_exe_digest_with(digest)
+}
+
+/// The installer can initialize the same cache while streaming its source.
+pub(crate) fn current_exe_digest_with(
+    hash: impl FnOnce(&Path) -> Result<String>,
+) -> Result<String> {
+    static CURRENT_EXE_DIGEST: Mutex<Option<String>> = Mutex::new(None);
+    cached_digest(&CURRENT_EXE_DIGEST, || hash(&std::env::current_exe()?))
+}
+
+fn cached_digest(
+    cache: &Mutex<Option<String>>,
+    hash: impl FnOnce() -> Result<String>,
+) -> Result<String> {
+    // Hold the lock through hashing so callers share the work. A failed or
+    // panicking initializer leaves the slot untouched.
+    let mut cached = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(hash) = cached.as_ref() {
+        return Ok(hash.clone());
+    }
+    let hash = hash()?;
+    *cached = Some(hash.clone());
+    Ok(hash)
+}
+
+pub(crate) fn copy_digest(path: &Path, output: &mut impl Write) -> Result<String> {
+    // Stream so a large debug executable is not loaded in one allocation.
+    let started = Instant::now();
+    debug_setup(&format!("digest: open {}", path.display()));
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    let mut marked = 0u64;
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        output.write_all(&buffer[..count])?;
+        hasher.update(&buffer[..count]);
+        total += count as u64;
+        if total - marked >= 32 * 1024 * 1024 {
+            marked = total;
+            debug_setup(&format!(
+                "digest: hashed {total} bytes in {}ms",
+                started.elapsed().as_millis()
+            ));
+        }
+    }
+    let hash = format!("{:x}", hasher.finalize());
+    debug_setup(&format!(
+        "digest: done bytes={total} duration_ms={}",
+        started.elapsed().as_millis()
+    ));
+    Ok(hash)
 }
 impl Catalog {
     pub fn load(path: &Path, backend: &Backend) -> Result<Self> {
@@ -123,4 +207,48 @@ pub struct Discovery {
     pub resources: Vec<Resource>,
     pub resource_templates: Vec<ResourceTemplate>,
     pub prompts: Vec<Prompt>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        Barrier, TryLockError,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[test]
+    fn current_exe_digest_is_reused() {
+        let hash = current_exe_digest().unwrap();
+        assert_eq!(hash.len(), 64);
+        assert_eq!(current_exe_digest().unwrap(), hash);
+        assert_eq!(
+            current_exe_digest_with(|_| panic!("cached digest should bypass hashing")).unwrap(),
+            hash
+        );
+    }
+
+    #[test]
+    fn concurrent_callers_share_a_successful_digest_after_failure() {
+        let cache = Mutex::new(None);
+        assert!(cached_digest(&cache, || anyhow::bail!("read failed")).is_err());
+        let start = Barrier::new(2);
+        let calls = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let read = || {
+                start.wait();
+                cached_digest(&cache, || {
+                    assert!(matches!(cache.try_lock(), Err(TryLockError::WouldBlock)));
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    Ok("shared digest".into())
+                })
+                .unwrap()
+            };
+            let first = scope.spawn(read);
+            let second = scope.spawn(read);
+            assert_eq!(first.join().unwrap(), "shared digest");
+            assert_eq!(second.join().unwrap(), "shared digest");
+        });
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
 }

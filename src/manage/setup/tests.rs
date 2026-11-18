@@ -99,8 +99,12 @@ case "$1" in
           printf '%s\n' LoadState=not-found
         fi ;;
     esac ;;
+  reset-failed)
+    [ "$2" = local.mcp-gate.server-3.service ] || exit 1
+    touch "$FIXTURE/reset-was-called" ;;
   enable)
     [ "$2" = --now ] && [ "$3" = local.mcp-gate.server-3.service ] || exit 1
+    [ -f "$FIXTURE/reset-was-called" ] || exit 1
     grep -q '"label": "local.mcp-gate.server-3"' "$XDG_DATA_HOME"/mcp-gate/operations/*.json || exit 1
     touch "$FIXTURE/enable-saw-journal" ;;
   stop|disable)

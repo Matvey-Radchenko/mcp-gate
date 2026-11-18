@@ -144,10 +144,16 @@ pub fn config_argument(plist: &Value) -> Option<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn configurations(_home: &Path) -> Vec<PathBuf> {
+    super::trace::log("legacy: linux definitions start");
     let Ok(services) = super::service::linux::definitions() else {
         // Legacy discovery is optional when the user manager cannot be queried.
+        super::trace::log("legacy: linux definitions unavailable");
         return vec![];
     };
+    super::trace::log(&format!(
+        "legacy: linux definitions done n={}",
+        services.len()
+    ));
     services
         .into_iter()
         .filter_map(|(_, identity, _)| {

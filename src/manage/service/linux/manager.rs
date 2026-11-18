@@ -17,6 +17,8 @@ fn command() -> Command {
 }
 
 pub(in crate::manage) fn available() -> Result<()> {
+    crate::manage::trace::log("systemctl: probe start (show Version, 2s bound)");
+    let started = Instant::now();
     let mut child = command()
         .args(["show", "--property=Version", "--value"])
         .stdout(Stdio::piped())
@@ -37,6 +39,10 @@ pub(in crate::manage) fn available() -> Result<()> {
                 child.wait().context("Could not reap the systemctl probe")?;
                 killed.context("Could not stop the systemctl probe")?;
                 result.context("Could not wait for the systemctl probe")?;
+                crate::manage::trace::log(&format!(
+                    "systemctl: probe timed out after {}ms",
+                    started.elapsed().as_millis()
+                ));
                 bail!("systemd --user manager probe timed out");
             }
         }
@@ -44,6 +50,11 @@ pub(in crate::manage) fn available() -> Result<()> {
     let output = child
         .wait_with_output()
         .context("Cannot read systemctl response")?;
+    crate::manage::trace::log(&format!(
+        "systemctl: probe done exit={} duration_ms={}",
+        output.status,
+        started.elapsed().as_millis()
+    ));
     ensure!(
         output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
         "Cannot reach the systemd --user manager"
@@ -58,6 +69,20 @@ pub(super) fn run(args: &[&str]) -> Result<String> {
 }
 
 pub(super) fn enable(unit: &str) -> Result<()> {
+    enable_with(unit, invoke)
+}
+
+pub(super) fn enable_with(
+    unit: &str,
+    mut invoke: impl FnMut(&[&str]) -> Result<Output>,
+) -> Result<()> {
+    // Clear the start-rate limit before asking systemd to start this unit.
+    // An unloaded unit has no failed state or start-rate counter to clear.
+    let reset = invoke(&["reset-failed", unit])?;
+    if !reset.status.success() && !unloaded_unit(unit, &reset.stderr) {
+        check("reset-failed", &reset)?;
+    }
+
     let output = invoke(&["enable", "--now", unit])?;
     if !output.status.success()
         && String::from_utf8_lossy(&output.stderr)
@@ -71,11 +96,30 @@ pub(super) fn enable(unit: &str) -> Result<()> {
     check("enable --now", &output)
 }
 
+fn unloaded_unit(unit: &str, stderr: &[u8]) -> bool {
+    // Wording differs across systemd versions. Require the unit name so an
+    // unrelated error cannot be ignored, and never copy stderr to the user.
+    let text = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    text.contains(&unit.to_ascii_lowercase())
+        && (text.contains("not loaded") || text.contains("not found"))
+}
+
 fn invoke(args: &[&str]) -> Result<Output> {
-    command()
-        .args(args)
-        .output()
-        .context("Cannot run systemctl")
+    let label = format!("systemctl --user {}", args.join(" "));
+    crate::manage::trace::log(&format!("{label}: start"));
+    let started = Instant::now();
+    let result = command().args(args).output();
+    let duration_ms = started.elapsed().as_millis();
+    match &result {
+        Ok(output) => crate::manage::trace::log(&format!(
+            "{label}: exit={} duration_ms={duration_ms}",
+            output.status
+        )),
+        Err(error) => {
+            crate::manage::trace::log(&format!("{label}: error={error} duration_ms={duration_ms}"))
+        }
+    }
+    result.context("Cannot run systemctl")
 }
 
 fn check(action: &str, output: &Output) -> Result<()> {
@@ -110,7 +154,25 @@ pub(in crate::manage::service) fn collision(line: &str) -> bool {
 pub(super) type Properties = BTreeMap<String, String>;
 
 pub(super) fn show(unit: &str, properties: &str) -> Result<Properties> {
-    let output = invoke(&["show", "--all", "--property", properties, unit])?;
+    parse_show(&invoke(&show_args(unit, properties))?)
+}
+
+pub(super) async fn show_async(unit: &str, properties: &str) -> Result<Properties> {
+    // The readiness poll owns this query. Canceling it must stop the child.
+    let output = tokio::process::Command::from(command())
+        .args(show_args(unit, properties))
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("Cannot run systemctl")?;
+    parse_show(&output)
+}
+
+fn show_args<'a>(unit: &'a str, properties: &'a str) -> [&'a str; 5] {
+    ["show", "--all", "--property", properties, unit]
+}
+
+fn parse_show(output: &Output) -> Result<Properties> {
     let fields = std::str::from_utf8(&output.stdout)
         .map_err(|_| anyhow::anyhow!("Invalid systemctl response"))?
         .lines()
@@ -123,16 +185,18 @@ pub(super) fn show(unit: &str, properties: &str) -> Result<Properties> {
         .get("LoadState")
         .is_none_or(|value| value != "not-found")
     {
-        check("show", &output)?;
+        check("show", output)?;
     }
     Ok(fields)
 }
 
 pub(super) fn units() -> Result<BTreeSet<String>> {
+    crate::manage::trace::log("systemctl: units start");
     available()?;
     let pattern = "local.mcp-gate.*.service";
     let files = run(&["list-unit-files", "--no-legend", "--full", pattern])?;
     let loaded = run(&["list-units", "--all", "--no-legend", "--full", pattern])?;
+    crate::manage::trace::log("systemctl: units listed");
     Ok(files
         .lines()
         .chain(loaded.lines())

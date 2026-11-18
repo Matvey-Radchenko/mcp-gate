@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
+import { nativeTargets } from './manifest.mjs';
 import { retryNotFound } from './not-found-retry.mjs';
 
 // Git Bash ships GNU tar, which treats `C:\...` as host `C`. Archive names
@@ -34,7 +35,7 @@ async function download(base, name) {
 async function verifyRelease(version) {
   assert.match(version, /^\d+\.\d+\.\d+$/);
   const target = `${process.platform}-${process.arch}`;
-  assert(['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(target));
+  assert(nativeTargets.includes(target));
   const filename = `mcp-gate-${version}-${target}.tar.gz`;
   const base = `https://github.com/Matvey-Radchenko/mcp-gate/releases/download/v${version}`;
   const directory = mkdtempSync(join(tmpdir(), 'mcp-gate release Юникод '));

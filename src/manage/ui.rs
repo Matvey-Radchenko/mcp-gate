@@ -137,16 +137,22 @@ pub struct QuietInput {
 
 impl QuietInput {
     pub fn suppress() -> Self {
-        Self {
-            restore_echo: terminal() && disable_echo(),
-        }
+        debug_tty("QuietInput::suppress: start");
+        let restore_echo = terminal() && disable_echo();
+        debug_tty(&format!(
+            "QuietInput::suppress: restore_echo={restore_echo}"
+        ));
+        Self { restore_echo }
     }
 }
 
 impl Drop for QuietInput {
     fn drop(&mut self) {
         if self.restore_echo {
+            debug_tty("QuietInput::drop: restoring echo");
             enable_echo();
+        } else {
+            debug_tty("QuietInput::drop: no echo restore");
         }
     }
 }
@@ -167,6 +173,38 @@ fn enable_echo() {
     let _ = set_echo(true);
 }
 
+fn debug_tty(message: &str) {
+    let Ok(dest) = std::env::var("MCP_GATE_DEBUG_TTY") else {
+        return;
+    };
+    if dest.is_empty() {
+        return;
+    }
+    let line = format!("{message}\n");
+    if dest == "1" {
+        eprint!("{line}");
+        return;
+    }
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&dest)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()));
+}
+
+#[cfg(unix)]
+fn tty_flags(termios: &libc::termios) -> String {
+    format!(
+        "ICANON={} ECHO={} ICRNL={} ISIG={} VMIN={} VTIME={}",
+        termios.c_lflag & libc::ICANON != 0,
+        termios.c_lflag & libc::ECHO != 0,
+        termios.c_iflag & libc::ICRNL != 0,
+        termios.c_lflag & libc::ISIG != 0,
+        termios.c_cc[libc::VMIN],
+        termios.c_cc[libc::VTIME]
+    )
+}
+
 #[cfg(unix)]
 fn set_echo(on: bool) -> Option<bool> {
     // SAFETY: the termios value is zeroed and then fully overwritten by tcgetattr
@@ -174,8 +212,13 @@ fn set_echo(on: bool) -> Option<bool> {
     let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
     // SAFETY: the pointer refers to the local termios above, valid for this call.
     if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut termios) } != 0 {
+        debug_tty(&format!(
+            "set_echo({on}): tcgetattr failed: {}",
+            std::io::Error::last_os_error()
+        ));
         return None;
     }
+    debug_tty(&format!("set_echo({on}): before {}", tty_flags(&termios)));
     let was = termios.c_lflag & libc::ECHO != 0;
     if on {
         termios.c_lflag |= libc::ECHO;
@@ -183,8 +226,21 @@ fn set_echo(on: bool) -> Option<bool> {
         termios.c_lflag &= !libc::ECHO;
     }
     // SAFETY: termios was filled by tcgetattr on this same descriptor.
+    // Only the ECHO bit is changed; this is still a full-struct tcsetattr, so
+    // it must not run while another layer is switching raw/canonical mode.
     if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) } != 0 {
+        debug_tty(&format!(
+            "set_echo({on}): tcsetattr failed: {}",
+            std::io::Error::last_os_error()
+        ));
         return None;
+    }
+    // SAFETY: the termios value is zeroed and then fully overwritten by tcgetattr
+    // before any field is read.
+    let mut after = unsafe { std::mem::zeroed::<libc::termios>() };
+    // SAFETY: the pointer refers to the local termios above, valid for this call.
+    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut after) } == 0 {
+        debug_tty(&format!("set_echo({on}): after  {}", tty_flags(&after)));
     }
     Some(was)
 }

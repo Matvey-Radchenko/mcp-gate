@@ -2,7 +2,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         Arc,
@@ -14,6 +14,20 @@ use tempfile::TempDir;
 pub(crate) mod native_codex;
 pub(crate) mod process_tree;
 pub(crate) const TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+pub(crate) fn browser_executable() -> Option<String> {
+    std::env::var_os("MCP_GATE_TEST_BROWSER").map(|value| {
+        let value = value
+            .into_string()
+            .expect("MCP_GATE_TEST_BROWSER must be UTF-8");
+        let path = Path::new(&value);
+        assert!(
+            path.is_absolute() && path.is_file(),
+            "MCP_GATE_TEST_BROWSER must name an absolute browser executable"
+        );
+        value
+    })
+}
 
 pub(crate) struct Harness {
     _dir: TempDir,
@@ -117,6 +131,16 @@ impl Harness {
         let node = std::env::var("DEVTOOLS_NODE").unwrap_or_else(|_| "/usr/local/bin/node".into());
         let entry = root
             .join("runtime/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js");
+        let browser = if real { browser_executable() } else { None };
+        let mut args = vec![
+            "--isolated",
+            "--headless",
+            "--no-usage-statistics",
+            "--no-performance-crux",
+        ];
+        if let Some(browser) = browser.as_deref() {
+            args.extend(["--executablePath", browser]);
+        }
         let text = format!(
             r#"
 listen = "127.0.0.1:{port}"
@@ -134,7 +158,7 @@ call_timeout_seconds = 60
 command = {command:?}
 entrypoint = {entrypoint:?}
 version = {version:?}
-args = ["--isolated", "--headless", "--no-usage-statistics", "--no-performance-crux"]
+args = {args:?}
 [backend.env]
 MOCK_CANCEL_FILE = {cancel_file:?}
 "#,
@@ -145,7 +169,7 @@ MOCK_CANCEL_FILE = {cancel_file:?}
             entrypoint = if real {
                 entry.as_path()
             } else {
-                std::path::Path::new(mock)
+                Path::new(mock)
             },
             version = if real { "1.8.0" } else { "mock-1" },
             idle_seconds = idle.map(|(idle, _)| idle).unwrap_or(900),
