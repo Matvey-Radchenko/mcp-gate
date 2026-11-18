@@ -6,6 +6,11 @@
 - Only executable requests extend either idle timer. Session-owned backends retain the open GET-stream exception for recordings; idle expiry still closes that HTTP session. Capacity eviction remains session-only and available with idle disabled. Shared Docker cannot enable idle expiry.
 - `mcp-gate idle NAME [DURATION|off]` shows or saves the policy, supports `s`/`m`/`h`, `--dry-run`, `--yes` and `--json`, and prints the required service restart command without restarting it.
 - Shared idle shutdown retains HTTP sessions, blocks on active/admitted queued work, and starts a fresh backend for the next executable request without hiding crashes or replaying actions.
+- Linux x64 and ARM64: `systemd --user` units, XDG state under `$XDG_DATA_HOME/mcp-gate` (default `~/.local/share/mcp-gate`), and npm packages `@matvei-radchenko/mcp-gate-bin-linux-x64` and `@matvei-radchenko/mcp-gate-bin-linux-arm64`. Release binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, and later); musl is not supported.
+- The Windows npm launcher passes the resolved executable through `toNamespacedPath` so a long pnpm cache path can start the native binary.
+- After publishing, the release script waits until npm serves the new `latest` dist-tag before checking it.
+- Setup hashes the current executable in the background during the first prompt, streams the digest and the permanent binary install, and reuses that digest within the process.
+- On Linux, setup recovery fails fast when a restored service exits or crash-loops, and clears systemd start-rate limits with `reset-failed`, instead of waiting out the full readiness window.
 
 ## 0.1.1 — 2026-11-15
 
