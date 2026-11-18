@@ -235,7 +235,13 @@ async fn adopted_gateway_runs_from_managed_store_without_client_changes() {
     fs::copy(&current.binary, &legacy.binary).unwrap();
     mcp_gate::platform::executable(&legacy.binary).unwrap();
     legacy.bindings.clear();
-    service::unregister(&current).unwrap();
+    let current_health = runtime::health(&current).await.unwrap();
+    // On Windows, removing the task registration can precede process exit.
+    // Wait for the gateway lock to be released before reusing its endpoint.
+    assert!(
+        runtime::stop_idle(&current).await.unwrap(),
+        "managed fixture gateway did not stop"
+    );
     registry.gateways[0] = legacy.clone();
     store::save(&fixture.root, &registry).unwrap();
     service::register(&legacy).unwrap();
@@ -246,12 +252,21 @@ async fn adopted_gateway_runs_from_managed_store_without_client_changes() {
     let catalog = fs::read(legacy.release.join("catalog.json")).unwrap();
     let auth = fs::read(legacy.release.join("client-token")).unwrap();
     let old_health = runtime::health(&legacy).await.unwrap();
+    assert_ne!(
+        old_health["pid"], current_health["pid"],
+        "legacy fixture must run in a new process"
+    );
+    let status = fixture.run("status");
+    assert_eq!(
+        runtime::health(&legacy)
+            .await
+            .expect("legacy gateway unreachable after status")["pid"],
+        old_health["pid"],
+        "status changed the legacy gateway PID"
+    );
     // After bindings are cleared the client URL is no longer a managed record.
     // Windows may report "http" when legacy discovery does not see the logon task.
-    let connections = fixture.run("status")["connections"]
-        .as_array()
-        .unwrap()
-        .clone();
+    let connections = status["connections"].as_array().unwrap();
     assert!(
         connections.iter().any(|connection| {
             connection["name"] == "fixture"
@@ -270,12 +285,17 @@ async fn adopted_gateway_runs_from_managed_store_without_client_changes() {
         .unwrap();
     migration_fixture::Installation::check(&preview);
     assert!(preview.status.success());
-    let plan: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
-    assert_eq!(plan["plan"]["managed"][0]["managed_store_migration"], true);
     assert_eq!(
-        runtime::health(&legacy).await.unwrap()["pid"],
-        old_health["pid"]
+        runtime::health(&legacy)
+            .await
+            .expect("legacy gateway unreachable after setup --dry-run")["pid"],
+        old_health["pid"],
+        "setup --dry-run changed the legacy gateway PID"
     );
+    let plan: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    let managed = &plan["plan"]["managed"][0];
+    assert_eq!(managed["managed_store_migration"], true);
+    assert_eq!(managed["service_definition_checked"], true);
     assert_eq!(
         store::load(&fixture.root).unwrap().gateways[0].binary,
         legacy.binary
