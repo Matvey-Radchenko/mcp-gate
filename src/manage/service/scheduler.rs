@@ -44,7 +44,7 @@ fn arguments(text: &str) -> Option<Vec<String>> {
     }
     // SAFETY: the returned array has count NUL-terminated strings and remains
     // allocated until LocalFree. Copy everything before releasing it.
-    let result = unsafe {
+    unsafe {
         let result = (1..count)
             .map(|index| {
                 let ptr = *values.add(index as usize);
@@ -55,8 +55,7 @@ fn arguments(text: &str) -> Option<Vec<String>> {
             .collect();
         LocalFree(values.cast());
         result
-    };
-    result
+    }
 }
 
 fn command(mode: &str) -> Command {
