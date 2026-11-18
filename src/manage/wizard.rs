@@ -36,6 +36,16 @@ pub async fn setup(options: &mut Selection, registry: &Registry) -> Result<Optio
 }
 
 async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Option<Setup>> {
+    let exe = std::env::current_exe()?;
+    let size = std::fs::metadata(&exe).map(|meta| meta.len()).unwrap_or(0);
+    super::trace::log(&format!(
+        "setup_scope: digest thread start path={} size={size}",
+        exe.display()
+    ));
+    let digest = std::thread::Builder::new()
+        .name("mcp-gate-digest".into())
+        .spawn(move || crate::catalog::digest(&exe))
+        .context("Cannot start binary digest")?;
     let interactive = ui::interactive(options);
     let _quiet = interactive.then(ui::QuietInput::suppress);
     if interactive && !ui::scope(options)? {
@@ -54,16 +64,6 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
     if options.yes {
         super::context::pending_directories(&inventory.candidates)?;
     }
-    let exe = std::env::current_exe()?;
-    let size = std::fs::metadata(&exe).map(|meta| meta.len()).unwrap_or(0);
-    super::trace::log(&format!(
-        "setup_scope: digest start path={} size={size}",
-        exe.display()
-    ));
-    let hash = tokio::task::spawn_blocking(move || crate::catalog::digest(&exe))
-        .await
-        .context("Binary digest task failed")??;
-    super::trace::log("setup_scope: digest done");
     let managed: Vec<_> = registry
         .gateways
         .iter()
@@ -112,6 +112,11 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
         .collect();
     super::trace::log("setup_scope: labels::assign start");
     super::labels::assign(&mut eligible, registry)?;
+    super::trace::log("setup_scope: digest thread join");
+    let hash = digest
+        .join()
+        .map_err(|_| anyhow::anyhow!("Binary digest thread failed"))??;
+    super::trace::log("setup_scope: digest done");
     super::trace::log("setup_scope: choose::select start");
     super::choose::select(super::choose::Choice {
         options,

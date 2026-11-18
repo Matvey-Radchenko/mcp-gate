@@ -3,7 +3,7 @@ use anyhow::{Result, ensure};
 use rmcp::model::{Prompt, Resource, ResourceTemplate, ServerInfo, Tool};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{io::Read, path::Path};
+use std::{io::Read, path::Path, time::Instant};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,19 +23,55 @@ pub struct Catalog {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invocation_sha256: Option<String>,
 }
+fn debug_setup(message: &str) {
+    let Ok(dest) = std::env::var("MCP_GATE_DEBUG_SETUP") else {
+        return;
+    };
+    if dest.is_empty() || dest == "1" {
+        if dest == "1" {
+            eprintln!("{message}");
+        }
+        return;
+    }
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&dest)
+        .and_then(|mut file| {
+            std::io::Write::write_all(&mut file, format!("{message}\n").as_bytes())
+        });
+}
+
 pub fn digest(path: &Path) -> Result<String> {
     // Stream so a large debug executable is not loaded in one allocation.
+    let started = Instant::now();
+    debug_setup(&format!("digest: open {}", path.display()));
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    let mut marked = 0u64;
     loop {
         let count = file.read(&mut buffer)?;
         if count == 0 {
             break;
         }
         hasher.update(&buffer[..count]);
+        total += count as u64;
+        if total - marked >= 32 * 1024 * 1024 {
+            marked = total;
+            debug_setup(&format!(
+                "digest: hashed {total} bytes in {}ms",
+                started.elapsed().as_millis()
+            ));
+        }
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let hash = format!("{:x}", hasher.finalize());
+    debug_setup(&format!(
+        "digest: done bytes={total} duration_ms={}",
+        started.elapsed().as_millis()
+    ));
+    Ok(hash)
 }
 impl Catalog {
     pub fn load(path: &Path, backend: &Backend) -> Result<Self> {
