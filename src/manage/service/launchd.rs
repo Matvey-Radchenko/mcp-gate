@@ -1,0 +1,254 @@
+//! Inspect and edit a LaunchAgent with plutil so binary plists and typed keys survive.
+use super::{
+    Record, agent_path,
+    definition::{Definition, Snapshot},
+    domain,
+};
+use crate::manage::store;
+use anyhow::{Context, Result, ensure};
+use std::{
+    fs,
+    io::{ErrorKind, Write},
+    path::{Path, PathBuf},
+    process::{Command, Output},
+};
+
+pub(in crate::manage) fn identity(path: &Path) -> Result<(String, PathBuf, PathBuf)> {
+    let label = extract(path, "Label", "raw")?.context("LaunchAgent has no Label")?;
+    let (binary, config) = invocation(path)?;
+    Ok((label, binary, config))
+}
+
+pub(in crate::manage) fn invocation(path: &Path) -> Result<(PathBuf, PathBuf)> {
+    let args = arguments(path)?;
+    let program = extract(path, "Program", "raw")?;
+    let binary = PathBuf::from(
+        program
+            .as_ref()
+            .or(args.first())
+            .context("LaunchAgent has no executable")?,
+    );
+    // ProgramArguments may include argv0, or start at "serve" when Program is set.
+    let config = super::config_argument(args.iter().skip(1).map(String::as_str))
+        .or_else(|| super::config_argument(args.iter().map(String::as_str)))
+        .context("LaunchAgent has no literal gateway configuration")?;
+    ensure!(
+        binary.is_absolute(),
+        "LaunchAgent executable must be absolute"
+    );
+    Ok((binary, config))
+}
+
+fn arguments(path: &Path) -> Result<Vec<String>> {
+    let args =
+        extract(path, "ProgramArguments", "json")?.context("LaunchAgent has no arguments")?;
+    serde_json::from_str(&args)
+        .map_err(|_| anyhow::anyhow!("Invalid LaunchAgent arguments; values hidden"))
+}
+
+fn extract(path: &Path, key: &str, format: &str) -> Result<Option<String>> {
+    let Some(document) = document(path)? else {
+        return Ok(None);
+    };
+    Ok(document.get(key).and_then(|value| {
+        if format == "raw" {
+            value.as_str().map(str::to_owned)
+        } else {
+            Some(value.to_string())
+        }
+    }))
+}
+
+/// JSON fixtures are used in tests. Binary and XML LaunchAgents are converted
+/// with plutil so typed keys are preserved and `-extract` format differences
+/// cannot hide ProgramArguments.
+fn document(path: &Path) -> Result<Option<serde_json::Value>> {
+    if let Ok(bytes) = fs::read(path)
+        && let Ok(document) = serde_json::from_slice(&bytes)
+    {
+        return Ok(Some(document));
+    }
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-convert", "json", "-o", "-", "--"])
+        .arg(path)
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        serde_json::from_slice(&output.stdout).context("Invalid LaunchAgent encoding")?,
+    ))
+}
+
+pub(super) fn snapshot(record: &Record) -> Result<Option<Snapshot>> {
+    let path = agent_path(record)?;
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            ensure!(
+                !super::installed(record)?,
+                "Registered LaunchAgent has no expected plist"
+            );
+            return Ok(None);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    ensure!(
+        metadata.is_file(),
+        "LaunchAgent plist is not a regular file"
+    );
+    let (label, binary, config) = identity(&path)?;
+    ensure!(
+        label == record.label && config == record.config(),
+        "LaunchAgent identity no longer matches the registry"
+    );
+    let loaded = inspect(record)?;
+    if loaded.status.success() {
+        let text = String::from_utf8_lossy(&loaded.stdout);
+        ensure!(
+            registered_plist_matches(&text, &path),
+            "LaunchAgent is registered from a different plist"
+        );
+    }
+    Ok(Some(Snapshot {
+        binary,
+        definition: Definition {
+            bytes: fs::read(&path)?,
+            path: Some(path),
+        },
+    }))
+}
+
+fn registered_plist_path(text: &str) -> Option<&Path> {
+    let entry = text
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("path = "))?
+        .trim_end();
+    let unquoted = ['"', '\'']
+        .into_iter()
+        .find_map(|quote| entry.strip_prefix(quote)?.strip_suffix(quote));
+    Some(Path::new(unquoted.unwrap_or(entry)))
+}
+
+fn registered_plist_matches(text: &str, expected: &Path) -> bool {
+    let Some(registered) = registered_plist_path(text) else {
+        return false;
+    };
+    // launchd can resolve symlinked directories before recording the plist path.
+    registered == expected
+        || matches!(
+            (registered.canonicalize(), expected.canonicalize()),
+            (Ok(registered), Ok(expected)) if registered == expected
+        )
+}
+
+pub(super) fn rewrite(definition: &Definition, old: &Path, target: &Path) -> Result<Vec<u8>> {
+    let directory = definition
+        .file()?
+        .parent()
+        .context("Missing LaunchAgent directory")?;
+    let target = target
+        .to_str()
+        .context("LaunchAgent executable must be UTF-8")?;
+    store::with_temporary(|temporary| {
+        let mut file = temporary.open(directory)?;
+        file.write_all(&definition.bytes)?;
+        drop(file);
+        let path = temporary.path()?;
+        let program = extract(path, "Program", "raw")?;
+        let mut args = arguments(path)?;
+        ensure!(
+            program
+                .as_ref()
+                .or(args.first())
+                .is_some_and(|value| Path::new(value) == old),
+            "LaunchAgent executable changed"
+        );
+        if program.is_some() {
+            replace(path, "Program", "-string", target)?;
+        }
+        if let Some(first) = args
+            .first_mut()
+            .filter(|value| Path::new(value.as_str()) == old)
+        {
+            *first = target.to_owned();
+            // Replacing an array index with plutil can drop the remaining arguments.
+            replace(
+                path,
+                "ProgramArguments",
+                "-json",
+                &serde_json::to_string(&args)?,
+            )?;
+        }
+        Ok(fs::read(path)?)
+    })
+}
+
+fn replace(path: &Path, key: &str, format: &str, value: &str) -> Result<()> {
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-replace", key, format, value, "--"])
+        .arg(path)
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "Cannot update LaunchAgent executable; values hidden"
+    );
+    Ok(())
+}
+
+fn target(record: &Record) -> String {
+    format!("{}/{}", domain(), record.label)
+}
+
+fn inspect(record: &Record) -> Result<Output> {
+    Ok(Command::new("launchctl")
+        .args(["print", &target(record)])
+        .output()?)
+}
+
+pub(super) fn stop(record: &Record) -> Result<()> {
+    if !inspect(record)?.status.success() {
+        return Ok(());
+    }
+    let output = Command::new("launchctl")
+        .args(["bootout", &target(record)])
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "LaunchAgent could not be stopped ({})",
+        output.status
+    );
+    for _ in 0..100 {
+        if !inspect(record)?.status.success() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    anyhow::bail!("LaunchAgent is still stopping")
+}
+
+pub(super) fn start(record: &Record) -> Result<()> {
+    if !inspect(record)?.status.success() {
+        let output = Command::new("launchctl")
+            .args(["bootstrap", &domain()])
+            .arg(agent_path(record)?)
+            .output()?;
+        ensure!(
+            output.status.success(),
+            "LaunchAgent could not be loaded ({})",
+            output.status
+        );
+        let output = Command::new("launchctl")
+            .args(["kickstart", &target(record)])
+            .output()?;
+        ensure!(
+            output.status.success(),
+            "LaunchAgent could not be started ({})",
+            output.status
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

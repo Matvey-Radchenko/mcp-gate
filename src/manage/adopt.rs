@@ -35,7 +35,6 @@ pub async fn run(name: String, dry_run: bool, json: bool) -> Result<()> {
             existing.config() == service.config,
             "Gateway name {name} is already used by a different installation"
         );
-        #[cfg(target_os = "linux")]
         ensure!(
             existing.label == service.label && existing.binary == service.binary,
             "Gateway name {name} is already used by a different installation"
@@ -67,7 +66,6 @@ pub async fn run(name: String, dry_run: bool, json: bool) -> Result<()> {
         binary: service.binary.clone(),
         bindings: Vec::new(),
     };
-    #[cfg(target_os = "linux")]
     ensure!(
         record.config() == service.config,
         "Adoption requires the gateway configuration to be named config.toml"
@@ -93,6 +91,11 @@ pub async fn run(name: String, dry_run: bool, json: bool) -> Result<()> {
         super::service::installed(&record)?,
         "The systemd user service changed during adoption"
     );
+    #[cfg(any(target_os = "macos", windows))]
+    ensure!(
+        super::service::snapshot(&record)?.is_some_and(|snapshot| snapshot.binary == record.binary),
+        "The user service changed during adoption"
+    );
     let mut registry = store::load(&root)?;
     ensure!(
         !registry
@@ -106,7 +109,9 @@ pub async fn run(name: String, dry_run: bool, json: bool) -> Result<()> {
     report(
         json,
         "complete",
-        &format!("Adopted gateway {name}. Client settings were not changed."),
+        &format!(
+            "Adopted gateway {name}. Run setup with the official binary to migrate the service. Client settings were not changed."
+        ),
         &service,
     );
     Ok(())

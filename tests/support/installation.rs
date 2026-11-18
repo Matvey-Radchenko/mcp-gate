@@ -57,19 +57,13 @@ impl Installation {
         let mut c = Command::new(binary);
         c.arg(action)
             .arg("--json")
+            .arg("--project")
+            .arg(&self.project)
             .env("CLAUDE_CONFIG_DIR", self.settings.parent().unwrap())
             .env("MCP_GATE_TEST_ROOT", &self.root)
             .env("MCP_GATE_TEST_LABEL_SCOPE", &self.root);
         if action != "status" {
-            c.args([
-                "--client",
-                "claude-code",
-                "--server",
-                &self.server,
-                "--yes",
-                "--project",
-            ])
-            .arg(&self.project);
+            c.args(["--client", "claude-code", "--server", &self.server, "--yes"]);
         }
         c
     }

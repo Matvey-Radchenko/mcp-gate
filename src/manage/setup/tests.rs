@@ -66,6 +66,7 @@ fn verify_registration(root: &Path) {
         phase: "preparing".into(),
         services: vec![record.clone()],
         restart: vec![],
+        migration: None,
         changes: vec![],
     };
     journal.save(&journal_path).unwrap();

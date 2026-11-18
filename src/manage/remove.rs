@@ -86,6 +86,7 @@ fn restore_connections(
         phase: "removing".into(),
         services: vec![],
         restart: vec![],
+        migration: None,
         changes: vec![],
     };
     journal.save(&path)?;

@@ -18,7 +18,7 @@ pub async fn run(mut options: Selection) -> Result<()> {
     let root = store::root()?;
     // Reading the format precedes all writes, including binary copies.
     let registry = store::load(&root)?;
-    let Some(chosen) = super::wizard::setup(&mut options, &registry).await? else {
+    let Some(chosen) = super::wizard::setup(&mut options, &registry, &root).await? else {
         return Ok(());
     };
     #[cfg(target_os = "linux")]
@@ -53,7 +53,11 @@ pub async fn run(mut options: Selection) -> Result<()> {
         println!(
             "{}",
             json!({"format_version":1,"phase":"complete","plan":plan,"updates":updates.messages,
-            "restart_clients":affected,"connection":"awaiting client restart and a new MCP connection"})
+            "restart_clients":affected,"connection":if affected.is_empty() {
+                "no client restart required"
+            } else {
+                "awaiting client restart and a new MCP connection"
+            }})
         );
     } else {
         let deferred = updates
@@ -171,6 +175,7 @@ async fn install(
         phase: "preparing".into(),
         services: vec![],
         restart: vec![],
+        migration: None,
         changes: vec![],
     };
     journal.save(&path)?;

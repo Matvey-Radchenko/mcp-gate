@@ -100,46 +100,14 @@ pub fn same_endpoint(a: &str, b: &str) -> bool {
 
 #[cfg(target_os = "macos")]
 fn configurations(home: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(home.join("Library/LaunchAgents")) else {
-        return vec![];
-    };
-    let mut paths = std::collections::BTreeSet::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "plist") {
-            continue;
-        }
-        let Ok(output) = std::process::Command::new("/usr/bin/plutil")
-            .args(["-convert", "json", "-o", "-"])
-            .arg(&path)
-            .output()
-        else {
-            continue;
-        };
-        if !output.status.success() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_slice::<Value>(&output.stdout) else {
-            continue;
-        };
-        if let Some(config) = config_argument(&value) {
-            paths.insert(config);
-        }
-    }
-    paths.into_iter().collect()
-}
-
-/// Only literal argv for the known executable is evidence. Shell scripts and helpers are opaque.
-#[cfg(any(target_os = "macos", test))]
-pub fn config_argument(plist: &Value) -> Option<PathBuf> {
-    let args = plist["ProgramArguments"].as_array()?;
-    let binary = Path::new(args.first()?.as_str()?).file_name()?.to_str()?;
-    if !matches!(binary, "mcp-session-gateway" | "mcp-gate") {
-        return None;
-    }
-    let index = args.iter().position(|v| v == "--config")?;
-    let path = PathBuf::from(args.get(index + 1)?.as_str()?);
-    path.is_absolute().then_some(path)
+    super::agents::plists(home)
+        .iter()
+        .filter_map(|path| super::service::launchd::invocation(path).ok())
+        .filter(|(binary, _)| super::agents::gateway_binary(binary))
+        .map(|(_, config)| config)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 #[cfg(target_os = "linux")]
@@ -168,7 +136,22 @@ fn configurations(_home: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(windows)]
+fn configurations(_home: &Path) -> Vec<PathBuf> {
+    super::service::scheduler::definitions()
+        .map(|tasks| {
+            tasks
+                .into_iter()
+                .filter(|(_, binary, _)| super::agents::gateway_binary(binary))
+                .map(|(_, _, config)| config)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn configurations(_home: &Path) -> Vec<PathBuf> {
     vec![]
 }
@@ -176,7 +159,6 @@ fn configurations(_home: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     #[test]
     fn legacy_evidence_requires_a_literal_executable_and_exact_loopback_endpoint() {
         let config = if cfg!(windows) {
@@ -185,12 +167,15 @@ mod tests {
             "/fixture/config.toml"
         };
         assert_eq!(
-            config_argument(
-                &json!({"ProgramArguments":["/bin/mcp-session-gateway","serve","--config",config]})
-            ),
+            super::super::service::config_argument(["serve", "--config", config].into_iter()),
             Some(PathBuf::from(config))
         );
-        assert!(config_argument(&json!({"ProgramArguments":["sh","-c","mcp-session-gateway --config /fixture/config.toml"]})).is_none());
+        assert!(
+            super::super::service::config_argument(
+                ["-c", "mcp-session-gateway --config /fixture/config.toml"].into_iter()
+            )
+            .is_none()
+        );
         assert!(same_endpoint(
             "http://localhost:1234/mcp",
             "http://127.0.0.1:1234/mcp"

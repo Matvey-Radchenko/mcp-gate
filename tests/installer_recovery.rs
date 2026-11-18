@@ -2,7 +2,7 @@
 #[path = "support/installation.rs"]
 mod installation;
 use installation::Installation;
-use mcp_gate::manage::{service, store};
+use mcp_gate::manage::{runtime, service, store};
 use serde_json::{Value, json};
 use std::fs;
 
@@ -97,9 +97,9 @@ fn unavailable_previous_backend_does_not_trap_future_setup() {
     fixture.run("remove");
 }
 
-#[test]
+#[tokio::test]
 #[ignore = "Registers an isolated temporary user service; requires a logged-in user service manager"]
-fn removing_one_client_keeps_other_connection_and_service() {
+async fn removing_one_client_keeps_other_connection_and_service() {
     let fixture = Installation::new();
     fixture.run("setup");
     let mut registry = store::load(&fixture.root).unwrap();
@@ -123,7 +123,7 @@ fn removing_one_client_keeps_other_connection_and_service() {
     record.bindings.push(second.clone());
     let record = record.clone();
     store::save(&fixture.root, &registry).unwrap();
-    let pid = fixture.run("status")["gateways"][0]["health"]["pid"].clone();
+    let pid = runtime::health(&record).await.unwrap()["pid"].clone();
     assert_eq!(
         fixture.run("remove")["restart_clients"],
         json!(["claude-code"])
@@ -131,7 +131,7 @@ fn removing_one_client_keeps_other_connection_and_service() {
     let remaining = store::load(&fixture.root).unwrap();
     assert_eq!(remaining.gateways[0].bindings.len(), 1);
     assert!(service::installed(&record).unwrap());
-    assert_eq!(fixture.run("status")["gateways"][0]["health"]["pid"], pid);
+    assert_eq!(runtime::health(&record).await.unwrap()["pid"], pid);
     assert_eq!(fs::read_to_string(&second.target).unwrap(), text);
     let original: Value = serde_json::from_slice(&fixture.original).unwrap();
     assert_eq!(

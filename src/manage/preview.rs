@@ -57,6 +57,14 @@ pub fn display(plan: &Value, dry_run: bool) {
         }
     }
     for gateway in plan["managed"].as_array().into_iter().flatten() {
+        if gateway["connections"].as_array().is_some_and(Vec::is_empty) {
+            println!(
+                "  {}: {}",
+                text(&gateway["label"]),
+                text(&gateway["action"])
+            );
+            println!("    No saved bindings; client settings stay as configured.");
+        }
         for b in gateway["connections"].as_array().into_iter().flatten() {
             println!(
                 "  {} / {}: {}",
@@ -76,7 +84,9 @@ pub fn display(plan: &Value, dry_run: bool) {
         && servers
             .iter()
             .all(|server| server["directory_hint"].is_string());
-    print_effects(dry_run, directory_only);
+    if !servers.is_empty() {
+        print_effects(dry_run, directory_only);
+    }
 }
 
 fn print_effects(dry_run: bool, directory_only: bool) {
@@ -275,18 +285,40 @@ pub fn target(binding: &Binding) -> Value {
     json!({"client":binding.client,"name":binding.name,"source":binding.source,"target":binding.target})
 }
 
-pub fn managed(record: &super::store::Record, hash: &str) -> Value {
+pub fn managed(record: &super::store::Record, root: &std::path::Path, hash: &str) -> Value {
+    let target = super::upgrade::binary_path(root, hash);
+    let observed = super::service::snapshot(record);
+    let observed_binary = observed
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .map(|s| s.binary.as_path());
+    use super::upgrade::BinaryState;
+    let state = super::upgrade::binary_state(root, record, &target, hash, observed_binary);
+    let binary_changed = state != BinaryState::Current;
+    let migration = state == BinaryState::Migration;
     let config = crate::config::Config::load(&record.config());
     let catalog_changed = config.as_ref().map_or(true, |c| {
         crate::catalog::Catalog::load(&c.catalog_file, &c.backend).is_err()
     });
-    json!({"id":record.id,"label":record.label,"connections":record.bindings.iter().map(target).collect::<Vec<_>>(),
-        "gateway_binary_changed":record.binary_hash != hash,
-        "backend_or_catalog_changed":catalog_changed,
-        "action":if record.removing { "finish pending remove" } else if catalog_changed {
-            "idle gateway: rediscover original command and review catalog changes; busy gateway: defer"
-        } else { if record.binary_hash == hash { "check current service; retain it if healthy" } else { "update gateway when idle; retain endpoint and credentials" } },
-        "endpoint_and_credentials":"preserved"})
+    let action = if record.removing {
+        "finish pending remove"
+    } else if migration {
+        "migrate the gateway binary to the managed store when idle; preserve service settings"
+    } else if record.bindings.is_empty() && observed_binary == Some(target.as_path()) {
+        "already current; retain the service"
+    } else if catalog_changed {
+        "idle gateway: rediscover original command and review catalog changes; busy gateway: defer"
+    } else if binary_changed {
+        "update gateway when idle; retain endpoint and credentials"
+    } else {
+        "check current service; retain it if healthy"
+    };
+    json!({"id":record.id,"label":record.label,"connections":record.bindings.iter().map(self::target).collect::<Vec<_>>(),
+        "gateway_binary_changed":binary_changed, "managed_store_migration":migration,
+        "service_definition_checked":observed.is_ok(),
+        "client_settings":if record.bindings.is_empty() { "no saved bindings; left alone" } else { "preserved" },
+        "backend_or_catalog_changed":catalog_changed, "action":action, "endpoint_and_credentials":"preserved"})
 }
 
 pub fn catalog_change(
