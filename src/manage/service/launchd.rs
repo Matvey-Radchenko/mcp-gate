@@ -105,11 +105,8 @@ pub(super) fn snapshot(record: &Record) -> Result<Option<Snapshot>> {
     let loaded = inspect(record)?;
     if loaded.status.success() {
         let text = String::from_utf8_lossy(&loaded.stdout);
-        let registered_path = text
-            .lines()
-            .find_map(|line| line.trim_start().strip_prefix("path = "));
         ensure!(
-            registered_path.is_some_and(|entry| Path::new(entry) == path),
+            registered_plist_matches(&text, &path),
             "LaunchAgent is registered from a different plist"
         );
     }
@@ -120,6 +117,29 @@ pub(super) fn snapshot(record: &Record) -> Result<Option<Snapshot>> {
             path: Some(path),
         },
     }))
+}
+
+fn registered_plist_path(text: &str) -> Option<&Path> {
+    let entry = text
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("path = "))?
+        .trim_end();
+    let unquoted = ['"', '\'']
+        .into_iter()
+        .find_map(|quote| entry.strip_prefix(quote)?.strip_suffix(quote));
+    Some(Path::new(unquoted.unwrap_or(entry)))
+}
+
+fn registered_plist_matches(text: &str, expected: &Path) -> bool {
+    let Some(registered) = registered_plist_path(text) else {
+        return false;
+    };
+    // launchd can resolve symlinked directories before recording the plist path.
+    registered == expected
+        || matches!(
+            (registered.canonicalize(), expected.canonicalize()),
+            (Ok(registered), Ok(expected)) if registered == expected
+        )
 }
 
 pub(super) fn rewrite(definition: &Definition, old: &Path, target: &Path) -> Result<Vec<u8>> {

@@ -1,4 +1,69 @@
 use super::*;
+use std::os::unix::fs::symlink;
+
+#[test]
+fn registered_plist_matches_through_symlinked_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("Launch Agents");
+    fs::create_dir(&directory).unwrap();
+    let plist = directory.join("fixture.plist");
+    fs::write(&plist, "fixture").unwrap();
+    let alias = root.path().join("alias");
+    symlink(&directory, &alias).unwrap();
+    let expected = alias.join("fixture.plist");
+    let canonical = plist.canonicalize().unwrap();
+    assert_ne!(canonical, expected);
+
+    for quote in ["", "\"", "'"] {
+        let text = format!(
+            "gui/501/local.mcp-gate.fixture = {{\n\tpath = {quote}{}{quote}  \t\n\tstate = running\n}}",
+            canonical.display()
+        );
+        assert!(registered_plist_matches(&text, &expected));
+    }
+}
+
+#[test]
+fn registered_plist_rejects_different_existing_file() {
+    let root = tempfile::tempdir().unwrap();
+    let expected = root.path().join("expected.plist");
+    let other = root.path().join("other.plist");
+    fs::write(&expected, "fixture").unwrap();
+    fs::write(&other, "fixture").unwrap();
+    let text = format!("\tpath = {}\n", other.display());
+    assert!(!registered_plist_matches(&text, &expected));
+}
+
+#[test]
+fn registered_plist_rejects_missing_path() {
+    assert!(!registered_plist_matches(
+        "\tstate = running\n",
+        Path::new("/fixture.plist")
+    ));
+}
+
+#[test]
+fn registered_plist_ignores_standard_stream_paths() {
+    let expected = Path::new("/fixture.plist");
+    assert!(!registered_plist_matches(
+        "\tstdout path = /fixture.plist\n\tstderr path = /fixture.plist\n",
+        expected
+    ));
+}
+
+#[test]
+fn registered_plist_requires_raw_equality_if_canonicalization_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let missing = root.path().join("missing.plist");
+    let existing = root.path().join("existing.plist");
+    fs::write(&existing, "fixture").unwrap();
+    let missing_text = format!("\tpath = {}\n", missing.display());
+    let existing_text = format!("\tpath = {}\n", existing.display());
+
+    assert!(registered_plist_matches(&missing_text, &missing));
+    assert!(!registered_plist_matches(&missing_text, &existing));
+    assert!(!registered_plist_matches(&existing_text, &missing));
+}
 
 #[test]
 fn rewrites_program_and_matching_argv0_while_preserving_typed_settings() {
