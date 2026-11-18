@@ -44,7 +44,7 @@ async fn setup_scope(options: &mut Selection, registry: &Registry) -> Result<Opt
     ));
     let digest = std::thread::Builder::new()
         .name("mcp-gate-digest".into())
-        .spawn(move || crate::catalog::digest(&exe))
+        .spawn(crate::catalog::current_exe_digest)
         .context("Cannot start binary digest")?;
     let interactive = ui::interactive(options);
     let _quiet = interactive.then(ui::QuietInput::suppress);

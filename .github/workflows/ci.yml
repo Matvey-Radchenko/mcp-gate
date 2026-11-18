@@ -53,16 +53,21 @@ jobs:
         include:
           - runner: macos-15
             target: darwin-arm64
+            timeout: 40
           - runner: macos-15-intel
             target: darwin-x64
+            timeout: 40
           - runner: windows-2025
             target: win32-x64
+            timeout: 40
           - runner: ubuntu-22.04
             target: linux-x64
+            timeout: 40
           - runner: ubuntu-22.04-arm
             target: linux-arm64
+            timeout: 70
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: ${{ matrix.timeout }}
     defaults:
       run:
         shell: bash
