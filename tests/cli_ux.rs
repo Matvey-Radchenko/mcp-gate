@@ -25,6 +25,9 @@ impl Fixture {
         command
             .args(args)
             .current_dir(root)
+            .env("HOME", root)
+            .env("USERPROFILE", root)
+            .env("LOCALAPPDATA", root.join("AppData/Local"))
             .env("MCP_GATE_TEST_HOME", root)
             .env("MCP_GATE_TEST_ROOT", root.join("state"))
             .env("CODEX_HOME", root.join(".codex"))
@@ -54,6 +57,117 @@ impl Fixture {
         )
         .unwrap();
     }
+}
+
+#[test]
+fn setup_migrates_an_external_codex_helper_and_runs_the_stable_executable() {
+    use mcp_gate::{
+        catalog, install,
+        manage::{runtime::headers_helper, store},
+        platform,
+    };
+
+    let fixture = Fixture::new();
+    let home = fixture.directory.path();
+    let root = home.join("state");
+    let old = root
+        .join("binaries")
+        .join(format!("0.1.0-{}", "a".repeat(64)))
+        .join(platform::binary_name());
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    let binary = std::path::Path::new(env!("CARGO_BIN_EXE_mcp-gate"));
+    if fs::hard_link(binary, &old).is_err() {
+        fs::copy(binary, &old).unwrap();
+    }
+    let config = home.join("gateway config.toml");
+    let token_file = home.join("fixture-token");
+    install::init_token(&token_file).unwrap();
+    fs::write(&config, toml::to_string(&json!({
+            "format_version":2,"listen":"127.0.0.1:49761","idle_seconds":600,
+        "token_file":token_file,"catalog_file":home.join("catalog.json"),"state_dir":home.join("runtime"),
+        "backend":{"profile":"stdio","command":env!("CARGO_BIN_EXE_mock-backend"),"version":"fixture"}
+    })).unwrap()).unwrap();
+    let before = headers_helper(&old, &config);
+    fixture.codex(json!({"mcp_servers":{"fixture":{
+        "url":"http://127.0.0.1:49761/mcp","http_headers_helper":before,"startup_timeout_sec":20
+    }}}));
+    let opencode = home.join(".config/opencode/opencode.json");
+    let auth = r#"{"mcp":{"fixture":{"type":"remote","url":"http://127.0.0.1:49761/mcp","headers":{"Authorization":"{file:authorization}"}}}}"#;
+    fs::write(&opencode, auth).unwrap();
+    let settings = home.join(".codex/config.toml");
+    let original = fs::read_to_string(&settings).unwrap();
+    let stable = root.join("current").join(platform::binary_name());
+    let setup = |extra: &[&str]| {
+        let output = fixture
+            .command(&[
+                "setup", "--json", "--client", "codex", "--server", "fixture", "--yes",
+            ])
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+
+    let preview = setup(&["--dry-run"]);
+    assert_eq!(preview["plan"]["connections"][0]["kind"], "external");
+    assert_eq!(preview["plan"]["helper_migrations"][0]["name"], "fixture");
+    assert_eq!(fs::read_to_string(&settings).unwrap(), original);
+    assert!(!stable.exists());
+
+    let result = setup(&[]);
+    assert_eq!(result["restart_clients"], json!(["codex"]));
+    assert!(
+        result["updates"][0]
+            .as_str()
+            .unwrap()
+            .contains("headers helper migrated")
+    );
+    assert!(store::load(&root).unwrap().gateways.is_empty());
+    assert_eq!(fs::read_to_string(opencode).unwrap(), auth);
+    let changed = fs::read_to_string(&settings).unwrap();
+    let after = clients::document::parse(&changed, true).unwrap();
+    assert_eq!(
+        after["mcp_servers"]["fixture"]["http_headers_helper"],
+        headers_helper(&stable, &config)
+    );
+    assert_eq!(after["mcp_servers"]["fixture"]["startup_timeout_sec"], 20);
+    assert_eq!(
+        catalog::digest(&stable).unwrap(),
+        catalog::digest(binary).unwrap()
+    );
+
+    let output = Command::new(&stable)
+        .args(["headers", "--config"])
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let headers: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        headers["Authorization"]
+            .as_str()
+            .unwrap()
+            .starts_with("Bearer ")
+    );
+    assert_eq!(setup(&[])["phase"], "unchanged");
+
+    // A later setup can refresh an external-only installation without any
+    // more client edits, even when the stable binary has gone missing.
+    fs::remove_file(&stable).unwrap();
+    let refreshed = setup(&[]);
+    assert_eq!(refreshed["plan"]["refresh_helper_binary"], true);
+    assert_eq!(refreshed["restart_clients"], json!([]));
+    assert!(stable.is_file());
+    assert_eq!(fs::read_to_string(&settings).unwrap(), changed);
 }
 
 #[test]

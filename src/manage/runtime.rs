@@ -1,8 +1,6 @@
+pub use super::helper::command as headers_helper;
 use super::{launch, store::Record};
-use crate::{
-    clients::{Binding, Candidate, Client},
-    config::Config,
-};
+use crate::{clients::Candidate, config::Config};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
@@ -45,13 +43,24 @@ pub async fn maintenance(record: &Record, enable: bool) -> Result<bool> {
 }
 
 pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
+    let binary = super::upgrade::binary(root)?;
+    let hash = crate::catalog::current_exe_digest()?;
+    super::current::publish(root, &binary, &hash)?;
+    prepare_with_binary(root, candidate, &binary, &hash).await
+}
+
+pub(super) async fn prepare_with_binary(
+    root: &Path,
+    candidate: &Candidate,
+    binary: &Path,
+    hash: &str,
+) -> Result<Record> {
     let id = uuid::Uuid::new_v4().to_string();
     let release = root.join("releases").join(&id);
     crate::platform::private_dir(&release)?;
     for name in ["bin", "state", "credentials", "logs"] {
         crate::platform::private_dir(&release.join(name))?;
     }
-    let binary = super::upgrade::binary(root)?;
     let port = std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?
         .port();
@@ -98,7 +107,7 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
         toml::to_string_pretty(&config)?.as_bytes(),
     )?;
     let mut binding = candidate.binding.clone();
-    binding.after = remote(&binding, &binary, &release.join("config.toml"), &config)?;
+    binding.after = super::remote::binding(&binding, root, &release.join("config.toml"), &config)?;
     // The wizard assigns this before installation. A missing label is only a
     // fallback for a caller that did not preview; it does not rename anything.
     let label = candidate.service_label.clone().unwrap_or_else(|| {
@@ -109,53 +118,12 @@ pub async fn prepare(root: &Path, candidate: &Candidate) -> Result<Record> {
         id: id.clone(),
         release,
         label,
-        binary_hash: crate::catalog::digest(&binary)?,
-        binary,
+        binary_hash: hash.into(),
+        binary: binary.into(),
         bindings: vec![binding],
     })
 }
 
-fn quote(path: &Path) -> String {
-    if cfg!(windows) {
-        format!("\"{}\"", path.display())
-    } else {
-        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
-    }
-}
-pub fn headers_helper(binary: &Path, config: &Path) -> String {
-    format!("{} headers --config {}", quote(binary), quote(config))
-}
-fn remote(binding: &Binding, binary: &Path, path: &Path, config: &Config) -> Result<Value> {
-    let mut value = binding.direct.clone();
-    let object = value
-        .as_object_mut()
-        .context("MCP configuration must be an object")?;
-    for key in ["command", "args", "env", "environment", "env_vars", "cwd"] {
-        object.remove(key);
-    }
-    object.insert("url".into(), json!(format!("http://{}/mcp", config.listen)));
-    let helper = headers_helper(binary, path);
-    match binding.client {
-        Client::Codex => {
-            object.insert("http_headers_helper".into(), json!(helper));
-        }
-        Client::ClaudeCode => {
-            object.insert("type".into(), json!("http"));
-            object.insert("headersHelper".into(), json!(helper));
-        }
-        Client::Opencode => {
-            object.insert("type".into(), json!("remote"));
-            object.insert("oauth".into(), json!(false));
-            let auth = config.token_file.with_file_name("authorization");
-            super::store::atomic(&auth, format!("Bearer {}", config.token()?).as_bytes())?;
-            object.insert(
-                "headers".into(),
-                json!({"Authorization":format!("{{file:{}}}",auth.display())}),
-            );
-        }
-    }
-    Ok(value)
-}
 /// A replaced service may hold its state lock before it listens. Recovery runs
 /// at `upgrade-registered`, before `ready`, so both use this startup window.
 const SERVICE_HANDOFF: Duration = Duration::from_secs(30);
@@ -198,7 +166,10 @@ async fn ready_with(
     )
 }
 
-pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result<Option<Record>> {
+pub(super) fn matching<'a>(
+    registry: &'a super::store::Registry,
+    candidate: &Candidate,
+) -> Result<Option<(&'a Record, Config)>> {
     // Identical command, arguments, environment and directory share one gateway.
     // Session isolation stays per HTTP session; a shared backend stays singular.
     if super::context::needs_directory(candidate) {
@@ -215,11 +186,7 @@ pub fn reuse(registry: &super::store::Registry, candidate: &Candidate) -> Result
             continue;
         }
         crate::catalog::Catalog::load(&config.catalog_file, &config.backend)?;
-        let mut binding = candidate.binding.clone();
-        binding.after = remote(&binding, &record.binary, &record.config(), &config)?;
-        let mut reused = record.clone();
-        reused.bindings = vec![binding];
-        return Ok(Some(reused));
+        return Ok(Some((record, config)));
     }
     Ok(None)
 }

@@ -62,6 +62,31 @@ responses и собственно MCP tool handlers (последние могу
 закреплённого Chrome DevTools и нужные ему legacy roots/progress. Версию протокола
 с бессессионным lifecycle не объявляем до отдельного проектирования изоляции.
 
+## Managed binary store
+
+Setup installs the service executable in `binaries/<version>-<sha256>/`. The
+registry and operation journals identify each service by its exact executable
+path and SHA-256 digest. Each service stays pinned to this path until setup can
+explicitly restart it. That preserves exact rollback and recovery.
+
+Setup stages the short-lived Codex and Claude Code headers helper in `current/`,
+verifies its digest, and atomically replaces `current/mcp-gate`
+(`current\mcp-gate.exe` on Windows). Unix uses a hardlink with a copy fallback.
+Windows stages an independent copy so a long-running service cannot hold the
+helper's file stream open via a hardlink. Replacement briefly retries sharing
+errors from a running helper. [Windows file streams](https://learn.microsoft.com/en-us/windows/win32/fileio/file-streams)
+
+Setup journals the executable
+path migration in managed and external client entries together with any saved
+binding changes. After upgrading, re-run `mcp-gate setup` once and restart the
+clients it lists. OpenCode reads its Authorization header from a file.
+
+Remove retains the binary store and `current/`, including after the last
+registered gateway is removed. External client entries can still refer to
+the helper outside the scanned configuration scope. Any future binary cleanup
+must retain all registry references and all versions matching the current
+helper digest.
+
 ## Дальнейшие задачи (не обещания текущей версии)
 
 - Регулярный smoke на обновлениях Chrome и при переходе на другой Node.

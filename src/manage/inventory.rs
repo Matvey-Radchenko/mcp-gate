@@ -1,5 +1,8 @@
 //! A shared, read-only view for setup, status and remove. Ownership comes from the registry.
-use super::{Selection, legacy, store::Registry};
+use super::{
+    Selection, current, helper, legacy,
+    store::{self, Registry},
+};
 use crate::clients::{self, Binding, Candidate, SourceIssue};
 use anyhow::Result;
 use serde::Serialize;
@@ -31,7 +34,9 @@ pub async fn read(
     registry: &Registry,
     check_legacy: bool,
 ) -> Result<Inventory> {
-    let home = super::store::home()?;
+    let home = store::home()?;
+    let root = store::root()?;
+    let current = current::path(&root);
     let project = crate::platform::project_path(
         &options.project.clone().unwrap_or(std::env::current_dir()?),
     )?;
@@ -67,6 +72,10 @@ pub async fn read(
             .iter()
             .find(|l| legacy::same_endpoint(endpoint, &l.endpoint));
         let disabled = c.binding.direct["enabled"] == false || c.binding.direct["disabled"] == true;
+        let managed_helper =
+            helper::executable(c.binding.client, &c.binding.direct).is_some_and(|command| {
+                command.executable == current || helper::versioned(&root, &command.executable)
+            });
         let changed = managed.is_some_and(|record| {
             record
                 .bindings
@@ -75,7 +84,8 @@ pub async fn read(
         });
         let kind = if managed.is_some() {
             "managed"
-        } else if old.is_some() || c.issue.as_deref().is_some_and(marks_external) {
+        } else if old.is_some() || managed_helper || c.issue.as_deref().is_some_and(marks_external)
+        {
             "external"
         } else if !endpoint.is_empty() {
             "http"
@@ -112,7 +122,7 @@ pub async fn read(
         let reason = match kind {
             "managed" => None,
             "external" => Some(format!(
-                "{}This connection already uses a gateway that this installation did not set up. Original direct settings were not saved, so setup and remove will not change it.",
+                "{}This connection already uses a gateway without saved direct settings. Setup can migrate a versioned headers helper from this installation.",
                 old.and_then(|l| l
                     .diagnostic
                     .map(str::to_owned)

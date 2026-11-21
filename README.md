@@ -43,7 +43,7 @@ For example, one Telegram MCP backend (Java + TDLib) used about 400 MB on a main
 - **Shared or session-owned.** A reviewed stateless API can share one serialized backend across clients. A session-owned server (browsers, anything with per-client state) gets its own MCP connection. Shared mode is opt-in and is not safe for an arbitrary browser server.
 - **Idle backends close.** [`idle_seconds`](docs/configurable-runtime.md#backend-idle-policy) defaults to 900 for session-owned backends and off for shared ones; `0` disables it. Only executable requests extend the timer. An open GET stream also keeps a session-owned recording alive. Shared non-Docker backends can opt in while keeping HTTP sessions open. When every slot is busy, `session_idle_evict_seconds` (default 120) lets the longest-idle session backend make room. Running calls are never evicted.
 - **No automatic replay.** Actions are never retried or replayed. After a backend crash or a restart, sessions and unfinished work are not restored.
-- **Managed client setup.** `setup` copies the binary into permanent versioned storage (independent of the npx cache), registers a user service (LaunchAgent on macOS, a systemd --user unit on Linux, or a logon Task Scheduler task on Windows), checks readiness, and only then changes personal client connections. Names and permission settings are preserved. Project files intended for Git are left untouched.
+- **Managed client setup.** `setup` copies the binary into permanent versioned storage (independent of the npx cache), registers a user service (LaunchAgent on macOS, a systemd --user unit on Linux, or a logon Task Scheduler task on Windows), checks readiness, and then connects the selected client entries. Names and permission settings are preserved.
 - **Yours to undo.** `remove` restores direct connections. It does not delete MCP packages, user data, logs, browser artifacts, or old releases.
 
 You still install and update MCP packages, interpreters, Docker, and browsers. Setup's discovery runs the existing command, so `npx`, `uvx`, or Docker may download their own dependencies.
@@ -87,7 +87,9 @@ On Linux, setup registers a `systemd --user` unit under `~/.config/systemd/user`
 
 Run `setup` again with a newer or older build to update compatible background services. An idle service enters maintenance before replacement; a busy service waits until a later setup. Unsupported state formats are rejected. Operation journals keep recoverable changes and do not overwrite later edits.
 
-For a legacy user service, run `mcp-gate adopt <name>` once to record its identity. Then run `mcp-gate setup` with the official executable and select the adopted gateway. Use `setup --dry-run --json` to preview the migration. Setup points the service at `binaries/<version>-<sha256>/` and preserves its label, endpoint, credentials, backend, and service settings. Adoption saves no client bindings, so existing client entries stay `external` and require no app restart. A subsequent setup leaves a gateway on the current managed binary running.
+After upgrading to this release, re-run `mcp-gate setup` once and restart the clients it lists. Setup moves Codex and Claude Code headers helpers from managed versioned paths to `current/mcp-gate` (`current\mcp-gate.exe` on Windows), including helpers on external connections. Future setup runs refresh that executable in place. OpenCode keeps using a file-backed Authorization header.
+
+For a legacy user service, run `mcp-gate adopt <name>` once to record its identity. Then run `mcp-gate setup` with the official executable and select the adopted gateway. Use `setup --dry-run --json` to preview the migration. Setup points the service at `binaries/<version>-<sha256>/` and preserves its label, endpoint, credentials, backend, and service settings. Adoption saves no client bindings, so those connections stay `external`. Restart the client if setup migrated its headers helper. A subsequent setup leaves a gateway on the current managed binary running.
 
 For unattended setup, select the external connection with the usual `--client`, `--server`, and `--yes` options. Setup matches the service by its endpoint. If the gateway has no matching client entry, use the adopted gateway name or service label as the `--server` value and supply `--client`.
 
@@ -115,7 +117,7 @@ For unattended setup, select the external connection with the usual `--client`, 
 - `status --details` explains where each connection comes from. A direct connection shows `health not checked` until it has a gateway.
 - `status --probe` asks a gateway to start its backend only when it has none and can safely pause; busy gateways are skipped.
 - A `--server` or `--client` that matches nothing is an error.
-- `external` means the client already uses a gateway this installation did not set up, so `setup` and `remove` leave it alone.
+- `external` means the client uses a gateway without saved direct settings. Setup can migrate a headers helper from this installation's binary store. Remove has no saved connection to restore.
 - A healthy gateway does not prove that a running app has switched to it. Restart each affected app once after `setup`.
 
 **Labels and sharing**
@@ -187,7 +189,7 @@ CI runs formatting, Clippy, fixtures, and client/browser checks on all supported
 The scoped npm name is the package. The executable — what clients invoke — is `mcp-gate`. A GitHub Release binary provides the same command.
 
 **Does setup touch my project repo?**
-Project files intended for Git are left untouched. Only personal client connections that you select are rewritten, after a preview.
+Setup converts selected direct connections in personal settings or verified machine-local overrides. If you include a project with `--project`, the preview can also list a helper path migration for a project entry that already points into this installation's binary store.
 
 **Will my browser / API sessions come back after a reboot?**
 No. Sessions and unfinished actions are not restored after restart. A new session starts a fresh backend.
