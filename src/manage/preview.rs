@@ -63,7 +63,7 @@ pub fn display(plan: &Value, dry_run: bool) {
                 text(&gateway["label"]),
                 text(&gateway["action"])
             );
-            println!("    No saved bindings; client settings stay as configured.");
+            println!("    No saved direct connections.");
         }
         for b in gateway["connections"].as_array().into_iter().flatten() {
             println!(
@@ -76,6 +76,17 @@ pub fn display(plan: &Value, dry_run: bool) {
                 println!("    Service label: {label}");
             }
         }
+    }
+    for helper in plan["helper_migrations"].as_array().into_iter().flatten() {
+        println!(
+            "  {} / {}: migrate headers helper to current",
+            text(&helper["client"]),
+            text(&helper["name"])
+        );
+        println!("    Client file: {}", text(&helper["target"]));
+    }
+    if plan["refresh_helper_binary"] == true {
+        println!("  Update the current headers helper binary.");
     }
     println!(
         "\nCommands, argument order and client permissions are preserved. Credentials stay private."
@@ -317,7 +328,7 @@ pub fn managed(record: &super::store::Record, root: &std::path::Path, hash: &str
     json!({"id":record.id,"label":record.label,"connections":record.bindings.iter().map(self::target).collect::<Vec<_>>(),
         "gateway_binary_changed":binary_changed, "managed_store_migration":migration,
         "service_definition_checked":observed.is_ok(),
-        "client_settings":if record.bindings.is_empty() { "no saved bindings; left alone" } else { "preserved" },
+        "client_settings":if record.bindings.is_empty() { "no saved bindings" } else { "saved direct settings retained" },
         "backend_or_catalog_changed":catalog_changed, "action":action, "endpoint_and_credentials":"preserved"})
 }
 

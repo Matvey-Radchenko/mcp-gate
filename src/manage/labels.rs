@@ -108,8 +108,8 @@ pub fn assign(candidates: &mut [Candidate], registry: &Registry) -> anyhow::Resu
             candidate.service_label = None;
             continue;
         }
-        if let Some(record) = super::runtime::reuse(registry, candidate)? {
-            candidate.service_label = Some(record.label);
+        if let Some((record, _)) = super::runtime::matching(registry, candidate)? {
+            candidate.service_label = Some(record.label.clone());
             continue;
         }
         if let Some(label) = planned

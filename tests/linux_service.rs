@@ -368,7 +368,7 @@ async fn setup_migrates_an_adopted_unit_and_keeps_its_external_connection() {
         result["updates"][0]
             .as_str()
             .unwrap()
-            .contains("client settings left alone")
+            .contains("no saved bindings")
     );
     assert_eq!(result["restart_clients"], json!([]));
     let record = store::load(&data).unwrap().gateways.remove(0);

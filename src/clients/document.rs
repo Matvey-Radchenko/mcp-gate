@@ -1,4 +1,8 @@
 //! Minimal semantic edits: preserve all bytes outside the selected MCP entry.
+mod strings;
+
+pub(crate) use strings::replace_string_prefix;
+
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::Value;
 use std::ops::Range;
@@ -33,9 +37,10 @@ fn tokens(source: &str) -> Result<(Vec<Token>, Vec<String>)> {
             comments.push(source[start..at].into());
             continue;
         }
-        if bytes[at] == b'"' {
+        if matches!(bytes[at], b'"' | b'\'') {
+            let quote = bytes[at];
             at += 1;
-            while at < bytes.len() && bytes[at] != b'"' {
+            while at < bytes.len() && bytes[at] != quote {
                 if bytes[at] == b'\\' {
                     at += 1;
                 }
@@ -93,8 +98,12 @@ fn locate(tokens: &[Token], object: usize, path: &[String]) -> Result<(usize, us
     );
     let mut at = object + 1;
     while at < tokens.len() && tokens[at].text != "}" {
-        let key: String =
-            serde_json::from_str(&tokens[at].text).context("JSONC keys must be quoted")?;
+        let token = &tokens[at].text;
+        let key = if token.starts_with(['"', '\'']) {
+            json5::from_str(token).map_err(|_| anyhow::anyhow!("Invalid JSON object key"))?
+        } else {
+            token.clone()
+        };
         ensure!(
             tokens.get(at + 1).is_some_and(|t| t.text == ":"),
             "Missing JSON colon"

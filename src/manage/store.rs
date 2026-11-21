@@ -1,10 +1,14 @@
 //! Private registry and compare-before-replace file transactions.
+mod temporary;
+
+pub(super) use temporary::{ensure_replaceable, replace, with_temporary};
+
 use crate::clients::Binding;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::{self, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -30,6 +34,25 @@ impl Record {
     pub fn config(&self) -> PathBuf {
         self.release.join("config.toml")
     }
+}
+
+/// A binary-store deletion must retain the current helper bytes and every
+/// registered service's exact path and digest, including pending removals.
+/// Call under the setup/remove lock with the latest recovered registry.
+pub fn retain_binary(root: &Path, registry: &Registry, binary: &Path) -> Result<bool> {
+    if registry
+        .gateways
+        .iter()
+        .any(|record| record.binary == binary)
+    {
+        return Ok(true);
+    }
+    let digest = crate::catalog::digest(binary)?;
+    Ok(registry
+        .gateways
+        .iter()
+        .any(|record| record.binary_hash == digest)
+        || super::current::digest(&super::current::path(root))?.as_deref() == Some(digest.as_str()))
 }
 
 pub fn root() -> Result<PathBuf> {
@@ -157,109 +180,6 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     })
 }
 
-pub(super) fn ensure_replaceable(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) => ensure!(
-            !meta.file_type().is_symlink(),
-            "Refusing to replace a symlink"
-        ),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    Ok(())
-}
-
-pub(super) struct Temporary {
-    path: Option<PathBuf>,
-}
-
-/// Owns the staged path until publication, removing it if the operation aborts.
-pub(super) fn with_temporary<T>(operation: impl FnOnce(&mut Temporary) -> Result<T>) -> Result<T> {
-    let mut temporary = Temporary { path: None };
-    let result = operation(&mut temporary);
-    let Some(path) = temporary.path else {
-        return result;
-    };
-    match fs::remove_file(path) {
-        Ok(()) => result,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => result,
-        Err(cleanup) => match result {
-            Ok(_) => Err(cleanup).context("Cannot remove staged file"),
-            Err(error) => Err(error.context(format!("Cannot remove staged file: {cleanup}"))),
-        },
-    }
-}
-
-impl Temporary {
-    #[cfg(target_os = "macos")]
-    pub(super) fn path(&self) -> Result<&Path> {
-        self.path.as_deref().context("Missing staged file")
-    }
-
-    pub(super) fn open(&mut self, parent: &Path) -> Result<fs::File> {
-        ensure!(self.path.is_none(), "Temporary file already open");
-        let path = parent.join(format!(".mcp-gate-{}.tmp", uuid::Uuid::new_v4()));
-        let file = crate::platform::private_file(&path);
-        // A Windows ACL failure can leave a file behind. An existing file belongs
-        // to another writer and must be left alone.
-        let already_exists = file
-            .as_ref()
-            .err()
-            .and_then(|error| error.downcast_ref::<io::Error>())
-            .is_some_and(|error| error.kind() == io::ErrorKind::AlreadyExists);
-        if !already_exists {
-            self.path = Some(path);
-        }
-        file
-    }
-
-    pub(super) fn publish(&mut self, file: fs::File, target: &Path) -> Result<()> {
-        file.sync_all()?;
-        drop(file);
-        let parent = target.parent().context("Missing target parent")?;
-        let path = self.path.as_mut().context("Missing staged file")?;
-        if path.parent() != Some(parent) {
-            // A copy hashed during staging only learns its final directory after EOF.
-            // Move the staged file into that directory before the atomic replacement.
-            let sibling = parent.join(path.file_name().context("Missing temporary file name")?);
-            fs::rename(&*path, &sibling)?;
-            *path = sibling;
-        }
-        ensure_replaceable(target)?;
-        replace(path, target)?;
-        self.path = None;
-        #[cfg(unix)]
-        fs::File::open(parent)?.sync_all()?;
-        Ok(())
-    }
-}
-
-fn replace(temporary: &Path, path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    fs::rename(temporary, path)?;
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::Storage::FileSystem::{
-            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-        };
-        let a: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
-        let b: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        ensure!(
-            // SAFETY: both paths are nul-terminated, owned UTF-16 buffers.
-            unsafe {
-                MoveFileExW(
-                    a.as_ptr(),
-                    b.as_ptr(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-                )
-            } != 0,
-            "Cannot atomically replace file"
-        );
-    }
-    Ok(())
-}
-
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileChange {
@@ -351,27 +271,5 @@ pub fn read_optional(path: &Path) -> Result<Vec<u8>> {
         Ok(bytes) => Ok(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e.into()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn removes_relocated_temporary_when_replacement_fails() {
-        let root = tempfile::tempdir().unwrap();
-        let directory = root.path().join("version-hash");
-        let target = directory.join("occupied");
-        fs::create_dir_all(&target).unwrap();
-        let result = with_temporary(|temporary| {
-            let mut file = temporary.open(root.path())?;
-            file.write_all(b"staged bytes")?;
-            temporary.publish(file, &target)
-        });
-        assert!(result.is_err());
-        assert!(target.is_dir());
-        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
-        assert_eq!(fs::read_dir(directory).unwrap().count(), 1);
     }
 }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Codex and Claude Code headers helpers use a stable executable path across upgrades. Re-run `mcp-gate setup` once to migrate managed and external helper paths from the binary store, then restart the clients it lists.
 - Setup migrates selected adopted and legacy gateway services to the managed binary store. LaunchAgent, systemd user unit, and Windows logon task settings stay intact. Connections with no saved bindings stay external.
 - Setup previews adopted gateway migrations with `--dry-run` and leaves already-current services running.
 

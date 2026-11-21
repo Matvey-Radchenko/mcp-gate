@@ -104,10 +104,6 @@ pub(super) async fn apply(
     let state = binary_state(root, old, target, hash, Some(&snapshot.binary));
     if state == BinaryState::Current {
         if unbound {
-            ensure!(
-                crate::catalog::digest(target)? == hash,
-                "Permanent binary was modified"
-            );
             return Ok(Some((
                 format!(
                     "{}: already current; no token, service or backend restarted",
@@ -129,7 +125,7 @@ pub(super) async fn apply(
         return Ok(None);
     }
     let mut new = old.clone();
-    new.binary = super::binary(root)?;
+    new.binary = target.into();
     new.binary_hash = hash.into();
     let change = service::BinaryChange::prepare(snapshot, &new.binary)?;
     let path = root
@@ -160,7 +156,7 @@ pub(super) async fn apply(
     }
     let message = if legacy {
         let clients = if unbound {
-            "; no saved bindings, client settings left alone"
+            "; no saved bindings"
         } else {
             "; client settings preserved"
         };

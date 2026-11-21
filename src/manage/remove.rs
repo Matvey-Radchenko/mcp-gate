@@ -47,6 +47,8 @@ pub async fn run(options: Selection) -> Result<()> {
         keep.push(record);
     }
     registry.gateways = keep;
+    // External client configs can still use current after the last managed
+    // gateway is removed. The bounded inventory cannot prove it is unused.
     store::save(&root, &registry)
         .context("Direct connections are restored; cleanup registry needs attention")?;
     if options.json {

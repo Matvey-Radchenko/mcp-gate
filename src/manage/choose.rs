@@ -14,6 +14,9 @@ pub(super) struct Choice<'a> {
     pub root: &'a std::path::Path,
     pub hash: &'a str,
     pub interactive: bool,
+    pub helpers: &'a [super::helper_migration::Rewrite],
+    pub helper_action: bool,
+    pub refresh: bool,
 }
 
 pub(super) fn select(choice: Choice<'_>) -> Result<Option<wizard::Setup>> {
@@ -23,7 +26,9 @@ pub(super) fn select(choice: Choice<'_>) -> Result<Option<wizard::Setup>> {
         };
         let candidates = picked_candidates(&choice, &indices)?;
         let selected = picked_gateways(&choice, &indices);
-        if candidates.is_empty() && selected.is_empty() {
+        let helper_selected = choice.helper_action
+            && indices.contains(&(choice.eligible.len() + choice.managed.len()));
+        if candidates.is_empty() && selected.is_empty() && !helper_selected {
             continue;
         }
         let plan = selection_plan(&choice, &candidates, &selected);
@@ -34,10 +39,12 @@ pub(super) fn select(choice: Choice<'_>) -> Result<Option<wizard::Setup>> {
         if !choice.options.json {
             preview::display(&plan, false);
         }
-        if !choice.interactive || wizard::review_setup(&candidates)? {
+        if !choice.interactive || wizard::review_setup(&candidates, !choice.helpers.is_empty())? {
             return Ok(Some(wizard::Setup {
                 candidates,
                 gateways: selected.iter().map(|record| record.id.clone()).collect(),
+                helpers: choice.helpers.to_vec(),
+                hash: choice.hash.into(),
                 plan,
             }));
         }
@@ -63,6 +70,9 @@ fn selected_indices(choice: &Choice<'_>) -> Result<Option<Vec<usize>>> {
                 .join(", ")
         )
     }));
+    if choice.helper_action {
+        labels.push("Update client headers helpers".into());
+    }
     if !choice.interactive {
         return Ok(Some((0..labels.len()).collect()));
     }
@@ -135,6 +145,8 @@ fn selection_plan(
         .collect();
     super::labels::note_shared_gateways(&mut servers, choice.registry);
     json!({"servers":servers,
+        "helper_migrations":choice.helpers.iter().map(super::helper_migration::Rewrite::summary).collect::<Vec<_>>(),
+        "refresh_helper_binary":choice.refresh,
         "managed":selected.iter().map(|record| preview::managed(record, choice.root, choice.hash)).collect::<Vec<_>>(),
         "connections":choice.connections,"source_issues":choice.issues,
         "discovery":"Runs the original command; npx, uvx and Docker may download dependencies.",

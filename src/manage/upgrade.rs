@@ -9,10 +9,7 @@ use super::{
 };
 use crate::catalog;
 use anyhow::{Context, Result, ensure};
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Default)]
 pub struct Outcome {
@@ -28,6 +25,7 @@ pub(super) fn binary_path(root: &Path, hash: &str) -> PathBuf {
 
 pub fn binary(root: &Path) -> Result<PathBuf> {
     let parent = root.join("binaries");
+    store::ensure_replaceable(&parent)?;
     if !parent.exists() {
         crate::platform::private_dir(&parent)?;
     }
@@ -43,6 +41,8 @@ pub fn binary(root: &Path) -> Result<PathBuf> {
         let directory = target
             .parent()
             .context("Missing managed binary directory")?;
+        store::ensure_replaceable(directory)?;
+        store::ensure_replaceable(&target)?;
         if target.exists() {
             ensure!(
                 catalog::digest(&target)? == hash,
@@ -50,21 +50,22 @@ pub fn binary(root: &Path) -> Result<PathBuf> {
             );
             return Ok(target);
         }
-        store::ensure_replaceable(&target)?;
         if !directory.exists() {
             crate::platform::private_dir(directory)?;
         }
         let file = match staged {
             Some(file) => file,
             None => {
-                let mut source = fs::File::open(std::env::current_exe()?)?;
                 let mut file = temporary.open(directory)?;
-                io::copy(&mut source, &mut file)?;
+                ensure!(
+                    catalog::copy_digest(&std::env::current_exe()?, &mut file)? == hash,
+                    "Installer executable changed during publication"
+                );
                 file
             }
         };
+        crate::platform::executable(temporary.path()?)?;
         temporary.publish(file, &target)?;
-        crate::platform::executable(&target)?;
         Ok(target)
     })
 }
@@ -73,8 +74,9 @@ pub async fn apply(
     registry: &mut Registry,
     options: &Selection,
     selected: &[String],
+    target: &Path,
+    hash: &str,
 ) -> Result<Outcome> {
-    let hash = catalog::current_exe_digest()?;
     let mut outcome = Outcome::default();
     let results = &mut outcome.messages;
     for index in 0..registry.gateways.len() {
@@ -89,9 +91,8 @@ pub async fn apply(
             ));
             continue;
         }
-        let target = binary_path(root, &hash);
         if let Some((message, restart_clients)) =
-            migration::apply(root, registry, index, &old, &target, &hash).await?
+            migration::apply(root, registry, index, &old, target, hash).await?
         {
             results.push(message);
             if restart_clients {
@@ -120,8 +121,8 @@ pub async fn apply(
             .join("operations")
             .join(format!("upgrade-{}.json", uuid::Uuid::new_v4()));
         let mut new = old.clone();
-        new.binary = binary(root)?;
-        new.binary_hash = hash.clone();
+        new.binary = target.into();
+        new.binary_hash = hash.into();
         let mut journal = store::Journal {
             format_version: 1,
             phase: "upgrading".into(),
@@ -265,6 +266,7 @@ async fn refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn expected_target(root: &Path) -> PathBuf {
         let hash = catalog::current_exe_digest().unwrap();

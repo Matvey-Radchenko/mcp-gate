@@ -1,5 +1,5 @@
 //! Select and review exact targets before any service, backend or client mutation.
-use super::{Selection, inventory, preview, store::Registry, ui};
+use super::{Selection, current, helper_migration, inventory, preview, store::Registry, ui};
 use crate::clients::Candidate;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
@@ -8,6 +8,8 @@ use std::path::Path;
 pub struct Setup {
     pub candidates: Vec<Candidate>,
     pub gateways: Vec<String>,
+    pub(super) helpers: Vec<helper_migration::Rewrite>,
+    pub(super) hash: String,
     pub plan: Value,
 }
 
@@ -88,7 +90,23 @@ async fn setup_scope(
     super::trace::log("setup_scope: inspect start");
     let count = inspect(&mut inventory, options, managed.len());
     super::trace::log(&format!("setup_scope: inspect done count={count}"));
-    if count == 0 && managed.is_empty() && !needs_directory {
+    let mut helpers = helper_migration::plan(root, registry, options)?;
+    for issue in helpers.issues.drain(..) {
+        if !inventory
+            .issues
+            .iter()
+            .any(|existing| existing.client == issue.client && existing.source == issue.source)
+        {
+            inventory.issues.push(issue);
+        }
+    }
+    let refresh = helpers.matching_current
+        && count == 0
+        && managed.is_empty()
+        && current::digest(&current::path(root))?.as_deref()
+            != Some(crate::catalog::current_exe_digest()?.as_str());
+    let helper_action = helpers.matches(options) || refresh;
+    if count == 0 && managed.is_empty() && !needs_directory && !helper_action {
         empty(&inventory, options);
         if interactive {
             while ui::select(
@@ -133,6 +151,9 @@ async fn setup_scope(
         hash: &hash,
         root,
         interactive,
+        helpers: &helpers.rewrites,
+        helper_action,
+        refresh,
     })
 }
 
@@ -155,6 +176,7 @@ fn inspect(inventory: &mut inventory::Inventory, options: &Selection, managed: u
                 && connection.source == c.binding.source
                 && connection.project == c.binding.project
         }) && c.issue.is_some()
+            && !inventory::is_external(connection.kind)
         {
             connection.reason = c.issue.clone();
             if connection.kind == "direct" && connection.state != "disabled" {
@@ -301,7 +323,7 @@ fn empty(inventory: &inventory::Inventory, options: &Selection) {
     }
 }
 
-pub(super) fn review_setup(candidates: &[Candidate]) -> Result<bool> {
+pub(super) fn review_setup(candidates: &[Candidate], helpers: bool) -> Result<bool> {
     loop {
         match ui::select(
             "Review setup:",
@@ -324,7 +346,12 @@ pub(super) fn review_setup(candidates: &[Candidate]) -> Result<bool> {
                 }
                 if candidates.is_empty() {
                     println!(
-                        "Existing gateway updates preserve client configuration, endpoint and credentials. A binary migration also preserves the service settings."
+                        "Existing gateway updates preserve endpoints and credentials. Adopted gateway migrations preserve service settings."
+                    );
+                }
+                if helpers {
+                    println!(
+                        "The preview lists each client helper executable path to be migrated."
                     );
                 }
             }

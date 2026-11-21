@@ -220,12 +220,9 @@ pub async fn install(prefix: &Path, runtime: &Path, node: &Path, listen: SocketA
         stderr = xml(&prefix.join("logs/stderr.log").to_string_lossy())
     );
     fs::write(prefix.join(format!("{label}.plist")), plist)?;
-    let shell_quote = |p: &Path| format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"));
-    let helper = format!(
-        "{} headers --config {}",
-        shell_quote(&binary),
-        shell_quote(&config_file)
-    );
+    crate::manage::current::publish(prefix, &binary, &digest(&binary)?)?;
+    let helper =
+        crate::manage::runtime::headers_helper(&crate::manage::current::path(prefix), &config_file);
     fs::write(
         prefix.join("codex.toml.example"),
         format!(

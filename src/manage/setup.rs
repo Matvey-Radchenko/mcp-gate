@@ -1,5 +1,5 @@
 use super::{
-    Selection, recovery, runtime, service,
+    Selection, current, helper_migration, recovery, runtime, service,
     store::{self, Journal, Registry},
     upgrade,
 };
@@ -22,7 +22,9 @@ pub async fn run(mut options: Selection) -> Result<()> {
         return Ok(());
     };
     #[cfg(target_os = "linux")]
-    require_user_manager(&registry, &chosen.gateways)?;
+    if !chosen.gateways.is_empty() || !chosen.candidates.is_empty() {
+        require_user_manager(&registry, &chosen.gateways)?;
+    }
     let plan = chosen.plan;
     if !options.json {
         println!(
@@ -46,8 +48,36 @@ pub async fn run(mut options: Selection) -> Result<()> {
         .context("Another setup/remove operation is running")?;
     recovery::pending(&root).await?;
     let mut registry = store::load(&root)?;
-    let updates = upgrade::apply(&root, &mut registry, &options, &chosen.gateways).await?;
-    let mut affected = install(&root, &mut registry, chosen.candidates, options.json).await?;
+    let binary = upgrade::binary(&root)?;
+    current::publish(&root, &binary, &chosen.hash)?;
+    let mut updates = upgrade::apply(
+        &root,
+        &mut registry,
+        &options,
+        &chosen.gateways,
+        &binary,
+        &chosen.hash,
+    )
+    .await?;
+    let deferred = updates
+        .messages
+        .iter()
+        .any(|message| message.contains("pending"));
+    let mut affected = install(
+        &root,
+        &mut registry,
+        chosen.candidates,
+        &binary,
+        &chosen.hash,
+        options.json,
+    )
+    .await?;
+    helper_migration::apply(&root, &mut registry, &chosen.helpers, &mut updates)?;
+    if plan["refresh_helper_binary"] == true {
+        updates
+            .messages
+            .push("Current headers helper binary updated".into());
+    }
     affected.extend(updates.restart);
     if options.json {
         println!(
@@ -60,10 +90,6 @@ pub async fn run(mut options: Selection) -> Result<()> {
             }})
         );
     } else {
-        let deferred = updates
-            .messages
-            .iter()
-            .any(|message| message.contains("pending"));
         for update in updates.messages {
             println!("{update}");
         }
@@ -162,6 +188,8 @@ async fn install(
     root: &Path,
     registry: &mut Registry,
     selected: Vec<Candidate>,
+    binary: &Path,
+    hash: &str,
     json: bool,
 ) -> Result<BTreeSet<clients::Client>> {
     if selected.is_empty() {
@@ -192,13 +220,18 @@ async fn install(
                 );
             }
             candidate.binding.verify_fallback()?;
-            let record = if let Some(record) = runtime::reuse(registry, &candidate)? {
-                runtime::health(&record)
+            let record = if let Some((record, config)) = runtime::matching(registry, &candidate)? {
+                runtime::health(record)
                     .await
                     .context("Matching shared gateway is unavailable")?;
-                record
+                let mut binding = candidate.binding.clone();
+                binding.after = super::remote::binding(&binding, root, &record.config(), &config)?;
+                let mut reused = record.clone();
+                reused.bindings = vec![binding];
+                reused
             } else {
-                let mut record = runtime::prepare(root, &candidate).await?;
+                let mut record =
+                    runtime::prepare_with_binary(root, &candidate, binary, hash).await?;
                 journal.services.push(record.clone());
                 journal.save(&path)?;
                 super::checkpoint("prepared")?;

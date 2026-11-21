@@ -48,6 +48,15 @@ async fn setup_resolves_the_backend_path_and_retains_its_private_file_reference(
     let managed = root.join("managed");
     mcp_gate::manage::store::prepare(&managed).unwrap();
     let record = runtime::prepare(&managed, &c).await.unwrap();
+    let helper = managed
+        .join("current")
+        .join(mcp_gate::platform::binary_name());
+    assert_eq!(
+        record.bindings[0].after["http_headers_helper"],
+        runtime::headers_helper(&helper, &record.config())
+    );
+    assert!(helper.is_file());
+    assert!(record.binary.starts_with(managed.join("binaries")));
     let config = mcp_gate::config::Config::load(&record.config()).unwrap();
     assert_eq!(config.backend.command, expected);
     assert_eq!(config.backend.env_files[path_key], path_file);
