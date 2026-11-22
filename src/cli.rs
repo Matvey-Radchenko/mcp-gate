@@ -62,6 +62,14 @@ pub(crate) enum Action {
         #[arg(long)]
         config: PathBuf,
     },
+    /// Bridge an MCP stdio client to a local gateway.
+    Connect {
+        /// Managed gateway name, ID, or service label.
+        name: String,
+        /// Path to an explicit gateway TOML configuration.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Gateway state, configuration diagnostics and reasons for problems.
     Status(manage::Status),
     /// Close one MCP session. A shared backend remains owned by the gateway.
@@ -139,7 +147,7 @@ Run mcp-gate <command> --help for every flag.";
                 "format_version": 1,
                 "phase": "help",
                 "message": MESSAGE,
-                "commands": ["setup", "status", "remove", "adopt", "idle"]
+                "commands": ["setup", "status", "remove", "adopt", "idle", "connect"]
             })
         );
     } else {

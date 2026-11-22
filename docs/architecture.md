@@ -87,6 +87,16 @@ the helper outside the scanned configuration scope. Any future binary cleanup
 must retain all registry references and all versions matching the current
 helper digest.
 
+## Stdio bridge
+
+`mcp-gate connect <name>` resolves a local gateway from the managed registry.
+`--config` uses the same gateway TOML and private token lookup as `headers`.
+The bridge owns one Streamable HTTP session per stdio process. It acquires the
+session ID and protocol version during initialization, relays subsequent POSTs
+concurrently, and forwards POST and optional GET responses through one stdout
+writer. On stdin EOF or a shutdown signal, it cancels its streams and sends a
+bounded session DELETE.
+
 ## Дальнейшие задачи (не обещания текущей версии)
 
 - Регулярный smoke на обновлениях Chrome и при переходе на другой Node.

@@ -51,7 +51,7 @@ fn parse_duration(value: &str) -> Result<u64, String> {
 pub fn run(options: Idle) -> Result<()> {
     let root = store::root()?;
     let registry = store::load(&root)?;
-    let record = select(&registry, &options.name)?;
+    let record = registry.select(&options.name)?;
     ensure!(
         !record.removing,
         "Gateway removal is pending; finish remove first"
@@ -99,33 +99,6 @@ pub fn run(options: Idle) -> Result<()> {
     apply(&root, record, &before, &after)?;
     report(&options, record, phase, &config, previous);
     Ok(())
-}
-
-fn select<'a>(registry: &'a store::Registry, name: &str) -> Result<&'a store::Record> {
-    let exact = |record: &&store::Record| {
-        record.id == name
-            || record.label == name
-            || record.label.strip_prefix("local.mcp-gate.") == Some(name)
-    };
-    let mut matches: Vec<_> = registry.gateways.iter().filter(exact).collect();
-    if matches.is_empty() {
-        matches = registry
-            .gateways
-            .iter()
-            .filter(|record| record.bindings.iter().any(|binding| binding.name == name))
-            .collect();
-    }
-    ensure!(
-        !matches.is_empty(),
-        "No managed gateway matches {}; run mcp-gate status",
-        ui::safe(name)
-    );
-    ensure!(
-        matches.len() == 1,
-        "Several gateways match {}; use a gateway ID or full service label",
-        ui::safe(name)
-    );
-    Ok(matches[0])
 }
 
 fn edit(before: &[u8], seconds: u64) -> Result<Vec<u8>> {
