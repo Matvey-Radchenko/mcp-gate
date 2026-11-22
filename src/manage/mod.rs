@@ -1,6 +1,7 @@
 mod adopt;
 mod agents;
 mod choose;
+mod config_edit;
 mod context;
 pub(crate) mod current;
 mod health;
@@ -11,6 +12,7 @@ mod inventory;
 mod labels;
 pub mod launch;
 mod legacy;
+mod mode;
 mod preview;
 mod recovery;
 mod remote;
@@ -29,6 +31,7 @@ use crate::clients::Client;
 use anyhow::Result;
 use clap::Args;
 pub use idle::Idle;
+pub use mode::{Mode, ModeFailure, run as change_mode};
 use std::path::PathBuf;
 
 #[derive(Args, Default, Clone)]

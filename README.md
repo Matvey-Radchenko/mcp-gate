@@ -102,6 +102,8 @@ For unattended setup, select the external connection with the usual `--client`, 
 | `mcp-gate remove` | Restore selected connections, or all managed ones with `--all --yes`. |
 | `mcp-gate adopt <name>` | Record an unmanaged `local.mcp-gate.<name>` user service in the local registry. Does not restart the gateway, edit client settings, or copy the binary. |
 | `mcp-gate idle <name> [15m\|off]` | Show or set backend idle expiry. Use `--dry-run` to preview or `--yes` to save; prints the required gateway restart command. |
+| `mcp-gate share <name>` | Review shareability advice and explicitly save shared backend ownership. Use `--dry-run` to preview. |
+| `mcp-gate isolate <name>` | Restore per-session backend ownership. Restart the gateway to apply the change. |
 | `mcp-gate connect <name> [--config <path>]` | Expose an existing local gateway to a stdio MCP client. |
 
 **Setup and remove options**

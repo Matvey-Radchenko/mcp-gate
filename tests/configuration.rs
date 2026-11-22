@@ -143,6 +143,18 @@ fn strict_version_profile_and_capacity_validation() {
 }
 
 #[test]
+fn session_config_without_ownership_source_round_trips_unchanged() {
+    let mut original = config();
+    original.ownership = mcp_gate::config::Ownership::Session;
+    let text = toml::to_string_pretty(&original).unwrap();
+    assert!(!text.contains("ownership_source"));
+    let reloaded: Config = toml::from_str(&text).unwrap();
+    assert_eq!(reloaded.ownership_source, None);
+    reloaded.validate().unwrap();
+    assert_eq!(toml::to_string_pretty(&reloaded).unwrap(), text);
+}
+
+#[test]
 fn recovery_is_explicit_and_restricted_to_reviewed_shared_processes() {
     use mcp_gate::config::{Ownership, SharedRecovery};
     let mut c = config();

@@ -92,6 +92,7 @@ pub fn executable(candidate: &Candidate, env: &BTreeMap<String, String>) -> Resu
 /// Two clients can share a gateway when the backend definition is the same.
 /// Session mode still starts one backend per HTTP session; shared mode still
 /// keeps a single backend. Different ownership modes are never combined.
+/// New clients use the candidate's own mode even for operator-configured gateways.
 pub fn same_backend(config: &crate::config::Config, candidate: &Candidate) -> Result<bool> {
     if ownership(config) != mode(candidate) || !context_matches(config, candidate)? {
         return Ok(false);
@@ -243,5 +244,16 @@ mod tests {
         assert!(same_backend(&config, &candidate).unwrap());
         let (_, other) = sample(&cwd, "--other");
         assert!(!same_backend(&config, &other).unwrap());
+    }
+
+    #[test]
+    fn setup_keeps_recipe_less_candidates_out_of_operator_shared_gateways() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = crate::platform::project_path(dir.path()).unwrap();
+        let (mut config, candidate) = sample(&cwd, "--flag");
+        config.ownership = crate::config::Ownership::Shared;
+        config.ownership_source = Some(crate::config::OwnershipSource::Operator);
+        config.max_workers = 1;
+        assert!(!same_backend(&config, &candidate).unwrap());
     }
 }

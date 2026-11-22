@@ -8,6 +8,10 @@ use super::{
     store::{self, Record, Registry},
 };
 use crate::catalog;
+use crate::{
+    clients::recipes::Recipe,
+    config::{Config, Ownership, OwnershipSource},
+};
 use anyhow::{Context, Result, ensure};
 use std::path::{Path, PathBuf};
 
@@ -197,43 +201,12 @@ pub async fn apply(
 }
 async fn refresh(
     record: &Record,
-    mut config: crate::config::Config,
+    mut config: Config,
     journal: &mut store::Journal,
     path: &Path,
     options: &Selection,
 ) -> Result<()> {
-    // Shared ownership remains eligible only while the reviewed launch recipe matches.
-    let mut command = vec![config.backend.command.to_string_lossy().into_owned()];
-    command.extend(config.backend.command_args.clone());
-    if let Some(entry) = &config.backend.entrypoint {
-        command.push(entry.to_string_lossy().into_owned());
-    }
-    command.extend(config.backend.args.clone());
-    let candidate = crate::clients::Candidate {
-        binding: record
-            .bindings
-            .first()
-            .context("Managed gateway has no bindings")?
-            .clone(),
-        command,
-        cwd: config
-            .backend
-            .working_directory
-            .clone()
-            .context("Managed backend has no cwd")?,
-        env: config.backend.env.clone(),
-        env_files: config.backend.env_files.clone(),
-        inherit_env: config.backend.inherit_env.clone(),
-        issue: None,
-        recipe: None,
-        service_label: None,
-    };
-    let recipe = crate::clients::recipes::matching(&candidate);
-    ensure!(
-        config.ownership != crate::config::Ownership::Shared
-            || recipe.as_ref().is_some_and(|r| r.mode == "shared"),
-        "Changed shared backend no longer matches a reviewed recipe; keep it stopped until a compatible backend is restored or reviewed"
-    );
+    let recipe = refresh_recipe(record, &config)?;
     eprintln!(
         "Refreshing catalog with the original command; npx, uvx or Docker may download dependencies. No tools are called."
     );
@@ -263,9 +236,50 @@ async fn refresh(
     )
 }
 
+fn refresh_recipe(record: &Record, config: &Config) -> Result<Option<Recipe>> {
+    // The operator owns this decision; discovery and catalog review still
+    // run before either the catalog or configuration is written.
+    if config.ownership_source == Some(OwnershipSource::Operator) {
+        return Ok(None);
+    }
+    let mut command = vec![config.backend.command.to_string_lossy().into_owned()];
+    command.extend(config.backend.command_args.clone());
+    if let Some(entry) = &config.backend.entrypoint {
+        command.push(entry.to_string_lossy().into_owned());
+    }
+    command.extend(config.backend.args.clone());
+    let candidate = crate::clients::Candidate {
+        binding: record
+            .bindings
+            .first()
+            .context("Managed gateway has no bindings")?
+            .clone(),
+        command,
+        cwd: config
+            .backend
+            .working_directory
+            .clone()
+            .context("Managed backend has no cwd")?,
+        env: config.backend.env.clone(),
+        env_files: config.backend.env_files.clone(),
+        inherit_env: config.backend.inherit_env.clone(),
+        issue: None,
+        recipe: None,
+        service_label: None,
+    };
+    let recipe = crate::clients::recipes::matching(&candidate);
+    ensure!(
+        config.ownership != Ownership::Shared
+            || recipe.as_ref().is_some_and(|r| r.mode == "shared"),
+        "Changed shared backend no longer matches a reviewed recipe; keep it stopped until a compatible backend is restored or reviewed"
+    );
+    Ok(recipe)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::fs;
 
     fn expected_target(root: &Path) -> PathBuf {
@@ -273,6 +287,49 @@ mod tests {
         root.join("binaries")
             .join(format!("{}-{hash}", env!("CARGO_PKG_VERSION")))
             .join(crate::platform::binary_name())
+    }
+
+    #[test]
+    fn refresh_accepts_operator_shared_config_without_a_reviewed_recipe() {
+        let directory = tempfile::tempdir().unwrap();
+        let cwd = directory.path();
+        let record = Record {
+            removing: false,
+            id: "operator-gateway".into(),
+            release: cwd.into(),
+            label: "local.mcp-gate.operator-gateway".into(),
+            binary_hash: "fixture".into(),
+            binary: cwd.join("gateway"),
+            bindings: vec![
+                serde_json::from_value(json!({
+                    "client": "codex", "name": "fixture", "source": cwd.join("source"),
+                    "target": cwd.join("source"), "source_path": [], "path": [], "toml": true,
+                    "before": {}, "direct": {}, "after": {}
+                }))
+                .unwrap(),
+            ],
+        };
+        let mut config: Config = serde_json::from_value(json!({
+            "format_version": 2, "ownership": "shared", "listen": "127.0.0.1:12345",
+            "token_file": cwd.join("token"), "catalog_file": cwd.join("catalog.json"),
+            "state_dir": cwd, "max_workers": 1,
+            "backend": {
+                "profile": "stdio", "command": cwd.join("unreviewed"),
+                "version": "fixture", "working_directory": cwd
+            }
+        }))
+        .unwrap();
+        assert!(
+            refresh_recipe(&record, &config)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("no longer matches a reviewed recipe")
+        );
+        config.ownership_source = Some(OwnershipSource::Operator);
+        config.validate().unwrap();
+        assert!(refresh_recipe(&record, &config).unwrap().is_none());
+        assert!(config.ownership == Ownership::Shared);
     }
 
     #[test]

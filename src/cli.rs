@@ -18,6 +18,10 @@ pub(crate) enum Action {
     Setup(manage::Selection),
     /// Show or set a gateway's backend idle timeout; takes effect after restart.
     Idle(manage::Idle),
+    /// Review advice and save shared ownership for a managed stdio gateway.
+    Share(manage::Mode),
+    /// Review advice and save session ownership for a managed gateway.
+    Isolate(manage::Mode),
     /// Restore selected direct MCP connections; keep packages and data.
     ///
     /// `--yes` requires both `--client` and `--server`. `remove --all --yes` restores every managed connection.
@@ -125,6 +129,7 @@ pub(crate) fn apply_json(action: &mut Action, json: bool) {
         Action::Setup(options) | Action::Remove { options, .. } => options.json = json,
         Action::Status(options) => options.json = json,
         Action::Idle(options) => options.json = json,
+        Action::Share(options) | Action::Isolate(options) => options.json = json,
         Action::Adopt { json: slot, .. } | Action::Check { json: slot, .. } => *slot = json,
         _ => {}
     }

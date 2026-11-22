@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `mcp-gate share <name>` and `mcp-gate isolate <name>` show shareability advice from the saved catalog and explicitly set a managed gateway's ownership. They support `--dry-run`, `--yes`, and `--json`, and print the command to apply the change by restarting the gateway. Unknown servers stay session-owned, `readOnlyHint` is not treated as evidence, and saving requires the gateway to run the same mcp-gate binary.
+- Catalog refreshes preserve explicit ownership choices. Setup continues to match new clients by their proposed ownership mode.
 - `cargo xtask bench` compares direct stdio, shared, and session modes with an offline mock backend.
 - `mcp-gate connect <name> [--config <path>]` lets stdio MCP clients use an existing local gateway and closes its HTTP session when the client disconnects.
 - Codex and Claude Code headers helpers use a stable executable path across upgrades. Re-run `mcp-gate setup` once to migrate managed and external helper paths from the binary store, then restart the clients it lists.

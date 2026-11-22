@@ -36,6 +36,16 @@ No live service deployment or client configuration changes are part of developme
 - A backend crash also fails its slot. Session mode can start fresh through a new
   HTTP session; shared mode requires gateway restart. The action is never replayed.
 
+For a managed stdio gateway, `mcp-gate share NAME --dry-run` shows the saved-catalog
+advice and proposed edits. `share` and `isolate` save the chosen mode after terminal
+confirmation or with `--yes`. Run the printed restart command after current actions
+finish. A saved change sets `ownership_source = "operator"`, so catalog refreshes
+retain the mode and still require catalog review. Setup matches new clients by
+their own proposed mode, so a recipe-less client may get a separate session gateway.
+Gateway configs reject unknown fields, so `share` and `isolate` refuse to save
+while the gateway's service runs a different mcp-gate binary. Update it with
+setup first; `--dry-run` still shows the advice.
+
 ## Backend idle policy
 
 `idle_seconds` is the single backend idle timeout for both ownerships. Omit it to

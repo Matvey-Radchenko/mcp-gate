@@ -1,12 +1,11 @@
 //! Edit only the persisted idle policy. Never contact a running gateway, read
 //! authentication files, or change client settings and service registrations.
-use super::{service, store, ui};
+use super::{config_edit, service, store, ui};
 use crate::config::Config;
 use anyhow::{Context, Result, ensure};
 use clap::Args;
-use fs2::FileExt;
 use serde_json::json;
-use std::{fs, path::Path};
+use std::fs;
 
 #[derive(Args)]
 pub struct Idle {
@@ -96,7 +95,7 @@ pub fn run(options: Idle) -> Result<()> {
             return Ok(());
         }
     }
-    apply(&root, record, &before, &after)?;
+    config_edit::apply(&root, record, &before, &after, "idle", || Ok(()))?;
     report(&options, record, phase, &config, previous);
     Ok(())
 }
@@ -127,34 +126,6 @@ fn edit(before: &[u8], seconds: u64) -> Result<Vec<u8>> {
     }
     table.insert_formatted(&key, toml_edit::Item::Value(value));
     Ok(document.to_string().into_bytes())
-}
-
-fn apply(root: &Path, record: &store::Record, before: &[u8], after: &[u8]) -> Result<()> {
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(root.join("setup.lock"))?;
-    lock.try_lock_exclusive()
-        .context("Another setup/remove/idle operation is running")?;
-    let registry = store::load(root)?;
-    ensure!(
-        registry
-            .gateways
-            .iter()
-            .any(|current| current.id == record.id
-                && current.config() == record.config()
-                && current.label == record.label
-                && !current.removing),
-        "Managed gateway changed during review; rerun idle"
-    );
-    ensure!(
-        fs::read(record.config())? == before,
-        "Configuration changed during review; no write performed. Rerun idle"
-    );
-    // One atomic replacement under the setup/remove lock; there are no service
-    // side effects or multi-file changes requiring an installer recovery journal.
-    store::atomic(&record.config(), after)
 }
 
 fn report(options: &Idle, record: &store::Record, phase: &str, config: &Config, previous: u64) {

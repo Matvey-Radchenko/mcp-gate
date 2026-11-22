@@ -1,3 +1,4 @@
+pub mod advisor;
 pub mod backend;
 pub mod catalog;
 pub mod clients;
