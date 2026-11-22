@@ -195,7 +195,7 @@ mod tests {
         let command = std::env::current_exe().unwrap();
         let candidate = Candidate {
             binding: Binding {
-                client: Client::Codex,
+                client: Client::CODEX,
                 name: "fixture".into(),
                 source: cwd.join("source"),
                 source_path: vec!["mcp_servers".into(), "fixture".into()],

@@ -76,7 +76,7 @@ pub async fn run(mut options: Selection) -> Result<()> {
     if plan["refresh_helper_binary"] == true {
         updates
             .messages
-            .push("Current headers helper binary updated".into());
+            .push("Current client gateway executable updated".into());
     }
     affected.extend(updates.restart);
     if options.json {

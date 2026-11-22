@@ -1,4 +1,4 @@
-//! Plan and journal edits to client helper fields, including external entries.
+//! Plan and journal client executable path edits, including external entries.
 use super::{
     Selection, current, helper,
     store::{self, Journal, Registry},
@@ -26,14 +26,39 @@ pub(super) struct Rewrite {
 
 impl Rewrite {
     pub(super) fn summary(&self) -> Value {
-        json!({"client":self.client,"name":self.name,"target":self.file})
+        let mut summary = json!({"client":self.client,"name":self.name,"target":self.file});
+        if matches!(
+            self.client.descriptor().connection,
+            clients::descriptors::Connection::Connect
+        ) {
+            summary["kind"] = json!(self.launcher());
+        }
+        summary
+    }
+
+    fn launcher(&self) -> &'static str {
+        match self.client.descriptor().connection {
+            clients::descriptors::Connection::Http { .. } => "headers helper",
+            clients::descriptors::Connection::Connect => "stdio bridge",
+        }
+    }
+
+    fn entry_keys(&self) -> (&str, &[String]) {
+        let (field, keys) = self
+            .keys
+            .split_last()
+            .expect("A client executable edit always ends in a field key");
+        (field, keys)
     }
 
     fn edit(&self, source: &str) -> Result<String> {
-        let toml = self.client == Client::Codex;
+        let toml = self.client.descriptor().format.is_toml();
+        let (field, keys) = self.entry_keys();
+        let entry = document::entry(source, toml, keys)?;
         ensure!(
-            document::entry(source, toml, &self.keys)?.as_str() == Some(self.before.as_str()),
-            "Helper changed after preview; rerun setup"
+            entry.get(field).and_then(Value::as_str) == Some(self.before.as_str())
+                && helper::executable(self.client, &entry).is_some(),
+            "Client executable changed after preview; rerun setup"
         );
         document::replace_string_prefix(
             source,
@@ -45,11 +70,7 @@ impl Rewrite {
     }
 
     fn update_registry(&self, root: &Path, registry: &mut Registry) -> bool {
-        let field = self
-            .keys
-            .last()
-            .expect("A helper edit always ends in a field key");
-        let keys = &self.keys[..self.keys.len() - 1];
+        let (field, keys) = self.entry_keys();
         let file = clients::identity(&self.file);
         let mut changed = false;
         for binding in registry
@@ -60,12 +81,11 @@ impl Rewrite {
             if binding.client == self.client
                 && binding.path == keys
                 && clients::identity(&binding.target) == file
-                && let Some(value) = binding.after.get_mut(field)
-                && let Some(command) = value.as_str().and_then(helper::invocation)
+                && let Some(command) = helper::executable(self.client, &binding.after)
                 && helper::versioned(root, &command.executable)
             {
-                // Keep any unrelated drift visible, including edited helper arguments.
-                *value = json!(format!(
+                // Keep any unrelated drift visible, including edited launcher arguments.
+                binding.after[field] = json!(format!(
                     "{}{}",
                     command.replacement(&current::path(root)),
                     command.arguments
@@ -117,7 +137,7 @@ pub(super) fn plan(root: &Path, registry: &Registry, options: &Selection) -> Res
     let project = crate::platform::project_path(
         &options.project.clone().unwrap_or(std::env::current_dir()?),
     )?;
-    // Service selection does not limit helper migration. Stable helper
+    // Service selection does not limit path migration. Stable executable
     // publication is shared by all clients using this state root.
     let scan = clients::inventory_current(&home, &project, &[], options.project.is_some())?;
     let mut seen = BTreeSet::new();
@@ -159,7 +179,7 @@ pub(super) fn plan(root: &Path, registry: &Registry, options: &Selection) -> Res
             Err(_) => plan.issues.push(clients::SourceIssue {
                 client: binding.client,
                 source: binding.target.clone(),
-                reason: "Cannot inspect a saved binding for helper migration. Check the client file's syntax and permissions, then rerun setup.".into(),
+                reason: "Cannot inspect a saved binding for executable migration. Check the client file's syntax and permissions, then rerun setup.".into(),
             }),
         }
     }
@@ -187,7 +207,7 @@ fn rewrite(
     let Some(before) = value.get(field).and_then(Value::as_str) else {
         return Ok(None);
     };
-    let Some(command) = helper::invocation(before) else {
+    let Some(command) = helper::executable(binding.client, value) else {
         return Ok(None);
     };
     if !helper::versioned(root, &command.executable) || !inside_store(root, &command.executable)? {
@@ -221,7 +241,7 @@ fn inside_store(root: &Path, executable: &Path) -> Result<bool> {
             Ok(meta) if !meta.is_dir() => return Ok(false),
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-            Err(error) => return Err(error).context("Cannot inspect the managed helper path"),
+            Err(error) => return Err(error).context("Cannot inspect the managed executable path"),
         }
     }
     Ok(false)
@@ -261,7 +281,7 @@ pub(super) fn apply(
         journal.save(&path)?;
         return Err(error).with_context(|| {
             format!(
-                "Helper migration failed. Private journal: {}. {}",
+                "Client executable migration failed. Private journal: {}. {}",
                 path.display(),
                 issues.join(" ")
             )
@@ -269,9 +289,10 @@ pub(super) fn apply(
     }
     for rewrite in rewrites {
         outcome.messages.push(format!(
-            "{} / {}: headers helper migrated to current in {}",
+            "{} / {}: {} migrated to current in {}",
             rewrite.client,
             super::ui::safe(&rewrite.name),
+            rewrite.launcher(),
             super::ui::safe(&rewrite.file.display().to_string())
         ));
         outcome.restart.insert(rewrite.client);

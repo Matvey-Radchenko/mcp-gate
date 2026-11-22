@@ -107,7 +107,7 @@ async fn removing_one_client_keeps_other_connection_and_service() {
     // A second independently configured client owns a binding to this same
     // endpoint. Removal must use binding ownership, not the selected client count.
     let mut second = record.bindings[0].clone();
-    second.client = mcp_gate::clients::Client::Codex;
+    second.client = mcp_gate::clients::Client::CODEX;
     second.toml = true;
     second.project = None;
     second.source = fixture.project.join("personal-codex.toml");

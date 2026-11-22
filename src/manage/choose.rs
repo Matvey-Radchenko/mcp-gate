@@ -71,7 +71,7 @@ fn selected_indices(choice: &Choice<'_>) -> Result<Option<Vec<usize>>> {
         )
     }));
     if choice.helper_action {
-        labels.push("Update client headers helpers".into());
+        labels.push("Update client gateway executables".into());
     }
     if !choice.interactive {
         return Ok(Some((0..labels.len()).collect()));

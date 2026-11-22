@@ -19,7 +19,7 @@
   <a href="https://github.com/Matvey-Radchenko/mcp-gate/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Matvey-Radchenko/mcp-gate/ci.yml?label=CI"></a>
 </p>
 
-mcp-gate puts a small Rust gateway in front of each stdio MCP server you already use in Codex, OpenCode, or Claude Code. Clients see the tool list right away, but the real server process starts only when a tool is actually called. A reviewed stateless server can share one backend across all sessions; session-owned servers, such as browsers, get one per session and are closed when idle.
+mcp-gate puts a small Rust gateway in front of each stdio MCP server you already use in Codex, OpenCode, Claude Code, or Claude Desktop. Clients see the tool list right away, but the real server process starts only when a tool is actually called. A reviewed stateless server can share one backend across all sessions; session-owned servers, such as browsers, get one per session and are closed when idle.
 
 ```sh
 npx @matvei-radchenko/mcp-gate@latest setup
@@ -165,7 +165,7 @@ For example, a Claude Desktop `mcpServers` entry for the `telegram` gateway look
 }
 ```
 
-If the client has a different `PATH`, use the absolute path to `current/mcp-gate` in the mcp-gate state directory (`current\mcp-gate.exe` on Windows) after running `setup` with a version that includes `connect`. On Windows, close clients using that executable before upgrading it with `setup`.
+If the client has a different `PATH`, use the absolute path to `current/mcp-gate` in the mcp-gate state directory (`current\mcp-gate.exe` on Windows) after running `setup` with a version that includes `connect`. On Windows, `setup` can replace the executable while clients are using it, and new processes launch the updated copy.
 
 ## How it works
 

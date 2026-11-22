@@ -5,7 +5,7 @@ fn keys(values: &[&str]) -> Vec<String> {
 }
 
 fn binding(client: Client, file: &Path) -> clients::Binding {
-    let section = if client == Client::Codex {
+    let section = if client == Client::CODEX {
         "mcp_servers"
     } else {
         "mcpServers"
@@ -18,7 +18,7 @@ fn binding(client: Client, file: &Path) -> clients::Binding {
         source_path: path.clone(),
         target: file.into(),
         path,
-        toml: client == Client::Codex,
+        toml: client == Client::CODEX,
         before: Value::Null,
         direct: Value::Null,
         project: None,
@@ -34,9 +34,9 @@ fn migrates_only_the_executable_prefix_in_toml_and_json() {
     let file = root.join("client");
     let hash = "a".repeat(64);
     for (client, version) in [
-        (Client::Codex, format!("0.1.0-{hash}")),
-        (Client::ClaudeCode, format!("0.1.0-local-recovery-{hash}")),
-        (Client::ClaudeCode, "legacy".into()),
+        (Client::CODEX, format!("0.1.0-{hash}")),
+        (Client::CLAUDE_CODE, format!("0.1.0-local-recovery-{hash}")),
+        (Client::CLAUDE_CODE, "legacy".into()),
     ] {
         let binding = binding(client, &file);
         let field = helper::field(client).unwrap();
@@ -105,7 +105,7 @@ fn preserves_the_delimiters_of_a_toml_literal_helper() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("state space");
     let file = root.join("client.toml");
-    let binding = binding(Client::Codex, &file);
+    let binding = binding(Client::CODEX, &file);
     let old = root
         .join("binaries/legacy")
         .join(crate::platform::binary_name());
@@ -139,7 +139,7 @@ fn a_version_directory_symlink_does_not_claim_an_outside_helper() {
     let legacy = root.join("binaries/legacy");
     std::os::unix::fs::symlink(outside, &legacy).unwrap();
     let client = root.join("client.toml");
-    let binding = binding(Client::Codex, &client);
+    let binding = binding(Client::CODEX, &client);
     let value = json!({"http_headers_helper":helper::command(&legacy.join(name), &root.join("config.toml"))});
     assert!(
         rewrite(&root, &binding, &client, &binding.path, &value)
@@ -154,7 +154,7 @@ fn rewrites_saved_after_without_adopting_live_drift_and_rolls_back_on_error() {
     let root = dir.path();
     store::prepare(root).unwrap();
     let file = root.join("client.json");
-    let mut binding = binding(Client::ClaudeCode, &file);
+    let mut binding = binding(Client::CLAUDE_CODE, &file);
     let old = root
         .join("binaries/legacy")
         .join(crate::platform::binary_name());
@@ -197,6 +197,60 @@ fn rewrites_saved_after_without_adopting_live_drift_and_rolls_back_on_error() {
             "headersHelper":helper::command(&current::path(root), &config),"timeout":1
         })
     );
-    assert_eq!(outcome.restart, BTreeSet::from([Client::ClaudeCode]));
+    assert_eq!(outcome.restart, BTreeSet::from([Client::CLAUDE_CODE]));
     assert_eq!(outcome.messages.len(), 1);
+}
+
+#[test]
+fn migrates_a_versioned_bridge_command_and_restarts_claude_desktop() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::prepare(root).unwrap();
+    let client = Client::try_from("claude-desktop").unwrap();
+    let file = root.join("claude_desktop_config.json");
+    let mut binding = binding(client, &file);
+    let old = root
+        .join("binaries")
+        .join(format!("1-{}", "a".repeat(64)))
+        .join(crate::platform::binary_name());
+    let saved = json!({"command":old,"args":["connect","test"],"timeout":1});
+    binding.after = saved.clone();
+    let live =
+        json!({"command":old,"args":["connect","test","--config","edited.toml"],"timeout":2});
+    let source = format!(r#"{{ "mcpServers": {{ "test": /* keep this */ {live} }} }}"#);
+    fs::write(&file, &source).unwrap();
+    let edit = rewrite(root, &binding, &file, &binding.path, &live)
+        .unwrap()
+        .unwrap();
+    assert_eq!(edit.summary()["kind"], "stdio bridge");
+    assert!(edit.edit(&source.replace("connect", "headers")).is_err());
+    let mut registry = Registry {
+        format_version: 1,
+        gateways: vec![store::Record {
+            removing: false,
+            id: "test".into(),
+            release: root.join("release"),
+            label: "test".into(),
+            binary_hash: String::new(),
+            binary: old.clone(),
+            bindings: vec![binding],
+        }],
+    };
+    store::save(root, &registry).unwrap();
+    let mut outcome = Outcome::default();
+    apply(root, &mut registry, &[edit], &mut outcome).unwrap();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        source.replacen(
+            &json!(old).to_string(),
+            &json!(current::path(root)).to_string(),
+            1
+        )
+    );
+    let registry = store::load(root).unwrap();
+    let mut expected = saved;
+    expected["command"] = json!(current::path(root));
+    assert_eq!(registry.gateways[0].bindings[0].after, expected);
+    assert_eq!(outcome.restart, BTreeSet::from([client]));
+    assert!(outcome.messages[0].contains("stdio bridge migrated"));
 }

@@ -1,4 +1,4 @@
-//! Publish the short-lived client helper independently of service identity.
+//! Publish the stable client executable independently of service identity.
 use super::store;
 use crate::{catalog, platform};
 use anyhow::{Context, Result, ensure};
@@ -12,6 +12,7 @@ pub(crate) fn path(root: &Path) -> PathBuf {
 }
 
 /// Setup holds its state lock while publishing the installed versioned source.
+/// The legacy installer publishes into a newly created prefix it owns.
 pub(crate) fn publish(root: &Path, binary: &Path, hash: &str) -> Result<()> {
     #[cfg(unix)]
     let link: Option<Link> = Some(|source, target| fs::hard_link(source, target));
@@ -44,6 +45,7 @@ fn publish_with(
         Err(error) => return Err(error.into()),
     }
     if digest(&target)?.as_deref() == Some(hash) {
+        cleanup(parent, |path| fs::remove_file(path));
         return Ok(());
     }
     store::with_temporary(|temporary| {
@@ -59,23 +61,27 @@ fn publish_with(
             })();
             copy.with_context(|| match linked {
                 Err(error) => format!("Copy fallback failed after hardlink failed: {error}"),
-                Ok(_) => "Cannot stage current helper copy".into(),
+                Ok(_) => "Cannot stage current binary copy".into(),
             })?;
         }
         let staged = temporary.path()?;
         ensure!(
             digest(staged)?.as_deref() == Some(hash),
-            "Staged helper binary digest mismatch"
+            "Staged current binary digest mismatch"
         );
         platform::executable(staged)?;
         temporary.publish_staged(&target, replace)
     })
     .with_context(|| {
         format!(
-            "Cannot publish {}. Close any clients running the headers helper and rerun setup",
+            "Cannot publish {}. Check the current directory's permissions and rerun setup",
             target.display()
         )
-    })
+    })?;
+    // A failed rollback may leave the only previous copy aside. Clean up only
+    // once a verified executable is installed at the stable path.
+    cleanup(parent, |path| fs::remove_file(path));
+    Ok(())
 }
 
 pub(super) fn digest(path: &Path) -> Result<Option<String>> {
@@ -83,7 +89,7 @@ pub(super) fn digest(path: &Path) -> Result<Option<String>> {
         Ok(meta) => {
             ensure!(
                 meta.is_file(),
-                "Current helper must be a real executable file"
+                "Current binary must be a real executable file"
             );
             Ok(Some(catalog::digest(path)?))
         }
@@ -94,10 +100,12 @@ pub(super) fn digest(path: &Path) -> Result<Option<String>> {
 
 fn replace(source: &Path, target: &Path) -> io::Result<()> {
     #[cfg(windows)]
-    return retry_replace(
-        || store::replace(source, target),
+    return replace_with_aside(
+        source,
+        target,
+        store::replace,
+        store::rename_new,
         windows_in_use,
-        || std::thread::sleep(std::time::Duration::from_millis(100)),
     );
     #[cfg(not(windows))]
     store::replace(source, target)
@@ -116,20 +124,61 @@ fn windows_in_use(error: &io::Error) -> bool {
 }
 
 #[cfg(any(windows, test))]
-fn retry_replace(
-    mut replace: impl FnMut() -> io::Result<()>,
-    retryable: impl Fn(&io::Error) -> bool,
-    mut wait: impl FnMut(),
+fn replace_with_aside(
+    source: &Path,
+    target: &Path,
+    mut replace: impl FnMut(&Path, &Path) -> io::Result<()>,
+    mut rename_new: impl FnMut(&Path, &Path) -> io::Result<()>,
+    in_use: impl Fn(&io::Error) -> bool,
 ) -> io::Result<()> {
-    // Each failed rename leaves the old entry intact. Only the rename is
-    // retried, with at most thirty 100 ms waits on Windows.
-    for _ in 0..30 {
-        match replace() {
-            Err(error) if retryable(&error) => wait(),
-            result => return result,
+    let blocked = match replace(source, target) {
+        Err(error) if in_use(&error) => error,
+        result => return result,
+    };
+    let aside = target.with_file_name(format!(
+        "{}{}-{}",
+        aside_prefix(),
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    // Windows can rename a mapped image to an unused name. Keep the old
+    // executable available for rollback until the staged image is in place.
+    rename_new(target, &aside).map_err(|error| {
+        io::Error::other(format!(
+            "Replacement was blocked ({blocked}); cannot move the previous executable aside: {error}"
+        ))
+    })?;
+    if let Err(error) = replace(source, target) {
+        return Err(io::Error::other(match rename_new(&aside, target) {
+            Ok(()) => format!(
+                "Cannot install the staged executable; previous executable restored: {error}"
+            ),
+            Err(rollback) => format!(
+                "Cannot install the staged executable ({error}) or restore the previous one ({rollback}). Previous executable retained at {}",
+                aside.display()
+            ),
+        }));
+    }
+    Ok(())
+}
+
+fn aside_prefix() -> String {
+    format!("{}.old-", platform::binary_name())
+}
+
+fn cleanup(parent: &Path, mut remove: impl FnMut(&Path) -> io::Result<()>) {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    let prefix = aside_prefix();
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix)
+            && entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            // Live Windows processes can still hold aside files open.
+            let _ = remove(&entry.path());
         }
     }
-    replace()
 }
 
 #[cfg(test)]

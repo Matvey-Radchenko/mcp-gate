@@ -212,3 +212,27 @@ pub(crate) fn plain(text: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connect_parses_both_client_binding_argument_orders() {
+        let path = "gateway config.toml";
+        for (args, expected_name) in [
+            (vec!["connect", "fixture", "--config", path], "fixture"),
+            (
+                vec!["connect", "--config", path, "--", "--fixture"],
+                "--fixture",
+            ),
+        ] {
+            let parsed = Cli::try_parse_from(std::iter::once("mcp-gate").chain(args)).unwrap();
+            let Some(Action::Connect { name, config }) = parsed.command else {
+                panic!("Expected the connect command");
+            };
+            assert_eq!(name, expected_name);
+            assert_eq!(config, Some(path.into()));
+        }
+    }
+}

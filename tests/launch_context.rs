@@ -17,7 +17,7 @@ fn candidate(root: &Path) -> Candidate {
         toml::to_string(&config).unwrap(),
     )
     .unwrap();
-    clients::discover(root, root, &[Client::Codex], false)
+    clients::discover(root, root, &[Client::CODEX], false)
         .unwrap()
         .remove(0)
 }

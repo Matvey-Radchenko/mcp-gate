@@ -1,5 +1,6 @@
-use crate::clients::{Binding, Candidate};
+use crate::clients::{Binding, Candidate, Client};
 use serde_json::{Value, json};
+use std::{collections::BTreeSet, sync::LazyLock};
 
 pub fn display(plan: &Value, dry_run: bool) {
     println!("\nSetup preview");
@@ -79,14 +80,15 @@ pub fn display(plan: &Value, dry_run: bool) {
     }
     for helper in plan["helper_migrations"].as_array().into_iter().flatten() {
         println!(
-            "  {} / {}: migrate headers helper to current",
+            "  {} / {}: migrate {} to current",
             text(&helper["client"]),
-            text(&helper["name"])
+            text(&helper["name"]),
+            helper["kind"].as_str().unwrap_or("headers helper")
         );
         println!("    Client file: {}", text(&helper["target"]));
     }
     if plan["refresh_helper_binary"] == true {
-        println!("  Update the current headers helper binary.");
+        println!("  Update the current client gateway executable.");
     }
     println!(
         "\nCommands, argument order and client permissions are preserved. Credentials stay private."
@@ -172,7 +174,18 @@ fn verbatim(key: &str) -> bool {
 }
 
 fn sensitive_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase().replace('-', "_");
+    static AUTH_KEYS: LazyLock<BTreeSet<String>> = LazyLock::new(|| {
+        Client::all()
+            .iter()
+            .filter_map(|client| match &client.descriptor().connection {
+                crate::clients::descriptors::Connection::Http { auth, .. } => {
+                    Some(normalized_key(auth.key()))
+                }
+                crate::clients::descriptors::Connection::Connect => None,
+            })
+            .collect()
+    });
+    let key = normalized_key(key);
     const EXACT: &[&str] = &[
         "env",
         "environment",
@@ -189,16 +202,19 @@ fn sensitive_key(key: &str) -> bool {
         "credential",
         "credentials",
         "cookie",
-        "headershelper",
-        "http_headers_helper",
     ];
     EXACT.contains(&key.as_str())
+        || AUTH_KEYS.contains(&key)
         || key.contains("token")
         || key.contains("secret")
         || key.contains("password")
         || key.contains("authorization")
         || key.contains("credential")
         || key.contains("cookie")
+}
+
+fn normalized_key(key: &str) -> String {
+    key.to_ascii_lowercase().replace('-', "_")
 }
 
 fn redact_words(words: &[Value]) -> Vec<Value> {
@@ -276,21 +292,8 @@ fn looks_like_secret(value: &str) -> bool {
 }
 
 pub fn diff(candidate: &Candidate) -> Value {
-    let mut after = candidate.binding.direct.clone();
-    if let Some(map) = after.as_object_mut() {
-        for field in ["command", "args", "env", "environment", "env_vars", "cwd"] {
-            map.remove(field);
-        }
-        map.insert(
-            "url".into(),
-            json!("http://127.0.0.1:<assigned-at-setup>/mcp"),
-        );
-        map.insert(
-            "authentication".into(),
-            json!("<private helper or file reference>"),
-        );
-    }
-    json!({"before":redact(&candidate.binding.before),"after":redact(&after)})
+    let after = super::remote::preview_entry(&candidate.binding, redact(&candidate.binding.direct));
+    json!({"before":redact(&candidate.binding.before),"after":after})
 }
 pub fn target(binding: &Binding) -> Value {
     json!({"client":binding.client,"name":binding.name,"source":binding.source,"target":binding.target})

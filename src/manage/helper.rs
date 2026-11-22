@@ -1,5 +1,8 @@
-//! Recognize and format gateway headers-helper commands.
-use crate::clients::Client;
+//! Recognize and format gateway client launchers.
+use crate::clients::{
+    Client, bridge_command,
+    descriptors::{Authentication, Connection},
+};
 use std::path::{Component, Path, PathBuf};
 
 fn quote(path: &Path) -> String {
@@ -26,11 +29,16 @@ pub fn command(binary: &Path, config: &Path) -> String {
 }
 
 pub(super) fn field(client: Client) -> Option<&'static str> {
-    match client {
-        Client::Codex => Some("http_headers_helper"),
-        Client::ClaudeCode => Some("headersHelper"),
-        // OpenCode consumes a file-backed Authorization header.
-        Client::Opencode => None,
+    match &client.descriptor().connection {
+        Connection::Http {
+            auth: Authentication::Helper { key },
+            ..
+        } => Some(key),
+        Connection::Http {
+            auth: Authentication::File { .. },
+            ..
+        } => None,
+        Connection::Connect => Some("command"),
     }
 }
 
@@ -38,11 +46,14 @@ pub(super) struct Invocation<'a> {
     pub executable: PathBuf,
     pub prefix: &'a str,
     pub arguments: &'a str,
-    leading: &'a str,
+    shell_leading: Option<&'a str>,
 }
 
 impl Invocation<'_> {
     pub fn replacement(&self, path: &Path) -> String {
+        let Some(leading) = self.shell_leading else {
+            return path.to_string_lossy().into_owned();
+        };
         // Keep single quotes out of the replacement when the old executable
         // was bare or double-quoted. A TOML literal can then keep its delimiter.
         let executable = if self.prefix.trim_start().starts_with('\'') {
@@ -50,7 +61,7 @@ impl Invocation<'_> {
         } else {
             double_quote(path)
         };
-        format!("{}{executable}", self.leading)
+        format!("{leading}{executable}")
     }
 }
 
@@ -70,11 +81,20 @@ pub(super) fn invocation(command: &str) -> Option<Invocation<'_>> {
         executable: executable.into(),
         prefix: &command[..leading.len() + end],
         arguments,
-        leading,
+        shell_leading: Some(leading),
     })
 }
 
 pub(super) fn executable(client: Client, entry: &serde_json::Value) -> Option<Invocation<'_>> {
+    if matches!(client.descriptor().connection, Connection::Connect) {
+        let command = bridge_command(entry)?;
+        return Some(Invocation {
+            executable: command.into(),
+            prefix: command,
+            arguments: "",
+            shell_leading: None,
+        });
+    }
     entry.get(field(client)?)?.as_str().and_then(invocation)
 }
 

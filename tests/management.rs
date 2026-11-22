@@ -93,7 +93,7 @@ fn discovery_uses_local_claude_override_and_skips_other_shared_files() {
     let shared = project.join(".mcp.json");
     let original = b"{\"mcpServers\":{\"fixture\":{\"command\":\"npx\",\"args\":[\"fixture\"]}}}";
     fs::write(&shared, original).unwrap();
-    let found = clients::discover(&home, &project, &[Client::ClaudeCode], true).unwrap();
+    let found = clients::discover(&home, &project, &[Client::CLAUDE_CODE], true).unwrap();
     assert_eq!(found.len(), 1);
     let candidate = &found[0];
     assert!(candidate.issue.is_none());
@@ -107,7 +107,7 @@ fn discovery_uses_local_claude_override_and_skips_other_shared_files() {
         r#"{"mcp":{"fixture":{"type":"local","command":["npx","fixture"]}}}"#,
     )
     .unwrap();
-    let found = clients::discover(&home, &project, &[Client::Opencode], true).unwrap();
+    let found = clients::discover(&home, &project, &[Client::OPENCODE], true).unwrap();
     assert!(found[0].issue.as_ref().unwrap().contains("Project file"));
 }
 #[test]
@@ -173,7 +173,7 @@ fn expansion_preserves_arguments_unicode_and_relative_file_rules() {
     assert_eq!(
         clients::expand::value(
             "prefix-${FIXTURE}",
-            Client::ClaudeCode,
+            Client::CLAUDE_CODE,
             &source,
             dir.path(),
             resolve
@@ -184,7 +184,7 @@ fn expansion_preserves_arguments_unicode_and_relative_file_rules() {
     assert_eq!(
         clients::expand::value(
             "${MISSING:-fallback}",
-            Client::ClaudeCode,
+            Client::CLAUDE_CODE,
             &source,
             dir.path(),
             resolve
@@ -195,7 +195,7 @@ fn expansion_preserves_arguments_unicode_and_relative_file_rules() {
     assert!(
         clients::expand::value(
             "${MISSING}",
-            Client::ClaudeCode,
+            Client::CLAUDE_CODE,
             &source,
             dir.path(),
             resolve
@@ -205,7 +205,7 @@ fn expansion_preserves_arguments_unicode_and_relative_file_rules() {
     assert_eq!(
         clients::expand::value(
             "Bearer {file:credential}",
-            Client::Opencode,
+            Client::OPENCODE,
             &source,
             dir.path(),
             resolve
@@ -216,7 +216,7 @@ fn expansion_preserves_arguments_unicode_and_relative_file_rules() {
     assert_eq!(
         clients::expand::value(
             "{env:FIXTURE}",
-            Client::Opencode,
+            Client::OPENCODE,
             &source,
             dir.path(),
             resolve
@@ -241,7 +241,7 @@ fn unapproved_or_disabled_project_servers_are_never_promoted_to_local_scope() {
         json!({"mcpServers":{"fixture":{"command":"fixture"}}}).to_string(),
     )
     .unwrap();
-    let found = clients::discover(&home, &project, &[Client::ClaudeCode], true).unwrap();
+    let found = clients::discover(&home, &project, &[Client::CLAUDE_CODE], true).unwrap();
     assert!(
         found[0]
             .issue
@@ -260,6 +260,6 @@ fn unapproved_or_disabled_project_servers_are_never_promoted_to_local_scope() {
         json!({"mcpServers":{"fixture":{"command":"fixture","disabled":true}}}).to_string(),
     )
     .unwrap();
-    let found = clients::discover(&home, &project, &[Client::ClaudeCode], true).unwrap();
+    let found = clients::discover(&home, &project, &[Client::CLAUDE_CODE], true).unwrap();
     assert!(found[0].issue.as_ref().unwrap().contains("Disabled"));
 }

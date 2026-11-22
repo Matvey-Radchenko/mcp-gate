@@ -1,6 +1,5 @@
 use super::*;
 use crate::manage::store::{Record, Registry};
-use std::cell::Cell;
 
 fn binary(root: &Path, version: &str, content: &[u8]) -> PathBuf {
     let path = root
@@ -82,33 +81,125 @@ fn invalid_staging_and_failed_replacement_keep_the_previous_helper() {
 }
 
 #[test]
-fn replace_retries_only_busy_failures_and_bounds_waits() {
-    let calls = Cell::new(0);
-    let waits = Cell::new(0);
-    let busy_for = |limit, error| {
-        retry_replace(
-            || {
-                calls.set(calls.get() + 1);
-                if calls.get() <= limit {
-                    return Err(io::Error::from(error));
+fn busy_target_is_moved_aside_before_installing_the_staged_image() {
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join(platform::binary_name());
+    let source = temp.path().join("staged");
+    fs::write(&target, b"old").unwrap();
+    fs::write(&source, b"new").unwrap();
+    let mut aside = None;
+    replace_with_aside(
+        &source,
+        &target,
+        |source, target| {
+            if target.exists() {
+                return Err(io::ErrorKind::PermissionDenied.into());
+            }
+            store::replace(source, target)
+        },
+        |from, to| {
+            assert_eq!(from, target);
+            assert_eq!(to.parent(), target.parent());
+            let name = to.file_name().unwrap().to_str().unwrap();
+            let prefix = format!("{}{}-", aside_prefix(), std::process::id());
+            assert!(uuid::Uuid::parse_str(name.strip_prefix(&prefix).unwrap()).is_ok());
+            fs::rename(from, to)?;
+            aside = Some(to.to_owned());
+            Ok(())
+        },
+        |error| error.kind() == io::ErrorKind::PermissionDenied,
+    )
+    .unwrap();
+    assert_eq!(fs::read(target).unwrap(), b"new");
+    assert_eq!(fs::read(aside.unwrap()).unwrap(), b"old");
+}
+
+#[test]
+fn failed_install_restores_the_previous_image_or_reports_its_recovery_path() {
+    for rollback_fails in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join(platform::binary_name());
+        let source = temp.path().join("staged");
+        fs::write(&target, b"old").unwrap();
+        let mut aside = None;
+        let failure = replace_with_aside(
+            &source,
+            &target,
+            |_, to| {
+                if to.exists() {
+                    Err(io::ErrorKind::PermissionDenied.into())
+                } else {
+                    Err(io::Error::other("install failed"))
                 }
-                Ok(())
+            },
+            |from, to| {
+                if from == target {
+                    aside = Some(to.to_owned());
+                } else if rollback_fails {
+                    return Err(io::Error::other("rollback failed"));
+                }
+                fs::rename(from, to)
             },
             |error| error.kind() == io::ErrorKind::PermissionDenied,
-            || waits.set(waits.get() + 1),
         )
-    };
-    busy_for(2, io::ErrorKind::PermissionDenied).unwrap();
-    assert_eq!((calls.replace(0), waits.replace(0)), (3, 2));
-    assert!(busy_for(100, io::ErrorKind::PermissionDenied).is_err());
-    assert_eq!((calls.replace(0), waits.replace(0)), (31, 30));
-    assert!(busy_for(100, io::ErrorKind::NotFound).is_err());
-    assert_eq!((calls.get(), waits.get()), (1, 0));
+        .unwrap_err()
+        .to_string();
+        assert!(failure.contains("install failed"));
+        let aside = aside.unwrap();
+        if rollback_fails {
+            assert!(failure.contains("rollback failed"));
+            assert!(failure.contains(aside.to_str().unwrap()));
+            assert_eq!(fs::read(aside).unwrap(), b"old");
+        } else {
+            assert!(failure.contains("previous executable restored"));
+            assert_eq!(fs::read(target).unwrap(), b"old");
+            assert!(!aside.exists());
+        }
+    }
+}
+
+#[test]
+fn unrelated_replace_error_does_not_move_the_target() {
+    let error = replace_with_aside(
+        Path::new("staged"),
+        Path::new("target"),
+        |_, _| Err(io::ErrorKind::NotFound.into()),
+        |_, _| panic!("unexpected rename"),
+        |error| error.kind() == io::ErrorKind::PermissionDenied,
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+}
+
+#[test]
+fn cleanup_spares_locked_asides_and_unrelated_entries() {
+    let temp = tempfile::tempdir().unwrap();
+    let parent = temp.path();
+    let target = parent.join(platform::binary_name());
+    let stale = parent.join(format!("{}stale", aside_prefix()));
+    let locked = parent.join(format!("{}locked", aside_prefix()));
+    let directory = parent.join(format!("{}directory", aside_prefix()));
+    let other = parent.join("unrelated.old-stale");
+    for path in [&target, &stale, &locked, &other] {
+        fs::write(path, b"fixture").unwrap();
+    }
+    fs::create_dir(&directory).unwrap();
+    cleanup(parent, |path| {
+        assert!(path == locked || path == stale);
+        if path == locked {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        fs::remove_file(path)
+    });
+    assert!(!stale.exists());
+    for path in [target, locked, other, directory] {
+        assert!(path.exists());
+    }
 }
 
 #[cfg(windows)]
 #[test]
-fn windows_sharing_errors_are_retryable() {
+fn windows_sharing_errors_trigger_rename_aside() {
     use windows_sys::Win32::Foundation::{
         ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION,
     };
@@ -122,6 +213,69 @@ fn windows_sharing_errors_are_retryable() {
     assert!(!windows_in_use(&io::Error::from_raw_os_error(
         ERROR_FILE_NOT_FOUND as i32
     )));
+}
+
+#[cfg(windows)]
+struct RunningImage(std::process::Child);
+
+#[cfg(windows)]
+impl Drop for RunningImage {
+    fn drop(&mut self) {
+        if !matches!(self.0.try_wait(), Ok(Some(_))) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn publishes_over_a_running_windows_image_and_cleans_it_up_after_exit() {
+    use std::process::{Command, Stdio};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let ping = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32")
+        .join("ping.exe");
+    let old = binary(root, "old", b"");
+    fs::copy(ping, &old).unwrap();
+    let old_hash = catalog::digest(&old).unwrap();
+    publish(root, &old, &old_hash).unwrap();
+    let target = path(root);
+    let mut ping = RunningImage(
+        Command::new(&target)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    assert!(ping.0.try_wait().unwrap().is_none());
+
+    let new = binary(root, "new", b"replacement");
+    let new_hash = catalog::digest(&new).unwrap();
+    publish(root, &new, &new_hash).unwrap();
+    assert_eq!(catalog::digest(&target).unwrap(), new_hash);
+    assert!(ping.0.try_wait().unwrap().is_none());
+    let mut asides = fs::read_dir(root.join("current"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(&aside_prefix())
+        });
+    let aside = asides.next().unwrap();
+    assert_eq!(catalog::digest(&aside).unwrap(), old_hash);
+    assert!(asides.next().is_none());
+
+    drop(ping);
+    publish(root, &new, &new_hash).unwrap();
+    assert!(!aside.exists());
 }
 
 #[cfg(windows)]

@@ -1,6 +1,6 @@
 //! Select and review exact targets before any service, backend or client mutation.
 use super::{Selection, current, helper_migration, inventory, preview, store::Registry, ui};
-use crate::clients::Candidate;
+use crate::clients::{self, Candidate, Client};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -213,10 +213,8 @@ fn inspect(inventory: &mut inventory::Inventory, options: &Selection, managed: u
         if options.details {
             inventory::overview(inventory, true);
         }
-        if project_hint(options, inventory) {
-            println!(
-                "For a Claude Code connection tied to a project, use setup --project <directory>."
-            );
+        if let Some(name) = project_hint(options, inventory) {
+            println!("For a {name} connection tied to a project, use setup --project <directory>.");
         }
     }
     count
@@ -230,17 +228,34 @@ fn directory_line(directories: usize) -> String {
     }
 }
 
-fn project_hint(options: &Selection, inventory: &inventory::Inventory) -> bool {
+fn project_hint(options: &Selection, inventory: &inventory::Inventory) -> Option<&'static str> {
     if options.project.is_some() {
-        return false;
+        return None;
     }
-    let listed = inventory.connections.iter().any(|connection| {
-        connection.client == crate::clients::Client::ClaudeCode && connection.project.is_some()
-    }) || inventory.candidates.iter().any(|candidate| {
-        candidate.binding.client == crate::clients::Client::ClaudeCode
-            && (candidate.binding.project.is_some() || project_issue(candidate.issue.as_deref()))
-    });
-    listed || claude_file().is_some_and(|path| crate::clients::claude_project_servers(&path))
+    for &client in Client::all() {
+        let descriptor = client.descriptor();
+        if !descriptor.claude_local_projects {
+            continue;
+        }
+        let listed = inventory
+            .connections
+            .iter()
+            .any(|c| c.client == client && c.project.is_some())
+            || inventory.candidates.iter().any(|c| {
+                c.binding.client == client
+                    && (c.binding.project.is_some() || project_issue(c.issue.as_deref()))
+            });
+        let local = || {
+            let home = super::store::home().ok();
+            clients::personal_paths(home.as_deref(), descriptor, |name| std::env::var_os(name))
+                .first()
+                .is_some_and(|path| clients::claude_project_servers(path))
+        };
+        if listed || local() {
+            return Some(&descriptor.display_name);
+        }
+    }
+    None
 }
 
 fn project_issue(text: Option<&str>) -> bool {
@@ -249,16 +264,6 @@ fn project_issue(text: Option<&str>) -> bool {
             || text.starts_with("Project MCP")
             || text.contains("project definition")
     })
-}
-
-fn claude_file() -> Option<std::path::PathBuf> {
-    std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(|dir| std::path::PathBuf::from(dir).join(".claude.json"))
-        .or_else(|| {
-            super::store::home()
-                .ok()
-                .map(|home| home.join(".claude.json"))
-        })
 }
 
 pub(super) fn server_plan(candidate: &crate::clients::Candidate, diff: bool) -> Value {
@@ -351,7 +356,7 @@ pub(super) fn review_setup(candidates: &[Candidate], helpers: bool) -> Result<bo
                 }
                 if helpers {
                     println!(
-                        "The preview lists each client helper executable path to be migrated."
+                        "The preview lists each client gateway executable path to be migrated."
                     );
                 }
             }
