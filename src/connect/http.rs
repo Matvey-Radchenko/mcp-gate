@@ -70,6 +70,7 @@ impl Connection {
     pub(super) fn new(listen: SocketAddr, token: String) -> anyhow::Result<Self> {
         let client = Client::builder()
             .no_proxy()
+            .tcp_nodelay(true)
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
             .connect_timeout(Duration::from_secs(5))

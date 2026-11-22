@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: gateway HTTP listeners set `TCP_NODELAY` on accepted connections, so loopback Streamable HTTP calls no longer wait ~40 ms for a delayed ACK.
 - `mcp-gate share <name>` and `mcp-gate isolate <name>` show shareability advice from the saved catalog and explicitly set a managed gateway's ownership. They support `--dry-run`, `--yes`, and `--json`, and print the command to apply the change by restarting the gateway. Unknown servers stay session-owned, `readOnlyHint` is not treated as evidence, and saving requires the gateway to run the same mcp-gate binary.
 - Catalog refreshes preserve explicit ownership choices. Setup continues to match new clients by their proposed ownership mode.
 - `cargo xtask bench` compares direct stdio, shared, and session modes with an offline mock backend.
