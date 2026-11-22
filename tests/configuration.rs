@@ -155,6 +155,39 @@ fn session_config_without_ownership_source_round_trips_unchanged() {
 }
 
 #[test]
+fn parallel_calls_require_shared_ownership_and_a_bounded_integer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let original = toml::to_string(&config()).unwrap();
+    assert!(!original.contains("max_concurrent_calls"));
+    std::fs::write(&path, &original).unwrap();
+    let omitted = Config::load(&path).unwrap();
+    assert_eq!(omitted.max_concurrent_calls, 1);
+    assert_eq!(toml::to_string(&omitted).unwrap(), original);
+
+    for limit in [0, 65] {
+        std::fs::write(&path, format!("max_concurrent_calls = {limit}\n{original}")).unwrap();
+        assert_eq!(
+            Config::load(&path).err().unwrap().to_string(),
+            "max_concurrent_calls must be between 1 and 64"
+        );
+    }
+    for limit in [1, 4, 64] {
+        std::fs::write(&path, format!("max_concurrent_calls = {limit}\n{original}")).unwrap();
+        let config = Config::load(&path).unwrap();
+        assert_eq!(config.max_concurrent_calls, limit);
+        let saved = toml::to_string(&config).unwrap();
+        assert_eq!(saved.contains("max_concurrent_calls"), limit > 1);
+    }
+    let session = original.replace("ownership = \"shared\"", "ownership = \"session\"");
+    std::fs::write(&path, format!("max_concurrent_calls = 2\n{session}")).unwrap();
+    assert_eq!(
+        Config::load(&path).err().unwrap().to_string(),
+        "max_concurrent_calls greater than 1 requires ownership = \"shared\""
+    );
+}
+
+#[test]
 fn recovery_is_explicit_and_restricted_to_reviewed_shared_processes() {
     use mcp_gate::config::{Ownership, SharedRecovery};
     let mut c = config();

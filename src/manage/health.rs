@@ -75,6 +75,16 @@ pub fn sanitized_runtime(value: &Value) -> Value {
         result["recovery"] = json!({"retry_after_seconds":r["retry_after_seconds"].as_u64(),
             "last_failure":{"reason":reason,"unix_seconds":r["last_failure"]["unix_seconds"].as_u64()}});
     }
+    if let (Some(configured @ 2..=64), Some(effective), Some(degraded)) = (
+        value["max_concurrent_calls"].as_u64(),
+        value["concurrency_per_backend"].as_u64(),
+        value["degraded"].as_bool(),
+    ) && effective == if degraded { 1 } else { configured }
+    {
+        result["max_concurrent_calls"] = configured.into();
+        result["concurrency_per_backend"] = effective.into();
+        result["degraded"] = degraded.into();
+    }
     result
 }
 
@@ -111,10 +121,20 @@ mod tests {
         let safe = sanitized_runtime(&value);
         assert_eq!(safe["shared_state"], "failed");
         assert!(!safe.to_string().contains("secret"));
+        assert!(safe.get("max_concurrent_calls").is_none());
         assert!(
             diagnostic(&json!({"runtime":safe}))
                 .unwrap()
                 .contains("VPN")
         );
+    }
+
+    #[test]
+    fn parallel_status_keeps_configured_and_effective_limits() {
+        let runtime = json!({
+            "ownership":"shared", "max_concurrent_calls":4,
+            "concurrency_per_backend":1, "degraded":true
+        });
+        assert_eq!(sanitized_runtime(&runtime), runtime);
     }
 }

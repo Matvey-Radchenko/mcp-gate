@@ -200,12 +200,13 @@ fn share_refuses_chrome_profiles_legacy_formats_and_docker_idle() {
 }
 
 #[test]
-fn isolate_restores_workers_and_removes_both_shared_only_keys() {
+fn isolate_restores_workers_and_removes_shared_only_keys() {
     let mut fixture = Fixture::new();
     fixture.config.ownership = Ownership::Shared;
     fixture.config.max_workers = 1;
     fixture.config.shared_client_roots = SharedClientRoots::Ignore;
     fixture.config.shared_recovery = SharedRecovery::Restart;
+    fixture.config.max_concurrent_calls = 4;
     fixture.write_config();
     let report = fixture.json(&["isolate", "local.mcp-gate.fixture", "--yes"], "complete");
     assert_eq!(report["advice"]["recommendation"], "shared_candidate");
@@ -214,6 +215,7 @@ fn isolate_restores_workers_and_removes_both_shared_only_keys() {
         ("max_workers", json!(1), json!(4)),
         ("shared_client_roots", json!("ignore"), Value::Null),
         ("shared_recovery", json!("restart"), Value::Null),
+        ("max_concurrent_calls", json!(4), Value::Null),
     ] {
         assert!(
             report["changes"]
@@ -228,6 +230,7 @@ fn isolate_restores_workers_and_removes_both_shared_only_keys() {
     assert_eq!(config.max_workers, 4);
     assert!(!fixture.text().contains("shared_client_roots"));
     assert!(!fixture.text().contains("shared_recovery"));
+    assert!(!fixture.text().contains("max_concurrent_calls"));
 }
 
 #[test]

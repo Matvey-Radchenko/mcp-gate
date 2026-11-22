@@ -15,10 +15,14 @@ No live service deployment or client configuration changes are part of developme
   process even when two clients configure it. Session mode still gives each HTTP
   session its own backend. Shared mode still has one backend. The two ownership
   modes are not mixed in one gateway.
-- Both modes execute one request (`tools/call`, `resources/read`, `prompts/get`) at a time **per backend**. `max_pending_calls`
-  bounds additional admitted calls, `queue_timeout_seconds` bounds lock waiting.
-  Zero pending calls means fail-fast while busy. Cancelled or expired queued calls
-  do not reach the backend. These limits are not OS memory quotas.
+- Both modes default to one executable request (`tools/call`, `resources/read`,
+  `prompts/get`) at a time per backend. `max_concurrent_calls` accepts integers
+  from 1 to 64. Values greater than 1 require `ownership = "shared"`. The
+  admission limit is `max_concurrent_calls + max_pending_calls`, and
+  `queue_timeout_seconds` bounds waiting to take an execution slot. Requests
+  beyond the admission limit fail immediately; zero pending calls means
+  fail-fast while busy. Cancelled or expired queued calls never reach the
+  backend. These limits are not OS memory quotas.
 - If the backend process exits, including when its browser is gone and the
   process ends, the worker slot is released without waiting for another call on
   that same session. The session must reconnect; the action is not replayed.
@@ -29,18 +33,42 @@ No live service deployment or client configuration changes are part of developme
   available with idle expiry disabled, and ignores the open GET stream exception.
   Existing disconnect grace still closes HTTP sessions after a lost GET when no
   executable call is active.
-- An active shared call cancelled/timed out with uncertain outcome poisons the shared
-  slot and closes its process. Waiting/new clients receive an error; they cannot
-  silently spawn a replacement. An operator must restart that gateway. This trades
-  availability for preserving serial execution and avoiding repeated side effects.
-- A backend crash also fails its slot. Session mode can start fresh through a new
-  HTTP session; shared mode requires gateway restart. The action is never replayed.
+- Cancellation or timeout of an active shared call fails its worker generation.
+  New dispatches are blocked, and calls already in flight can finish within
+  their own `call_timeout_seconds` before the gateway reaps the worker.
+- A backend crash promptly fails all in-flight requests with a connection
+  error. Session clients can reconnect. Shared mode defaults to manual gateway
+  restart, with an explicit [recovery option](backend-recovery.md) for reviewed
+  backends. The gateway never replays failed actions.
+
+### Opt in to parallel calls
+
+**Enable parallel execution only for a backend you know can safely handle
+simultaneous requests on one connection.** Most stateful servers need serial
+execution. Concurrent calls can abort navigation in Playwright or select
+another client's page in Chrome DevTools. The gateway performs no concurrency
+probing and ignores `readOnlyHint` and other tool annotations when scheduling calls.
+
+Each request has its own upstream ID and progress token. The response and
+progress are routed to the originating request, and a cancellation targets
+that request's upstream ID. Explicit HTTP cancellation ends that request's SSE
+stream. If a client falls behind, the bounded progress buffer can drop
+notifications while preserving routing for delivered events.
+
+If an overlapping call returns a tool error or JSON-RPC error, times out, is
+cancelled, or loses its transport, the gateway falls back to serial execution
+after in-flight calls drain. Errors in calls that ran alone leave the
+concurrency setting in effect. The fallback survives worker replacement and
+resets on gateway restart. With parallel execution configured, health and JSON
+status report `max_concurrent_calls`, effective `concurrency_per_backend` and
+`degraded`.
 
 For a managed stdio gateway, `mcp-gate share NAME --dry-run` shows the saved-catalog
 advice and proposed edits. `share` and `isolate` save the chosen mode after terminal
 confirmation or with `--yes`. Run the printed restart command after current actions
 finish. A saved change sets `ownership_source = "operator"`, so catalog refreshes
-retain the mode and still require catalog review. Setup matches new clients by
+retain the mode and still require catalog review. `isolate` removes the
+shared-only keys, including `max_concurrent_calls`. Setup matches new clients by
 their own proposed mode, so a recipe-less client may get a separate session gateway.
 Gateway configs reject unknown fields, so `share` and `isolate` refuse to save
 while the gateway's service runs a different mcp-gate binary. Update it with
@@ -131,7 +159,7 @@ on Windows). Restart discards sessions and volatile state without replay.
 | --- | --- |
 | Versions | 2025-03-26, 2025-06-18, 2025-11-25; no newer stateless lifecycle |
 | initialize / ping / tools/list / resources/list / resources/templates/list / prompts/list | Local SDK and reviewed catalog, no backend spawn |
-| tools/call / resources/read / prompts/get | Lazy start, startup catalog check, serial request-scoped forwarding |
+| tools/call / resources/read / prompts/get | Lazy start, startup catalog check, request-scoped forwarding, serial by default |
 | Cancellation / progress | Upstream IDs mapped, progress restricted to originating request |
 | Client roots | Forwarded in session mode; shared defaults to rejecting roots-capable clients; explicit `ignore` keeps a fixed rootless backend context |
 | Logging | Session owner only; shared unsolicited logs are not broadcast or persisted |
@@ -168,6 +196,8 @@ state_dir = "/absolute/private/backend/state"
 max_workers = 1
 max_sessions = 128
 max_pending_calls = 16
+# Default is 1. Enable only for a reviewed, concurrency-safe shared backend.
+# max_concurrent_calls = 4
 queue_timeout_seconds = 30
 startup_timeout_seconds = 30
 call_timeout_seconds = 300
@@ -250,8 +280,8 @@ a separate remaining migration gate. Never overwrite the working installation.
 `cargo xtask check` runs formatting, Clippy, size budgets and non-ignored tests:
 existing Chrome-profile mock lifecycle, shared cold starts, result routing, queue
 overload/timeout/cancellation, failure stickiness, isolated generic sessions, config
-validation, tool-list notification handling, and cleanup after hung initialization
-including a child process. Cached discovery is never automatically replaced with
+validation, tool-list notification handling, opt-in parallel routing and fallback,
+and cleanup after hung initialization including a child process. Cached discovery is never automatically replaced with
 new schemas; an actual change requires explicit regeneration and review.
 
 ```sh

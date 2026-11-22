@@ -40,6 +40,9 @@ pub struct Config {
     pub idle_seconds: Option<u64>,
     #[serde(default = "default_queue")]
     pub max_pending_calls: usize,
+    /// Number of simultaneous executable requests to a shared backend.
+    #[serde(default = "serial_calls", skip_serializing_if = "is_serial")]
+    pub max_concurrent_calls: u32,
     #[serde(default = "default_startup")]
     pub queue_timeout_seconds: u64,
     pub listen: SocketAddr,
@@ -67,6 +70,12 @@ fn default_version() -> u32 {
 }
 fn default_queue() -> usize {
     16
+}
+fn serial_calls() -> u32 {
+    1
+}
+fn is_serial(limit: &u32) -> bool {
+    *limit == serial_calls()
 }
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -188,6 +197,14 @@ impl Config {
         ensure!(
             self.max_pending_calls <= 1024 && self.queue_timeout_seconds > 0,
             "Invalid queue limits"
+        );
+        ensure!(
+            (1..=64).contains(&self.max_concurrent_calls),
+            "max_concurrent_calls must be between 1 and 64"
+        );
+        ensure!(
+            self.max_concurrent_calls == 1 || self.ownership == Ownership::Shared,
+            "max_concurrent_calls greater than 1 requires ownership = \"shared\""
         );
         self.backend.validate()?;
         ensure!(

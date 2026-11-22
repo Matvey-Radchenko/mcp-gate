@@ -21,7 +21,9 @@ field rather than interpreting it with different behavior.
 
 - An ordinary tool `isError` result or MCP error is returned without stopping the
   backend. This includes network/VPN failures reported by the backend. Restoring
-  connectivity permits subsequent requests on the same process.
+  connectivity permits subsequent requests on the same process. With
+  `max_concurrent_calls` above one, an error on an overlapping request switches
+  the slot to serial execution, including after worker replacement.
 - Cancelling a queued request never dispatches it or stops another client's call.
 - Dropping an HTTP response alone does not cancel its handler. Explicit MCP
   cancellation or session termination can cancel it. Cancellation is best-effort;
@@ -30,8 +32,9 @@ field rather than interpreting it with different behavior.
   worker generation. The failed action is **never retried**. Its external outcome
   can be unknown even after the local process exits: verify writes before issuing
   a replacement or a dependent write.
-- Cleanup holds the execution lock while closing the protocol and owned process
-  group/Windows job. Startup abandoned before producing a Worker retains the same
+- Cleanup waits for already dispatched calls and holds all execution permits
+  while closing the protocol and owned process group/Windows job. Startup
+  abandoned before producing a Worker retains the same
   single-worker capacity until its ProcessOwner finishes cleanup. No new worker
   starts while old cleanup is pending. Detached/unowned resources are not claimed.
 - Requests queued before a generation change fail as **not dispatched**. A fresh

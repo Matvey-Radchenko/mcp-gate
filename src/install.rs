@@ -161,6 +161,7 @@ pub async fn install(prefix: &Path, runtime: &Path, node: &Path, listen: SocketA
         shared_recovery: Default::default(),
         idle_seconds: None,
         max_pending_calls: 16,
+        max_concurrent_calls: 1,
         queue_timeout_seconds: 30,
         listen,
         token_file: prefix.join("client-token"),
