@@ -1,4 +1,6 @@
 //! Local repository checks. Never installs services or modifies user settings.
+#[cfg(unix)]
+mod bench;
 mod size;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -30,11 +32,16 @@ fn main() -> Result<()> {
             println!("All local checks passed. Real Chrome/Codex smoke tests remain opt-in.");
         }
         Some("size") if args.len() == 1 => size::check(root)?,
+        #[cfg(unix)]
+        Some("bench") => bench::run(root, &args[1..])?,
+        #[cfg(not(unix))]
+        Some("bench") => bail!("The benchmark requires Unix process signals"),
         Some("help" | "--help" | "-h") if args.len() == 1 => {
             println!("cargo xtask check  # sizes, formatting, strict Clippy, mock/unit tests");
             println!("cargo xtask size   # Rust file budgets only");
+            println!("cargo xtask bench  # release-mode mock benchmark (Unix; see bench --help)");
         }
-        _ => bail!("Usage: cargo xtask <check|size|help>"),
+        _ => bail!("Usage: cargo xtask <check|size|bench|help>"),
     }
     Ok(())
 }

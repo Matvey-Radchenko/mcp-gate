@@ -62,6 +62,8 @@ the release scripts, including rejection of conflicting published archive bytes.
 The checker itself is a small Rust workspace member (`xtask`), not a shell script.
 Inspect file budgets separately with `cargo xtask size`.
 
+Run the opt-in [mock gateway benchmark](docs/benchmark.md) with `cargo xtask bench`.
+
 ## Readability and architecture review
 
 One file/module should answer one question. Public boundaries describe invariants

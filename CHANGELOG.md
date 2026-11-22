@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `cargo xtask bench` compares direct stdio, shared, and session modes with an offline mock backend.
 - `mcp-gate connect <name> [--config <path>]` lets stdio MCP clients use an existing local gateway and closes its HTTP session when the client disconnects.
 - Codex and Claude Code headers helpers use a stable executable path across upgrades. Re-run `mcp-gate setup` once to migrate managed and external helper paths from the binary store, then restart the clients it lists.
 - Setup migrates selected adopted and legacy gateway services to the managed binary store. LaunchAgent, systemd user unit, and Windows logon task settings stay intact. Connections with no saved bindings stay external.
