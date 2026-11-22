@@ -1,0 +1,54 @@
+# Entry order controls discovery, --client help, and sorted client output.
+[[client]]
+id = "codex"
+display_name = "Codex"
+format = "toml"
+section = "mcp_servers"
+personal = [
+  { path = ".codex/config.toml" },
+  { env = "CODEX_HOME", path = "config.toml" },
+]
+project = [".codex/config.toml"]
+connection = { mode = "http", url_key = "url", auth = { kind = "helper", key = "http_headers_helper" } }
+
+[[client]]
+id = "opencode"
+display_name = "OpenCode"
+format = "jsonc"
+section = "mcp"
+nested_section = "servers"
+personal = [
+  { path = ".config/opencode/opencode.json" },
+  { path = ".config/opencode/opencode.jsonc" },
+  { env = "XDG_CONFIG_HOME", path = ["opencode", "opencode.json"] },
+  { env = "XDG_CONFIG_HOME", path = ["opencode", "opencode.jsonc"] },
+  { env = "OPENCODE_CONFIG" },
+]
+project = ["opencode.json", "opencode.jsonc"]
+expansion = "env-and-file"
+connection = { mode = "http", url_key = "url", fields = { type = "remote", oauth = false }, auth = { kind = "file", key = "headers" } }
+
+[[client]]
+id = "claude-code"
+display_name = "Claude Code"
+format = "json"
+section = "mcpServers"
+personal = [
+  { path = ".claude.json" },
+  { env = "CLAUDE_CONFIG_DIR", path = ".claude.json" },
+]
+project = [".mcp.json"]
+claude_local_projects = true
+expansion = "dollar-brace"
+connection = { mode = "http", url_key = "url", fields = { type = "http" }, auth = { kind = "helper", key = "headersHelper" } }
+
+[[client]]
+id = "claude-desktop"
+display_name = "Claude Desktop"
+format = "json"
+section = "mcpServers"
+personal = [
+  { os = "macos", path = ["Library", "Application Support", "Claude", "claude_desktop_config.json"] },
+  { os = "windows", env = "APPDATA", path = ["Claude", "claude_desktop_config.json"] },
+]
+connection = { mode = "connect" }

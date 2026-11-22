@@ -1,4 +1,5 @@
-use super::{Candidate, Client, document, scan::candidate};
+//! Claude local projects combine source precedence, physical keys and explicit approvals.
+use super::{Candidate, Client, Scan, SourceIssue, document, scan::candidate};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::path::Path;
@@ -34,7 +35,33 @@ pub fn declares_project_servers(path: &Path) -> bool {
         })
 }
 
-pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> Result<()> {
+pub(super) fn apply_local(client: Client, target: &Path, project: &Path, scan: &mut Scan) {
+    // A failed local-scope read must not leave partially prepared overrides eligible.
+    let mut local = scan.candidates.clone();
+    if read_local(client, target, project, &mut local).is_ok() {
+        scan.candidates = local;
+    } else {
+        for c in scan
+            .candidates
+            .iter_mut()
+            .filter(|c| c.binding.client == client)
+        {
+            c.issue = Some("Cannot verify Claude local scope and approvals; fix its personal/project configuration first".into());
+        }
+        scan.issues.push(SourceIssue {
+            client,
+            source: target.into(),
+            reason: "Cannot verify local project settings or approvals; values hidden".into(),
+        });
+    }
+}
+
+fn read_local(
+    client: Client,
+    target: &Path,
+    project: &Path,
+    out: &mut Vec<Candidate>,
+) -> Result<()> {
     if !target.is_file() {
         return Ok(());
     }
@@ -42,20 +69,20 @@ pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> 
     let base = vec![
         "projects".to_owned(),
         project_key(project)?,
-        "mcpServers".to_owned(),
+        client.descriptor().section.clone(),
     ];
     let local = document::entry(&source, false, &base)?;
     // Local scope wins over the shared project file and user scope for this name.
     let names: Vec<_> = out
         .iter()
-        .filter(|c| c.binding.client == Client::ClaudeCode)
+        .filter(|c| c.binding.client == client)
         .map(|c| c.binding.name.clone())
         .collect();
     for name in names {
         let indices: Vec<_> = out
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.binding.client == Client::ClaudeCode && c.binding.name == name)
+            .filter(|(_, c)| c.binding.client == client && c.binding.name == name)
             .map(|(i, _)| i)
             .collect();
         let index = *indices.last().context("Missing Claude entry")?;
@@ -76,15 +103,7 @@ pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> 
             continue;
         }
         if let Some(value) = local.get(&name) {
-            *c = candidate(
-                Client::ClaudeCode,
-                &name,
-                target,
-                keys.clone(),
-                value,
-                project,
-                false,
-            )?;
+            *c = candidate(client, &name, target, keys.clone(), value, project, false)?;
             c.binding.project = Some(project.into());
         }
         if c.command.is_empty() {
@@ -101,33 +120,37 @@ pub(super) fn local(target: &Path, project: &Path, out: &mut Vec<Candidate>) -> 
         }
     }
     if let Some(local) = local.as_object() {
-        for (name, value) in local {
-            if out
-                .iter()
-                .any(|c| c.binding.client == Client::ClaudeCode && c.binding.name == *name)
-            {
-                continue;
-            }
-            let mut keys = base.clone();
-            keys.push(name.clone());
-            let mut c = candidate(
-                Client::ClaudeCode,
-                name,
-                target,
-                keys,
-                value,
-                project,
-                false,
-            )?;
-            c.binding.project = Some(project.into());
-            if c.issue
-                .as_deref()
-                .is_some_and(|i| i.starts_with("Global command"))
-            {
-                c.issue = None;
-            }
-            out.push(c);
+        append_local_entries(client, target, project, &base, local, out)?;
+    }
+    Ok(())
+}
+
+fn append_local_entries(
+    client: Client,
+    target: &Path,
+    project: &Path,
+    base: &[String],
+    local: &serde_json::Map<String, Value>,
+    out: &mut Vec<Candidate>,
+) -> Result<()> {
+    for (name, value) in local {
+        if out
+            .iter()
+            .any(|c| c.binding.client == client && c.binding.name == *name)
+        {
+            continue;
         }
+        let mut keys = base.to_vec();
+        keys.push(name.clone());
+        let mut c = candidate(client, name, target, keys, value, project, false)?;
+        c.binding.project = Some(project.into());
+        if c.issue
+            .as_deref()
+            .is_some_and(|i| i.starts_with("Global command"))
+        {
+            c.issue = None;
+        }
+        out.push(c);
     }
     Ok(())
 }
@@ -145,6 +168,7 @@ fn approved(personal: &Path, project: &Path, name: &str) -> Result<bool> {
     let parent = personal
         .parent()
         .context("Personal configuration has no parent")?;
+    // Claude resolves its companion approval settings using the live override.
     let user_settings = if std::env::var_os("CLAUDE_CONFIG_DIR").is_some() {
         parent.join("settings.json")
     } else {

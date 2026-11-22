@@ -1,9 +1,11 @@
-use super::{Binding, Candidate, Client, document};
+//! Discover entries in descriptor order and resolve project precedence before expansion.
+use super::{Binding, Candidate, Client, document, sources};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
+    ffi::OsString,
     path::{Path, PathBuf},
 };
 
@@ -25,7 +27,15 @@ pub fn discover(
     clients: &[Client],
     project_selected: bool,
 ) -> Result<Vec<Candidate>> {
-    Ok(collect(home, project, clients, project_selected, &BTreeMap::new())?.candidates)
+    Ok(collect(
+        home,
+        project,
+        clients,
+        project_selected,
+        |_| None,
+        std::env::consts::OS,
+    )
+    .candidates)
 }
 pub fn discover_current(
     home: &Path,
@@ -41,93 +51,77 @@ pub fn inventory_current(
     clients: &[Client],
     project_selected: bool,
 ) -> Result<Scan> {
-    let mut overrides = BTreeMap::new();
-    if let Some(path) = std::env::var_os("CODEX_HOME") {
-        overrides.insert(Client::Codex, vec![PathBuf::from(path).join("config.toml")]);
-    }
-    if let Some(path) = std::env::var_os("CLAUDE_CONFIG_DIR") {
-        overrides.insert(
-            Client::ClaudeCode,
-            vec![PathBuf::from(path).join(".claude.json")],
-        );
-    }
-    let mut opencode = Vec::new();
-    if let Some(path) = std::env::var_os("XDG_CONFIG_HOME") {
-        for name in ["opencode.json", "opencode.jsonc"] {
-            opencode.push(PathBuf::from(&path).join("opencode").join(name));
-        }
-    }
-    if let Some(path) = std::env::var_os("OPENCODE_CONFIG") {
-        opencode.push(PathBuf::from(path));
-    }
-    if !opencode.is_empty() {
-        overrides.insert(Client::Opencode, opencode);
-    }
-    collect(home, project, clients, project_selected, &overrides)
+    Ok(collect(
+        home,
+        project,
+        clients,
+        project_selected,
+        |name| std::env::var_os(name),
+        std::env::consts::OS,
+    ))
 }
+
 fn collect(
     home: &Path,
     project: &Path,
     clients: &[Client],
     project_selected: bool,
-    overrides: &BTreeMap<Client, Vec<PathBuf>>,
-) -> Result<Scan> {
-    let mut out = Vec::new();
-    let mut issues = Vec::new();
-    for client in [Client::Codex, Client::Opencode, Client::ClaudeCode] {
+    env: impl Fn(&str) -> Option<OsString>,
+    os: &str,
+) -> Scan {
+    let mut scan = Scan::default();
+    let project_scope = sources::selected_project(home, project, project_selected);
+    let mut local_scopes = Vec::new();
+    for &client in Client::all() {
         if !clients.is_empty() && !clients.contains(&client) {
             continue;
         }
-        for source in super::sources::paths(
-            home,
-            project,
+        let descriptor = client.descriptor();
+        let personal = sources::personal_paths_for_os(Some(home), descriptor, &env, os);
+        if descriptor.claude_local_projects
+            && let (Some(project), Some(target)) = (project_scope, personal.first())
+        {
+            local_scopes.push((client, project, target.clone()));
+        }
+        scan_sources(
             client,
-            project_selected,
-            overrides.get(&client),
-        ) {
-            if !source.path.is_file() {
-                continue;
-            }
-            if read_source(client, &source, project, &mut out).is_err() {
-                issues.push(SourceIssue { client, source: source.path,
-                    reason: "Cannot read this configuration or its MCP schema. Fix its syntax and string-valued command/environment fields, then retry; values hidden.".into() });
-            }
+            sources::paths(descriptor, personal, project_scope),
+            project,
+            &mut scan,
+        );
+    }
+    // Local overrides are resolved after every file is read, preserving source issue order.
+    for (client, project, target) in local_scopes {
+        super::claude::apply_local(client, &target, project, &mut scan);
+    }
+    finish(&mut scan.candidates, home);
+    scan
+}
+
+fn scan_sources(client: Client, sources: Vec<sources::Source>, project: &Path, scan: &mut Scan) {
+    for source in sources {
+        if source.path.is_file()
+            && read_source(client, &source, project, &mut scan.candidates).is_err()
+        {
+            scan.issues.push(SourceIssue { client, source: source.path,
+                reason: "Cannot read this configuration or its MCP schema. Fix its syntax and string-valued command/environment fields, then retry; values hidden.".into() });
         }
     }
-    if project_selected
-        && super::sources::identity(home) != super::sources::identity(project)
-        && (clients.is_empty() || clients.contains(&Client::ClaudeCode))
-    {
-        let target = overrides
-            .get(&Client::ClaudeCode)
-            .and_then(|p| p.first())
-            .cloned()
-            .unwrap_or_else(|| home.join(".claude.json"));
-        // A failed local-scope read must not leave partially prepared overrides eligible.
-        let mut local = out.clone();
-        if super::claude::local(&target, project, &mut local).is_ok() {
-            out = local;
-        } else {
-            for c in out
-                .iter_mut()
-                .filter(|c| c.binding.client == Client::ClaudeCode)
-            {
-                c.issue = Some("Cannot verify Claude local scope and approvals; fix its personal/project configuration first".into());
-            }
-            issues.push(SourceIssue {
-                client: Client::ClaudeCode,
-                source: target,
-                reason: "Cannot verify local project settings or approvals; values hidden".into(),
-            });
-        }
-    }
+}
+
+fn finish(out: &mut [Candidate], home: &Path) {
     // Never edit a lower-precedence global definition shadowed by a project entry.
     let shadowed: Vec<_> = out
         .iter()
         .filter(|c| c.binding.project.is_some())
         .map(|c| (c.binding.client, c.binding.name.clone()))
         .collect();
-    for c in &mut out {
+    for c in out {
+        // A bridge owns its connection settings. It is never a direct
+        // executable that setup should expand, match against recipes, or probe.
+        if bridge_command(&c.binding.direct).is_some() {
+            continue;
+        }
         if c.binding.project.is_none()
             && shadowed.contains(&(c.binding.client, c.binding.name.clone()))
         {
@@ -135,36 +129,33 @@ fn collect(
                 "A project definition takes precedence; global settings left unchanged".into(),
             );
         }
-    }
-    for c in &mut out {
         if let Err(error) = super::expand::apply(c, home) {
             c.issue = Some(error.to_string());
         }
         c.recipe = super::recipes::matching(c);
     }
-    Ok(Scan {
-        candidates: out,
-        issues,
-    })
 }
 
 fn read_source(
     client: Client,
-    source: &super::sources::Source,
+    source: &sources::Source,
     project: &Path,
     out: &mut Vec<Candidate>,
 ) -> Result<()> {
+    let descriptor = client.descriptor();
     let value = document::parse(
         &std::fs::read_to_string(&source.path)?,
-        client == Client::Codex,
+        descriptor.format.is_toml(),
     )?;
-    let Some(mut servers) = value.get(source.section) else {
+    let Some(mut servers) = value.get(&descriptor.section) else {
         return Ok(());
     };
-    let mut base = vec![source.section.to_string()];
-    if client == Client::Opencode && servers.get("servers").is_some() {
-        servers = &servers["servers"];
-        base.push("servers".into());
+    let mut base = vec![descriptor.section.clone()];
+    if let Some(key) = &descriptor.nested_section
+        && let Some(nested) = servers.get(key)
+    {
+        servers = nested;
+        base.push(key.clone());
     }
     let servers = servers
         .as_object()
@@ -196,26 +187,7 @@ pub(super) fn candidate(
     project: &Path,
     project_scoped: bool,
 ) -> Result<Candidate> {
-    let command = if let Some(command) = config.get("command").and_then(Value::as_array) {
-        command
-            .iter()
-            .map(|v| {
-                v.as_str()
-                    .map(str::to_owned)
-                    .context("Command arguments must be strings")
-            })
-            .collect::<Result<Vec<_>>>()?
-    } else if let Some(command) = config.get("command").and_then(Value::as_str) {
-        let mut args = vec![command.to_string()];
-        if let Some(values) = config.get("args").and_then(Value::as_array) {
-            for value in values {
-                args.push(value.as_str().context("Arguments must be strings")?.into());
-            }
-        }
-        args
-    } else {
-        Vec::new()
-    };
+    let command = command(config)?;
     let env: BTreeMap<String, String> = serde_json::from_value(
         config
             .get("env")
@@ -229,6 +201,66 @@ pub(super) fn candidate(
         .and_then(Value::as_str)
         .map(|p| project.join(p))
         .unwrap_or_else(|| project.to_path_buf());
+    let issue = command_issue(config, &command, project_scoped);
+    Ok(Candidate {
+        recipe: None,
+        env_files: BTreeMap::new(),
+        binding: Binding {
+            client,
+            name: name.into(),
+            source: source.into(),
+            source_path: path.clone(),
+            target: source.into(),
+            path,
+            toml: client.descriptor().format.is_toml(),
+            before: config.clone(),
+            direct: config.clone(),
+            project: project_scoped.then(|| project.to_path_buf()),
+            after: Value::Null,
+        },
+        command,
+        cwd,
+        env,
+        service_label: None,
+        inherit_env: serde_json::from_value(
+            config
+                .get("env_vars")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        )
+        .map_err(|_| {
+            anyhow::anyhow!("Inherited environment names must be strings; values hidden")
+        })?,
+        issue,
+    })
+}
+
+fn command(config: &Value) -> Result<Vec<String>> {
+    Ok(
+        if let Some(command) = config.get("command").and_then(Value::as_array) {
+            command
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .context("Command arguments must be strings")
+                })
+                .collect::<Result<Vec<_>>>()?
+        } else if let Some(command) = config.get("command").and_then(Value::as_str) {
+            let mut args = vec![command.to_string()];
+            if let Some(values) = config.get("args").and_then(Value::as_array) {
+                for value in values {
+                    args.push(value.as_str().context("Arguments must be strings")?.into());
+                }
+            }
+            args
+        } else {
+            Vec::new()
+        },
+    )
+}
+
+fn command_issue(config: &Value, command: &[String], project_scoped: bool) -> Option<String> {
     let mut issue = None;
     if command.is_empty() {
         issue = Some("Existing HTTP, managed or non-stdio entry: left unchanged".into());
@@ -252,40 +284,23 @@ pub(super) fn candidate(
                 Some("External gateway is recognized but is not owned by this installation".into());
         }
     }
+    if bridge_command(config).is_some() {
+        issue = Some("External gateway stdio bridge is already configured; left unchanged".into());
+    }
     if config.get("enabled") == Some(&Value::Bool(false))
         || config.get("disabled") == Some(&Value::Bool(true))
     {
         issue = Some("Disabled MCP: left unchanged".into());
     }
-    Ok(Candidate {
-        recipe: None,
-        env_files: BTreeMap::new(),
-        binding: Binding {
-            client,
-            name: name.into(),
-            source: source.into(),
-            source_path: path.clone(),
-            target: source.into(),
-            path,
-            toml: client == Client::Codex,
-            before: config.clone(),
-            direct: config.clone(),
-            project: project_scoped.then(|| project.to_path_buf()),
-            after: Value::Null,
-        },
-        command,
-        cwd,
-        env,
-        service_label: None,
-        inherit_env: serde_json::from_value(
-            config
-                .get("env_vars")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-        )
-        .map_err(|_| {
-            anyhow::anyhow!("Inherited environment names must be strings; values hidden")
-        })?,
-        issue,
-    })
+    issue
 }
+
+pub(crate) fn bridge_command(entry: &Value) -> Option<&str> {
+    let command = entry.get("command")?.as_str()?;
+    let name = Path::new(command).file_name()?.to_str()?;
+    let subcommand = entry.get("args")?.as_array()?.first()?.as_str()?;
+    (matches!(name, "mcp-gate" | "mcp-gate.exe") && subcommand == "connect").then_some(command)
+}
+
+#[cfg(test)]
+mod tests;

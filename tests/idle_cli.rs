@@ -32,7 +32,7 @@ impl Fixture {
             // A nonexistent service binary makes accidental service execution fail.
             binary: root.join("service-must-not-run"),
             bindings: vec![Binding {
-                client: Client::Codex,
+                client: Client::CODEX,
                 name: "api".into(),
                 source: root.join("client-must-not-read"),
                 target: root.join("client-must-not-write"),

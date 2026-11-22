@@ -1,6 +1,8 @@
 //! Private registry and compare-before-replace file transactions.
 mod temporary;
 
+#[cfg(windows)]
+pub(super) use temporary::rename_new;
 pub(super) use temporary::{ensure_replaceable, replace, with_temporary};
 
 use crate::clients::Binding;

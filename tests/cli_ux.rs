@@ -28,6 +28,7 @@ impl Fixture {
             .env("HOME", root)
             .env("USERPROFILE", root)
             .env("LOCALAPPDATA", root.join("AppData/Local"))
+            .env("APPDATA", root.join("AppData/Roaming"))
             .env("MCP_GATE_TEST_HOME", root)
             .env("MCP_GATE_TEST_ROOT", root.join("state"))
             .env("CODEX_HOME", root.join(".codex"))
@@ -57,6 +58,83 @@ impl Fixture {
         )
         .unwrap();
     }
+}
+
+#[test]
+fn cli_accepts_claude_desktop_after_the_existing_client_choices() {
+    let fixture = Fixture::new();
+    let help = fixture.run(&["setup", "--help"]);
+    assert!(help.status.success());
+    assert!(
+        String::from_utf8_lossy(&help.stdout)
+            .contains("codex, opencode, claude-code, claude-desktop")
+    );
+    let preview = fixture.run(&["setup", "--client", "claude-desktop", "--dry-run", "--json"]);
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stdout)
+    );
+    let preview: Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(preview["phase"], "preview");
+}
+
+#[cfg(any(target_os = "macos", windows))]
+#[test]
+fn setup_previews_claude_desktop_and_skips_an_existing_bridge() {
+    let fixture = Fixture::new();
+    let home = fixture.directory.path();
+    #[cfg(target_os = "macos")]
+    let settings = home
+        .join("Library")
+        .join("Application Support")
+        .join("Claude");
+    #[cfg(windows)]
+    let settings = home.join("AppData").join("Roaming").join("Claude");
+    fs::create_dir_all(&settings).unwrap();
+    let settings = settings.join("claude_desktop_config.json");
+    let binary = mcp_gate::platform::binary_name();
+    let source = json!({"mcpServers": {
+        "direct": {"command":env!("CARGO_BIN_EXE_mock-backend"),"cwd":home},
+        "bridge": {"command":home.join("external").join(binary),"args":["connect","bridge"]}
+    }});
+    fs::write(&settings, source.to_string()).unwrap();
+    let setup = fixture.run(&[
+        "setup",
+        "--client",
+        "claude-desktop",
+        "--dry-run",
+        "--diff",
+        "--json",
+    ]);
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stdout)
+    );
+    let result: Value = serde_json::from_slice(&setup.stdout).unwrap();
+    let plan = &result["plan"];
+    assert_eq!(plan["servers"].as_array().unwrap().len(), 1);
+    assert_eq!(plan["servers"][0]["name"], "direct");
+    assert_eq!(
+        plan["servers"][0]["diff"]["after"],
+        json!({
+            "command":format!("<state-root>/current/{binary}"),
+            "args":["connect","direct","--config","<gateway config>"]
+        })
+    );
+    let status = fixture.run(&["status", "--client", "claude-desktop", "--json"]);
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    let result: Value = serde_json::from_slice(&status.stdout).unwrap();
+    let connections = result["connections"].as_array().unwrap();
+    assert_eq!(connections.len(), 2);
+    assert_eq!(connections[0]["name"], "bridge");
+    assert_eq!(connections[0]["kind"], "external");
+    assert_eq!(fs::read_to_string(settings).unwrap(), source.to_string());
 }
 
 #[test]
@@ -205,7 +283,7 @@ fn home_is_not_a_project_and_same_file_aliases_are_not_duplicated() {
     fixture.codex(json!({"mcp_servers":{"example":{"command":"npx","args":["package"],"env":{"TOKEN":"never-print-this-token"}}}}));
     let root = fixture.directory.path();
     for selected in [false, true] {
-        let found = clients::discover(root, root, &[Client::Codex], selected).unwrap();
+        let found = clients::discover(root, root, &[Client::CODEX], selected).unwrap();
         assert_eq!(found.len(), 1);
         assert!(found[0].binding.project.is_none());
         assert!(!found[0].issue.as_ref().unwrap().contains("Project file"));
@@ -216,7 +294,7 @@ fn home_is_not_a_project_and_same_file_aliases_are_not_duplicated() {
         fs::create_dir(&project).unwrap();
         std::os::unix::fs::symlink(root.join(".codex"), project.join(".codex")).unwrap();
         assert_eq!(
-            clients::discover(root, &project, &[Client::Codex], true)
+            clients::discover(root, &project, &[Client::CODEX], true)
                 .unwrap()
                 .len(),
             1

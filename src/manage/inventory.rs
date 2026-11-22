@@ -1,12 +1,12 @@
 //! A shared, read-only view for setup, status and remove. Ownership comes from the registry.
 use super::{
     Selection, current, helper, legacy,
-    store::{self, Registry},
+    store::{self, Record, Registry},
 };
-use crate::clients::{self, Binding, Candidate, SourceIssue};
+use crate::clients::{self, Binding, Candidate, SourceIssue, descriptors};
 use anyhow::Result;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct Inventory {
     pub candidates: Vec<Candidate>,
@@ -63,98 +63,11 @@ pub async fn read(
         .into_iter()
         .filter(|c| super::matches(options, c.binding.client, &c.binding.name))
     {
-        let managed = registry
-            .gateways
-            .iter()
-            .find(|r| r.bindings.iter().any(|b| same_binding(b, &c.binding)));
-        let endpoint = c.binding.direct["url"].as_str().unwrap_or_default();
-        let old = legacy
-            .iter()
-            .find(|l| legacy::same_endpoint(endpoint, &l.endpoint));
-        let disabled = c.binding.direct["enabled"] == false || c.binding.direct["disabled"] == true;
-        let managed_helper =
-            helper::executable(c.binding.client, &c.binding.direct).is_some_and(|command| {
-                command.executable == current || helper::versioned(&root, &command.executable)
-            });
-        let changed = managed.is_some_and(|record| {
-            record
-                .bindings
-                .iter()
-                .any(|b| same_binding(b, &c.binding) && b.after != c.binding.direct)
-        });
-        let kind = if managed.is_some() {
-            "managed"
-        } else if old.is_some() || managed_helper || c.issue.as_deref().is_some_and(marks_external)
-        {
-            "external"
-        } else if !endpoint.is_empty() {
-            "http"
-        } else {
-            "direct"
-        };
-        let state = if disabled {
-            "disabled"
-        } else if managed.is_some_and(|r| r.removing) {
-            "cleanup pending"
-        } else if changed {
-            "settings changed"
-        } else if let Some(old) = old {
-            if !check_legacy
-                || old
-                    .diagnostic
-                    .is_some_and(|d| d.contains("not checked") || d.contains("not verified"))
-            {
-                "not checked"
-            } else {
-                health_state(old.health.as_ref())
-            }
-        } else if kind == "direct" && c.issue.is_some() {
-            if super::context::needs_directory(&c) {
-                "setup needs a directory"
-            } else {
-                "setup needs attention"
-            }
-        } else if kind == "direct" {
-            "health not checked"
-        } else {
-            "not checked"
-        };
-        let reason = match kind {
-            "managed" => None,
-            "external" => Some(format!(
-                "{}This connection already uses a gateway without saved direct settings. Setup can migrate a versioned headers helper from this installation.",
-                old.and_then(|l| l
-                    .diagnostic
-                    .map(str::to_owned)
-                    .or_else(|| l.health.as_ref().and_then(super::health::diagnostic)))
-                    .map_or_else(String::new, |d| format!("{d}. "))
-            )),
-            "http" => Some(
-                "Existing HTTP connection; gateway ownership and backend health are not verified."
-                    .into(),
-            ),
-            _ => c.issue.clone().or_else(|| {
-                (kind == "direct").then(|| {
-                    "Direct command; backend health is not checked until setup creates a gateway."
-                        .into()
-                })
-            }),
-        };
-        connections.push(Connection {
-            client: c.binding.client,
-            name: c.binding.name.clone(),
-            source: c.binding.source.clone(),
-            project: c.binding.project.clone(),
-            kind,
-            state,
-            reason,
-            gateway: managed
-                .map(|r| r.id.clone())
-                .or_else(|| old.map(|l| l.config.display().to_string())),
-        });
-        if managed.is_none() {
+        let connection = observed_connection(&c, registry, &legacy, &root, &current, check_legacy);
+        if connection.kind != "managed" {
             candidates.push(c);
         }
+        connections.push(connection);
     }
     // Keep managed records visible when a user deleted or redirected their client entry.
     for record in &registry.gateways {
@@ -179,6 +92,129 @@ pub async fn read(
         connections,
         issues: scan.issues,
     })
+}
+
+fn observed_connection(
+    c: &Candidate,
+    registry: &Registry,
+    legacy: &[legacy::Legacy],
+    root: &Path,
+    current: &Path,
+    check_legacy: bool,
+) -> Connection {
+    let managed = registry
+        .gateways
+        .iter()
+        .find(|r| r.bindings.iter().any(|b| same_binding(b, &c.binding)));
+    let endpoint = match &c.binding.client.descriptor().connection {
+        descriptors::Connection::Http { url_key, .. } => c.binding.direct[url_key].as_str(),
+        descriptors::Connection::Connect => None,
+    }
+    .unwrap_or_default();
+    let old = legacy
+        .iter()
+        .find(|l| legacy::same_endpoint(endpoint, &l.endpoint));
+    let managed_launcher =
+        helper::executable(c.binding.client, &c.binding.direct).is_some_and(|command| {
+            command.executable == current || helper::versioned(root, &command.executable)
+        });
+    let changed = managed.is_some_and(|record| {
+        record
+            .bindings
+            .iter()
+            .any(|b| same_binding(b, &c.binding) && b.after != c.binding.direct)
+    });
+    let kind = if managed.is_some() {
+        "managed"
+    } else if old.is_some()
+        || managed_launcher
+        || clients::bridge_command(&c.binding.direct).is_some()
+        || c.issue.as_deref().is_some_and(marks_external)
+    {
+        "external"
+    } else if !endpoint.is_empty() {
+        "http"
+    } else {
+        "direct"
+    };
+    Connection {
+        client: c.binding.client,
+        name: c.binding.name.clone(),
+        source: c.binding.source.clone(),
+        project: c.binding.project.clone(),
+        kind,
+        state: observed_state(c, kind, managed, old, changed, check_legacy),
+        reason: observed_reason(c, kind, old),
+        gateway: managed
+            .map(|r| r.id.clone())
+            .or_else(|| old.map(|l| l.config.display().to_string())),
+    }
+}
+
+fn observed_state(
+    c: &Candidate,
+    kind: &str,
+    managed: Option<&Record>,
+    old: Option<&legacy::Legacy>,
+    changed: bool,
+    check_legacy: bool,
+) -> &'static str {
+    let disabled = c.binding.direct["enabled"] == false || c.binding.direct["disabled"] == true;
+    if disabled {
+        "disabled"
+    } else if managed.is_some_and(|r| r.removing) {
+        "cleanup pending"
+    } else if changed {
+        "settings changed"
+    } else if let Some(old) = old {
+        if !check_legacy
+            || old
+                .diagnostic
+                .is_some_and(|d| d.contains("not checked") || d.contains("not verified"))
+        {
+            "not checked"
+        } else {
+            health_state(old.health.as_ref())
+        }
+    } else if kind == "direct" && c.issue.is_some() {
+        if super::context::needs_directory(c) {
+            "setup needs a directory"
+        } else {
+            "setup needs attention"
+        }
+    } else if kind == "direct" {
+        "health not checked"
+    } else {
+        "not checked"
+    }
+}
+
+fn observed_reason(c: &Candidate, kind: &str, old: Option<&legacy::Legacy>) -> Option<String> {
+    match kind {
+        "managed" => None,
+        "external" if clients::bridge_command(&c.binding.direct).is_some() => Some(
+            "This connection already uses a gateway stdio bridge without saved direct settings."
+                .into(),
+        ),
+        "external" => Some(format!(
+            "{}This connection already uses a gateway without saved direct settings. Setup can migrate a versioned headers helper from this installation.",
+            old.and_then(|l| l
+                .diagnostic
+                .map(str::to_owned)
+                .or_else(|| l.health.as_ref().and_then(super::health::diagnostic)))
+                .map_or_else(String::new, |d| format!("{d}. "))
+        )),
+        "http" => Some(
+            "Existing HTTP connection; gateway ownership and backend health are not verified."
+                .into(),
+        ),
+        _ => c.issue.clone().or_else(|| {
+            (kind == "direct").then(|| {
+                "Direct command; backend health is not checked until setup creates a gateway."
+                    .into()
+            })
+        }),
+    }
 }
 
 /// `legacy` was the pre-release name for a gateway this installation does not own.
@@ -242,3 +278,6 @@ pub fn overview(inventory: &Inventory, details: bool) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

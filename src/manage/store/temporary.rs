@@ -98,7 +98,7 @@ impl Temporary {
             *path = sibling;
         }
         ensure_replaceable(target)?;
-        publish(path, target).context("Cannot atomically replace file")?;
+        publish(path, target).context("Cannot replace file")?;
         self.path = None;
         #[cfg(unix)]
         fs::File::open(parent)?.sync_all()?;
@@ -114,26 +114,30 @@ pub(in crate::manage) fn replace(temporary: &Path, path: &Path) -> io::Result<()
     #[cfg(unix)]
     return fs::rename(temporary, path);
     #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::Storage::FileSystem::{
-            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-        };
-        let a: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
-        let b: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        // SAFETY: both paths are nul-terminated, owned UTF-16 buffers.
-        let moved = unsafe {
-            MoveFileExW(
-                a.as_ptr(),
-                b.as_ptr(),
-                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-            )
-        };
-        if moved == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+    move_file(
+        temporary,
+        path,
+        windows_sys::Win32::Storage::FileSystem::MOVEFILE_REPLACE_EXISTING,
+    )
+}
+
+#[cfg(windows)]
+pub(in crate::manage) fn rename_new(source: &Path, target: &Path) -> io::Result<()> {
+    move_file(source, target, 0)
+}
+
+#[cfg(windows)]
+fn move_file(source: &Path, target: &Path, flags: u32) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+    let a: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let b: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: both paths are nul-terminated, owned UTF-16 buffers.
+    let moved = unsafe { MoveFileExW(a.as_ptr(), b.as_ptr(), flags | MOVEFILE_WRITE_THROUGH) };
+    if moved == 0 {
+        return Err(io::Error::last_os_error());
     }
+    Ok(())
 }
 
 #[cfg(test)]

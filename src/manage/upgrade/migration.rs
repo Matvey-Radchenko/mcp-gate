@@ -257,10 +257,10 @@ mod tests {
         let mut options = Selection::default();
         assert!(selected(&record, &options, &[]));
         options.server = vec!["external-fixture".into()];
-        options.client = vec![Client::Codex];
+        options.client = vec![Client::CODEX];
         assert!(!selected(&record, &options, &[]));
         let mut connection = Connection {
-            client: Client::Codex,
+            client: Client::CODEX,
             name: "external-fixture".into(),
             source: PathBuf::new(),
             project: None,

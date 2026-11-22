@@ -433,7 +433,7 @@ fn terminal_remove_all_reviews_owned_connections_and_can_cancel() {
     };
     let (dir, _) = fixture(true);
     let root = dir.path();
-    let mut binding = clients::discover(root, root, &[Client::Codex], false)
+    let mut binding = clients::discover(root, root, &[Client::CODEX], false)
         .unwrap()
         .remove(0)
         .binding;
