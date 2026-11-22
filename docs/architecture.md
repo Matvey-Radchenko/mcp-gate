@@ -1,6 +1,6 @@
 # Architecture decisions
 
-The numbered decisions below describe the initial Chrome release. The current
+The first five numbered decisions describe the initial Chrome release. The current
 generic ownership/protocol contract is in [configurable-runtime.md](configurable-runtime.md),
 including shared backends and the later resource/prompt catalog support.
 The opt-in shared backend recovery contract is documented in
@@ -61,6 +61,34 @@ responses и собственно MCP tool handlers (последние могу
 Не изменяем Atlassian, Bitbucket, Playwright. Поддерживаем именно инструменты
 закреплённого Chrome DevTools и нужные ему legacy roots/progress. Версию протокола
 с бессессионным lifecycle не объявляем до отдельного проектирования изоляции.
+
+## 006 — Рекомендация по совместному использованию backend
+
+Проблема: один stdio-процесс экономит ресурсы, но может разделять между клиентами
+выбранную вкладку, cookies, рабочий контекст, подписки или ограничения доступа к файлам.
+
+Решение: команды `share` и `isolate` показывают рекомендацию по сохранённому
+каталогу. Правила в `recipes/shareability.json` сопоставляют имя сервера или
+пакета с известными рисками, ищут признаки выбора или смены контекста в названиях
+инструментов, а также использование клиентских roots. `resources.subscribe = true`
+указывает на состояние подписок отдельных клиентов. `tools.listChanged` и
+logging часто включены SDK и не считаются сигналами. `readOnlyHint` и другие
+аннотации не подтверждают отсутствие состояния. Например, `select_page` в
+Chrome DevTools меняет общую выбранную страницу даже с `readOnlyHint`.
+
+Без читаемого каталога результат неизвестен и рекомендуется `session`.
+При отсутствии сигналов результат `shared_candidate` требует проверки
+оператором. Например, сервер memory может быть кандидатом, если все клиенты
+должны работать с общим файлом графа знаний.
+
+Рекомендация сама не меняет конфигурацию. Оператор явно сохраняет режим через
+`share` или `isolate` и отдельно перезапускает gateway после завершения текущих
+действий. `ownership_source = "operator"` сохраняет этот выбор при обновлении
+каталога, которое по-прежнему проходит проверку. Конфигурация gateway не
+принимает неизвестные поля, поэтому запись разрешена только когда служба gateway
+запущена тем же бинарником mcp-gate, что и команда. При подключении нового клиента
+setup подбирает gateway с подходящим режимом. Для клиента без рецепта он может
+создать отдельный gateway с режимом `session`.
 
 ## Managed binary store
 

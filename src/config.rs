@@ -17,6 +17,9 @@ pub struct Config {
     pub format_version: u32,
     #[serde(default)]
     pub ownership: Ownership,
+    /// An explicit operator decision survives catalog refresh independently of recipes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership_source: Option<OwnershipSource>,
     #[serde(default)]
     pub shared_client_roots: SharedClientRoots,
     #[serde(default, skip_serializing_if = "SharedRecovery::is_manual")]
@@ -72,6 +75,12 @@ pub enum Ownership {
     Session,
     Shared,
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnershipSource {
+    Operator,
+}
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SharedClientRoots {
@@ -95,8 +104,9 @@ impl SharedRecovery {
         *self == Self::Manual
     }
 }
+pub(crate) const DEFAULT_SESSION_WORKERS: usize = 4;
 fn default_workers() -> usize {
-    4
+    DEFAULT_SESSION_WORKERS
 }
 fn default_sessions() -> usize {
     128

@@ -1,0 +1,23 @@
+{
+  "known_servers": [
+    {
+      "aliases": ["playwright", "@playwright/mcp"],
+      "reason": "Playwright needs per-client browser pages, tabs, and cookies."
+    },
+    {
+      "aliases": ["chrome-devtools", "chrome-devtools-mcp"],
+      "reason": "Chrome DevTools keeps a module-level selected page. select_page switches it for everyone despite its readOnlyHint."
+    },
+    {
+      "aliases": ["filesystem", "secure-filesystem-server", "@modelcontextprotocol/server-filesystem"],
+      "reason": "Filesystem uses client roots for allowed directories. Share only with a fixed directory list and shared_client_roots = \"reject\"."
+    }
+  ],
+  "stateful_tool_tokens": [
+    "browser", "tab", "tabs", "page", "pages", "navigate", "click", "screenshot",
+    "snapshot", "session", "sessions", "login", "logout", "select", "activate",
+    "configure", "connect", "disconnect", "context", "workspace", "project"
+  ],
+  "roots_tool_tokens": ["roots"],
+  "roots_tool_names": ["list_allowed_directories"]
+}

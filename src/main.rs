@@ -6,7 +6,12 @@ use clap::Parser;
 use cli::{Action, Cli, apply_json, json_parse_error, plain, print_start};
 use fs2::FileExt;
 use mcp_gate::{
-    catalog::Catalog, config::Config, deployment, gateway::Gateway, http::Server, install, manage,
+    catalog::Catalog,
+    config::{Config, Ownership},
+    deployment,
+    gateway::Gateway,
+    http::Server,
+    install, manage,
 };
 use std::{fs::OpenOptions, path::PathBuf};
 
@@ -34,6 +39,8 @@ async fn main() -> std::process::ExitCode {
             | Action::Adopt { .. }
             | Action::Status(_)
             | Action::Idle(_)
+            | Action::Share(_)
+            | Action::Isolate(_)
     );
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -49,6 +56,7 @@ async fn main() -> std::process::ExitCode {
         Action::Setup(options) | Action::Remove { options, .. } => options.json,
         Action::Status(options) => options.json,
         Action::Idle(options) => options.json,
+        Action::Share(options) | Action::Isolate(options) => options.json,
         Action::Adopt { json, .. } | Action::Check { json, .. } => *json,
         _ => false,
     };
@@ -69,10 +77,11 @@ async fn main() -> std::process::ExitCode {
             }
             let message = plain(&error.to_string());
             if json {
-                println!(
-                    "{}",
-                    serde_json::json!({"format_version":1,"phase":"failed","error":message})
+                let value = error.downcast_ref::<manage::ModeFailure>().map_or_else(
+                    || serde_json::json!({"format_version":1,"phase":"failed","error":message}),
+                    |failure| failure.json(&message),
                 );
+                println!("{value}");
             }
             eprintln!("{message}");
             std::process::ExitCode::FAILURE
@@ -106,6 +115,8 @@ async fn dispatch(action: Action) -> Result<()> {
         } => manage::adopt(name, dry_run, json).await?,
         Action::Status(options) => manage::status(options).await?,
         Action::Idle(options) => manage::idle(options)?,
+        Action::Share(options) => manage::change_mode(options, Ownership::Shared)?,
+        Action::Isolate(options) => manage::change_mode(options, Ownership::Session)?,
         Action::CloseSession { config, id } => {
             let config = Config::load(&config)?;
             let client = reqwest::Client::builder()

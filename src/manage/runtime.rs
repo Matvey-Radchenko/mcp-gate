@@ -1,6 +1,9 @@
 pub use super::helper::command as headers_helper;
 use super::{launch, store::Record};
-use crate::{clients::Candidate, config::Config};
+use crate::{
+    clients::Candidate,
+    config::{Config, DEFAULT_SESSION_WORKERS},
+};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{path::Path, time::Duration};
@@ -70,7 +73,7 @@ pub(super) async fn prepare_with_binary(
         .recipe
         .as_ref()
         .map_or("session", |r| r.mode.as_str());
-    let config = json!({"format_version":2,"ownership":mode,"max_workers":if mode == "shared" { 1 } else { 4 },"shared_client_roots":if mode == "shared" { "ignore" } else { "reject" },"listen":format!("127.0.0.1:{port}"),
+    let config = json!({"format_version":2,"ownership":mode,"max_workers":if mode == "shared" { 1 } else { DEFAULT_SESSION_WORKERS },"shared_client_roots":if mode == "shared" { "ignore" } else { "reject" },"listen":format!("127.0.0.1:{port}"),
         "token_file":release.join("client-token"),"catalog_file":release.join("catalog.json"),"state_dir":release.join("state"),
         "backend":{"profile":"stdio","command":command,"docker": command.file_stem().is_some_and(|s|s == "docker"),"args":&candidate.command[1..],"version":"discovery-pending",
         "working_directory":candidate.cwd,"env":environment,"env_files":candidate.env_files,"inherit_env":candidate.inherit_env}});
