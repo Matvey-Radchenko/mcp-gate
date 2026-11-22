@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 mod cli;
+mod connect;
 
 use clap::Parser;
 use cli::{Action, Cli, apply_json, json_parse_error, plain, print_start};
@@ -89,12 +90,13 @@ async fn dispatch(action: Action) -> Result<()> {
             deployment::stage(&config, &prefix, &label, artifact_root.as_deref()).await?;
         }
         Action::Headers { config } => {
-            let config = Config::load(&config)?;
+            let (_, token) = Config::client_connection(&config)?;
             println!(
                 "{}",
-                serde_json::json!({"Authorization":format!("Bearer {}",config.token()?)})
+                serde_json::json!({"Authorization":format!("Bearer {token}")})
             );
         }
+        Action::Connect { name, config } => connect::run(&name, config).await?,
         Action::Setup(options) => manage::setup(options).await?,
         Action::Remove { options, all, name } => manage::remove(options, all, name).await?,
         Action::Adopt {

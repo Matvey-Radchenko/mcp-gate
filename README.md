@@ -102,6 +102,7 @@ For unattended setup, select the external connection with the usual `--client`, 
 | `mcp-gate remove` | Restore selected connections, or all managed ones with `--all --yes`. |
 | `mcp-gate adopt <name>` | Record an unmanaged `local.mcp-gate.<name>` user service in the local registry. Does not restart the gateway, edit client settings, or copy the binary. |
 | `mcp-gate idle <name> [15m\|off]` | Show or set backend idle expiry. Use `--dry-run` to preview or `--yes` to save; prints the required gateway restart command. |
+| `mcp-gate connect <name> [--config <path>]` | Expose an existing local gateway to a stdio MCP client. |
 
 **Setup and remove options**
 
@@ -144,6 +145,25 @@ mcp-gate adopt NAME --dry-run
 Do not pass `--yes` unless the user has already chosen the exact clients and servers. If a command may already have changed client settings, inspect `status --json` before running it again.
 
 </details>
+
+## Other clients
+
+Configure any stdio MCP client to launch `mcp-gate connect <name>` for a running local gateway. Use `mcp-gate status` to find the gateway's name, which is the suffix of its `local.mcp-gate.<name>` service label. For a manually configured gateway, append `--config` and its gateway TOML path. The bridge reads the bearer token from the gateway's private token file, so the client entry only needs the command and arguments.
+
+For example, a Claude Desktop `mcpServers` entry for the `telegram` gateway looks like this.
+
+```json
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "mcp-gate",
+      "args": ["connect", "telegram"]
+    }
+  }
+}
+```
+
+If the client has a different `PATH`, use the absolute path to `current/mcp-gate` in the mcp-gate state directory (`current\mcp-gate.exe` on Windows) after running `setup` with a version that includes `connect`. On Windows, close clients using that executable before upgrading it with `setup`.
 
 ## How it works
 

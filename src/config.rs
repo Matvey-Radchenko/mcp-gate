@@ -151,6 +151,13 @@ impl Config {
         value.validate()?;
         Ok(value)
     }
+
+    /// Resolve the local listener and its private bearer token for an MCP client.
+    pub fn client_connection(path: &Path) -> Result<(SocketAddr, String)> {
+        let config = Self::load(path)?;
+        Ok((config.listen, config.token()?))
+    }
+
     pub fn validate(&self) -> Result<()> {
         self.tool_policy.validate()?;
         ensure!(

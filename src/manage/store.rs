@@ -34,6 +34,51 @@ impl Record {
     pub fn config(&self) -> PathBuf {
         self.release.join("config.toml")
     }
+
+    fn name(&self) -> &str {
+        self.label
+            .strip_prefix("local.mcp-gate.")
+            .unwrap_or(&self.label)
+    }
+}
+
+impl Registry {
+    /// Prefer a unique service identity over the names of its client bindings.
+    pub fn select(&self, name: &str) -> Result<&Record> {
+        let mut matches: Vec<_> = self
+            .gateways
+            .iter()
+            .filter(|record| record.id == name || record.label == name || record.name() == name)
+            .collect();
+        if matches.is_empty() {
+            matches = self
+                .gateways
+                .iter()
+                .filter(|record| record.bindings.iter().any(|binding| binding.name == name))
+                .collect();
+        }
+        let name = super::ui::safe(name);
+        match matches.as_slice() {
+            [record] => Ok(record),
+            [] => {
+                let mut names: Vec<_> = self.gateways.iter().map(Record::name).collect();
+                names.sort_unstable();
+                names.dedup();
+                let known = if names.is_empty() {
+                    "none".into()
+                } else {
+                    names.join(", ")
+                };
+                anyhow::bail!(
+                    "No managed gateway matches {name}. Known gateways: {}. Run mcp-gate status or mcp-gate setup.",
+                    super::ui::safe(&known)
+                );
+            }
+            _ => anyhow::bail!(
+                "Several gateways match {name}; use a gateway ID or full service label"
+            ),
+        }
+    }
 }
 
 /// A binary-store deletion must retain the current helper bytes and every
