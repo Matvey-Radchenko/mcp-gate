@@ -4,6 +4,7 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { nativeBuildTarget, staticRustTarget } from './manifest.mjs';
 
 const root = resolve('.');
 const directory = join(root, 'target/compatibility-source');
@@ -26,8 +27,9 @@ for (const name of ['Cargo.toml', 'Cargo.lock']) {
 const args = ['build', '--locked', '--release', '--bin', 'mcp-gate',
   '--manifest-path', join(directory, 'Cargo.toml'), '--target-dir', target];
 const env = { ...process.env };
-if (process.platform === 'win32') {
-  args.push('--target', 'x86_64-pc-windows-msvc');
+const rustTarget = staticRustTarget(nativeBuildTarget());
+if (rustTarget) {
+  args.push('--target', rustTarget);
   env.CARGO_ENCODED_RUSTFLAGS = [
     ...(env.CARGO_ENCODED_RUSTFLAGS?.split('\x1f') ?? (env.RUSTFLAGS ?? '').split(/\s+/)),
     '-Ctarget-feature=+crt-static',
@@ -35,9 +37,16 @@ if (process.platform === 'win32') {
 }
 const result = spawnSync('cargo', args, { stdio: 'inherit', env });
 assert.equal(result.status, 0, result.error?.message ?? 'Compatibility fixture compilation failed');
-const executable = join(target, ...(process.platform === 'win32'
-  ? ['x86_64-pc-windows-msvc', 'release', 'mcp-gate.exe'] : ['release', 'mcp-gate']));
+const name = process.platform === 'win32' ? 'mcp-gate.exe' : 'mcp-gate';
+const executable = join(target, rustTarget ?? '', 'release', name);
 const checked = spawnSync(executable, ['--version'], { encoding: 'utf8' });
 assert.equal(checked.status, 0, checked.stderr);
 assert.equal(checked.stdout.trim(), `mcp-gate ${fixtureVersion}`);
 console.log(`Unpublished compatibility fixture ready: ${fixtureVersion}`);
+if (process.env.GITHUB_ENV) {
+  writeFileSync(process.env.GITHUB_ENV, [
+    `MCP_GATE_RELEASE_BINARY=${join(root, 'target/release', name)}`,
+    `MCP_GATE_COMPAT_BINARY=${executable}`,
+    '',
+  ].join('\n'), { flag: 'a' });
+}

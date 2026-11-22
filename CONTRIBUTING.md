@@ -18,9 +18,9 @@ the `test-backend` feature. Requires Cargo, rustfmt, Clippy and local loopback a
 Cargo may need network access if locked dependencies are not cached. It never runs
 the ignored real Chrome/Codex tests. Their explicit commands remain in the README.
 
-GitHub Actions runs this same entrypoint on native macOS ARM64, macOS Intel and
-Windows x64 runners. Before a commit or handoff, run it locally too. There is no
-installed Git hook. CI also tests temporary user services, pinned real clients,
+GitHub Actions runs this same entrypoint on native macOS, Windows and Linux
+runners for each release target. Before a commit or handoff, run it locally too.
+There is no installed Git hook. CI also tests temporary user services, pinned real clients,
 actual release update/downgrade and clean npm archive installation. See the
 [native acceptance procedures](docs/native-acceptance.md) for isolated checks;
 publication has a separate evidence gate.
@@ -30,18 +30,25 @@ workspace paths in compiled diagnostics before `packaging/build.mjs` stages the
 npm archives. A normal local Cargo build can retain the developer's absolute paths.
 CI prepares the common launcher once with `node packaging/launcher.mjs` and
 `npm pack ./dist/mcp-gate --ignore-scripts --pack-destination dist`. npm names
-that archive `matvei-radchenko-mcp-gate-<version>.tgz`. All three native
+that archive `matvei-radchenko-mcp-gate-<version>.tgz`. All eight native
 jobs install that exact archive together with their native package. This avoids
 platform-specific tar permission differences. `npm pack` in `npm/mcp-gate` runs a
 prepack check that refuses to continue without README.md and LICENSE.
 `launcher.mjs` copies both into `dist/mcp-gate` before that pack; `--ignore-scripts`
 skips prepack only for the already staged tree. Clean installation checks exercise
-the actual local and global commands; a final combined job verifies all seven
-release archives, including identical launcher bytes across the three artifacts.
-`SHA256SUMS` lists the three native archives a GitHub Release attaches.
+the actual local and global commands. A final combined job verifies nine npm
+tarballs and eight native archives, including identical launcher bytes across
+the artifacts. `SHA256SUMS` lists the eight native archives a GitHub Release attaches.
 Windows releases statically link the C runtime; CI inspects DLL imports to reject
 an accidental dependency on a separate Visual C++ redistributable. See
 [Rust linkage](https://doc.rust-lang.org/stable/reference/linkage.html).
+CI builds and tests the static musl executables on Ubuntu 22.04 with the matching
+Rust musl target and Rust's self-contained musl linking (no `musl-gcc`), then smoke-tests their npm archives only on Alpine (the packages declare
+`libc: ["musl"]`, so npm skips them on glibc hosts).
+The Windows ARM64 job skips the temporary Task Scheduler lifecycle tests, which
+take 15-25x longer on `windows-11-arm`; Windows x64 runs them.
+To select a musl build on a glibc host, set `MCP_GATE_NATIVE_TARGET` to
+`linux-x64-musl` or `linux-arm64-musl` for the compile and packaging scripts.
 CI also checks JavaScript syntax and runs `node --test packaging/*.test.mjs` for
 the release scripts, including rejection of conflicting published archive bytes.
 

@@ -1,6 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-$dumpbin = & $vswhere -latest -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -Last 1
+$arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+$dumpbin = & $vswhere -latest -find "VC/Tools/MSVC/**/bin/Host$arch/$arch/dumpbin.exe" | Select-Object -Last 1
+if (-not $dumpbin -and $arch -eq 'arm64') {
+    # The x64 tool can inspect ARM64 executables under Windows emulation.
+    $dumpbin = & $vswhere -latest -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -Last 1
+}
 if (-not $dumpbin) { throw 'Cannot inspect release DLL dependencies: dumpbin is unavailable' }
 $output = & $dumpbin /DEPENDENTS target/release/mcp-gate.exe
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the native release executable' }

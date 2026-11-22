@@ -9,6 +9,16 @@ CI uses macOS 15 and Windows Server 2025. Local ARM64 checks use macOS 26.6.2
 and 26.7.1. Native login acceptance is macOS ARM64 only. Stability on a native
 Intel Mac or native Windows is not guaranteed, and reports are welcome.
 
+The upcoming release adds static musl binaries for Linux x64 and ARM64 and a
+native Windows ARM64 binary. The release workflow requires Ubuntu service tests
+with the musl binaries (on Ubuntu 22.04, like the glibc jobs), clean npm installs
+on Alpine, and native Windows ARM64 checks. The Windows ARM64 job skips the
+temporary Task Scheduler lifecycle tests because the `windows-11-arm` runner is
+too slow for their time bounds; those code paths run on Windows x64. Linux service management requires `systemd --user`, so Alpine smoke
+coverage is limited to installing and running the CLI. The acceptance records
+below describe the platforms actually tested in those runs. Evidence for the
+expanded matrix is pending.
+
 The terminal UI, shared connection inventory, LaunchAgent listing and `adopt`
 command are part of this release. They are covered by local CLI tests. Those
 tests do not claim a native Intel or Windows terminal acceptance run. An agent

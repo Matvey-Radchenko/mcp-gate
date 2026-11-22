@@ -1,15 +1,15 @@
-Patch 0.1.2 of mcp-gate: local Rust gateways for existing stdio MCP servers.
-This release adds Linux x64 and ARM64 (glibc 2.35 or newer, systemd --user,
-musl is not supported), unifies backend idle expiry as `idle_seconds` with
-`mcp-gate idle`, lets the Windows npm launcher start from a long path, waits
-for npm to serve the new `latest` dist-tag after publish, speeds up setup
-digests, and fails fast when a restored Linux service exits on start.
+This release adds Windows ARM64 and static musl builds for Linux x64 and ARM64.
+The npm launcher selects the binary for the host architecture and Linux libc.
+Glibc hosts install only the glibc package and never download the musl binary.
+`mcp-gate connect` lets stdio MCP clients use an existing local gateway.
 
 Install with `npx @matvei-radchenko/mcp-gate@latest setup` or
 `npm i -g @matvei-radchenko/mcp-gate`. The command remains `mcp-gate`.
-Release binaries are built for macOS ARM64, macOS Intel, Windows x64,
-Linux x64 and Linux ARM64. Linux requires glibc 2.35 or newer (Ubuntu 22.04,
-Debian 12, Fedora 36, and later). Native login acceptance is still the 0.1.0
+Release binaries are built for macOS ARM64 and Intel, Windows x64 and ARM64,
+and Linux x64 and ARM64. The glibc builds require glibc 2.35 or newer. The
+musl builds work on distributions such as Alpine, where a configured gateway
+can run with `mcp-gate serve --config <path>` when `systemd --user` is unavailable.
+Native login acceptance is still the 0.1.0
 result: macOS ARM64 only. The Intel x86_64 run under Rosetta 2 is postponed, and
 Windows x64 was smoke-tested under Wine rather than a native Windows login.
 Stability on native Intel Macs and Windows is not guaranteed; reports are
@@ -24,5 +24,5 @@ deleting packages or user data. Sessions and actions are never replayed after re
 The attached SHA256SUMS covers the native archives attached to this Release.
 npm packages are on the registry and are not Release assets. Environment and
 owner-side npm trusted publisher configuration is required before a later
-workflow-driven publish. The two Linux platform packages are created by a
-one-time owner publish; see `docs/releasing.md`.
+workflow-driven publish. The Windows ARM64 and two Linux musl platform packages
+are created by a one-time owner publish. See `docs/releasing.md`.

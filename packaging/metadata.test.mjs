@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { closeSync, cpSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { assertReleaseManifest, launcherPackage, nativeTargets, npmTarball, platformPackage, platformPackageName } from './manifest.mjs';
+import { assertReleaseManifest, launcherPackage, nativeTargets, npmTarball, platformPackage, platformPackageName, staticRustTarget } from './manifest.mjs';
 
 const manifest = JSON.parse(readFileSync('npm/mcp-gate/package.json', 'utf8'));
 const cargoToml = readFileSync('Cargo.toml', 'utf8');
@@ -97,9 +97,13 @@ test('platform packages copy metadata and keep native os, cpu, and files', () =>
     'darwin-arm64': ['darwin', 'arm64'],
     'darwin-x64': ['darwin', 'x64'],
     'win32-x64': ['win32', 'x64'],
+    'win32-arm64': ['win32', 'arm64'],
     'linux-x64': ['linux', 'x64', ['glibc']],
     'linux-arm64': ['linux', 'arm64', ['glibc']],
+    'linux-x64-musl': ['linux', 'x64', ['musl']],
+    'linux-arm64-musl': ['linux', 'arm64', ['musl']],
   };
+  assert.deepEqual(nativeTargets, Object.keys(expected));
   for (const [target, [os, cpu, libc]] of Object.entries(expected)) {
     const pkg = platformPackage(manifest, target);
     assert.equal(pkg.name, platformPackageName(target));
@@ -122,6 +126,15 @@ test('platform packages copy metadata and keep native os, cpu, and files', () =>
     assert.equal(pkg.optionalDependencies, undefined);
   }
   assert.throws(() => platformPackage(manifest, 'linux-ia32'), /Unsupported native target/);
+});
+
+test('static binaries use the Rust target for their release package', () => {
+  assert.equal(staticRustTarget('win32-x64'), 'x86_64-pc-windows-msvc');
+  assert.equal(staticRustTarget('win32-arm64'), 'aarch64-pc-windows-msvc');
+  assert.equal(staticRustTarget('linux-x64-musl'), 'x86_64-unknown-linux-musl');
+  assert.equal(staticRustTarget('linux-arm64-musl'), 'aarch64-unknown-linux-musl');
+  assert.equal(staticRustTarget('linux-x64'), undefined);
+  assert.equal(staticRustTarget('darwin-arm64'), undefined);
 });
 
 test('source tree refuses npm pack until README and LICENSE are staged', () => {
@@ -165,27 +178,67 @@ test('unsupported platforms exit with the package.json version', {
   assert.match(result.stderr, new RegExp(`mcp-gate ${version} does not support ${process.platform}-${process.arch}`));
 });
 
-test('Linux launcher distinguishes unsupported targets from missing glibc packages', t => {
+test('Linux launcher selects packages by libc and architecture', t => {
   const root = mkdtempSync(join(tmpdir(), 'mcp-gate launcher '));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   cpSync('npm/mcp-gate/bin', join(root, 'bin'), { recursive: true });
   const version = '9.9.9';
   writeFileSync(join(root, 'package.json'), JSON.stringify({ ...manifest, version }));
   const preload = join(root, 'target.cjs');
-  for (const arch of ['ia32', 'x64', 'arm64']) {
+  const modules = join(root, 'node_modules');
+  function launch({ arch, header, loader, installed }) {
+    rmSync(modules, { recursive: true, force: true });
+    for (const target of installed) {
+      const directory = join(modules, platformPackageName(target), 'bin');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(directory, 'mcp-gate'), '');
+    }
     writeFileSync(preload, `
       Object.defineProperty(process, 'platform', { value: 'linux' });
       Object.defineProperty(process, 'arch', { value: '${arch}' });
+      Object.defineProperty(process, 'report', { value: ${header === undefined ? 'undefined' : `{
+        getReport: () => ({ header: ${JSON.stringify(header)} }),
+      }`} });
+      const fs = require('node:fs');
+      const existsSync = fs.existsSync;
+      fs.existsSync = path => path.startsWith('/lib/ld-musl-') ? path === ${JSON.stringify(loader ?? '')} : existsSync(path);
+      require('node:child_process').spawn = binary => {
+        const { dirname, basename } = require('node:path');
+        console.log(basename(dirname(dirname(binary))));
+        const child = new (require('node:events').EventEmitter)();
+        process.nextTick(() => child.emit('exit', 0));
+        return child;
+      };
     `);
-    const result = captureCommand(process.execPath, ['--require', preload, join(root, 'bin/mcp-gate.cjs')]);
-    assert.equal(result.status, 1, result.stderr);
-    assert.match(result.stderr, /Linux requires glibc \(2\.35\+\)/);
-    if (arch === 'ia32') {
-      assert.ok(result.stderr.includes(`mcp-gate ${version} does not support linux-ia32`));
-      assert.ok(result.stderr.includes(`Supported targets: ${nativeTargets.join(', ')}`));
-    } else {
-      assert.ok(result.stderr.includes(`The native mcp-gate package is missing for linux-${arch}`));
-      assert.match(result.stderr, /optional dependencies enabled.*matching GitHub Release binary/);
+    return captureCommand(process.execPath, ['--require', preload, join(root, 'bin/mcp-gate.cjs')]);
+  }
+
+  const glibc = { glibcVersionRuntime: '2.35' };
+  for (const [arch, loaderArch] of [['x64', 'x86_64'], ['arm64', 'aarch64']]) {
+    const gnu = `linux-${arch}`;
+    const musl = `${gnu}-musl`;
+    const loader = `/lib/ld-musl-${loaderArch}.so.1`;
+    for (const [header, loaderPath, installed, expected] of [
+      [glibc, loader, [gnu, musl], gnu],
+      [{}, undefined, [gnu, musl], musl],
+      [undefined, loader, [gnu, musl], musl],
+      [undefined, '/lib/ld-musl-other.so.1', [gnu, musl], gnu],
+    ]) {
+      const result = launch({ arch, header, loader: loaderPath, installed });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout.trim(), `mcp-gate-bin-${expected}`);
+    }
+    // Each libc uses only its own package; there is no cross-libc fallback.
+    for (const [header, installed, target] of [[{}, [gnu], musl], [glibc, [musl], gnu]]) {
+      const missing = launch({ arch, header, installed });
+      assert.equal(missing.status, 1);
+      assert.ok(missing.stderr.includes(`The native mcp-gate package is missing for ${target}`));
+      assert.match(missing.stderr, /optional dependencies enabled.*matching GitHub Release binary/);
     }
   }
+
+  const unsupported = launch({ arch: 'ia32', header: glibc, installed: [] });
+  assert.equal(unsupported.status, 1);
+  assert.ok(unsupported.stderr.includes(`mcp-gate ${version} does not support linux-ia32`));
+  assert.ok(unsupported.stderr.includes(`Supported targets: ${nativeTargets.join(', ')}`));
 });

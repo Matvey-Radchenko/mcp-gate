@@ -26,13 +26,13 @@ test('combined release accepts one shared launcher and rejects conflicting or mi
     }
     const combined = verify();
     assert.equal(combined.status, 0, combined.stderr);
-    assert.equal(rows.size, 11);
+    assert.equal(rows.size, 17);
     const expected = [...rows]
       .filter(([name]) => name.endsWith('.tar.gz'))
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, hash]) => `${hash}  ${name}\n`).join('');
     assert.equal(readFileSync(checksums, 'utf8'), expected);
-    assert.equal(expected.trimEnd().split('\n').length, 5);
+    assert.equal(expected.trimEnd().split('\n').length, 8);
     assert.doesNotMatch(readFileSync(checksums, 'utf8'), /\.tgz/);
 
     archive('win32-x64', launcher, Buffer.from('different tar permissions'));
@@ -42,10 +42,10 @@ test('combined release accepts one shared launcher and rejects conflicting or mi
     assert.equal(readFileSync(checksums, 'utf8'), expected);
 
     archive('win32-x64', launcher);
-    rmSync(join(root, 'native-linux-arm64', 'mcp-gate-0.1.0-linux-arm64.tar.gz'));
+    rmSync(join(root, 'native-linux-arm64-musl', 'mcp-gate-0.1.0-linux-arm64-musl.tar.gz'));
     const missing = verify();
     assert.notEqual(missing.status, 0);
-    assert.match(missing.stderr, /Expected 6 npm packages and 5 native archives; found 10 files \(6 npm packages and 4 native archives\)/);
+    assert.match(missing.stderr, /Expected 9 npm packages and 8 native archives; found 16 files \(9 npm packages and 7 native archives\)/);
     assert.equal(readFileSync(checksums, 'utf8'), expected);
   } finally {
     rmSync(root, { recursive: true, force: true });

@@ -1,7 +1,32 @@
+import launcher from '../npm/mcp-gate/bin/mcp-gate.cjs';
+
 // Shared identity rules for the meta package and generated platform packages.
-export const nativeTargets = ['darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64', 'linux-arm64'];
+export const nativeTargets = [
+  'darwin-arm64', 'darwin-x64', 'win32-x64', 'win32-arm64',
+  'linux-x64', 'linux-arm64', 'linux-x64-musl', 'linux-arm64-musl',
+];
 export const npmScope = '@matvei-radchenko';
 export const launcherPackage = `${npmScope}/mcp-gate`;
+
+export function nativeBuildTarget() {
+  const preferred = launcher.preferredTarget();
+  const target = process.env.MCP_GATE_NATIVE_TARGET ?? preferred;
+  // CI compiles and tests the static musl build on a glibc host of the same architecture.
+  // Its npm archive is smoke-tested only on musl (Alpine), because npm installs it only there.
+  if (!nativeTargets.includes(target) || (target !== preferred && target !== `${preferred}-musl`)) {
+    throw Error(`Unsupported native target ${target} on ${preferred}`);
+  }
+  return target;
+}
+
+// An explicit Cargo target confines static CRT flags to target crates and keeps
+// host proc-macro libraries on their normal runtime.
+export function staticRustTarget(target) {
+  const [os, cpu, libc] = target.split('-');
+  const arch = { x64: 'x86_64', arm64: 'aarch64' }[cpu];
+  if (os === 'win32') return `${arch}-pc-windows-msvc`;
+  if (libc === 'musl') return `${arch}-unknown-linux-musl`;
+}
 
 export function platformPackageName(target) {
   if (!nativeTargets.includes(target)) throw Error(`Unsupported native target: ${target}`);
@@ -20,7 +45,7 @@ export function registryName(name) {
 
 export function platformPackage(manifest, target) {
   // os, cpu and (on Linux) libc select this binary. The launcher owns the Node engine requirement.
-  const [os, cpu] = target.split('-');
+  const [os, cpu, libc] = target.split('-');
   return {
     name: platformPackageName(target),
     version: manifest.version,
@@ -34,7 +59,8 @@ export function platformPackage(manifest, target) {
     repository: manifest.repository,
     os: [os],
     cpu: [cpu],
-    ...(os === 'linux' ? { libc: ['glibc'] } : {}),
+    // npm installs exactly one Linux package per host, so glibc hosts never download musl.
+    ...(os === 'linux' ? { libc: [libc === 'musl' ? 'musl' : 'glibc'] } : {}),
     files: ['bin/', 'LICENSE', 'README.md'],
   };
 }

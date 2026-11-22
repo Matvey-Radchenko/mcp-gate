@@ -3,16 +3,15 @@ import { cpSync, mkdirSync, readFileSync, writeFileSync, chmodSync, realpathSync
 import { homedir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { assertReleaseManifest, nativeTargets, platformPackage } from './manifest.mjs';
+import { assertReleaseManifest, nativeBuildTarget, platformPackage, staticRustTarget } from './manifest.mjs';
 
-const target = `${process.platform}-${process.arch}`;
-if (!nativeTargets.includes(target)) throw Error('Unsupported native target');
+const target = nativeBuildTarget();
 const manifest = JSON.parse(readFileSync('npm/mcp-gate/package.json', 'utf8'));
 const cargoToml = readFileSync('Cargo.toml', 'utf8');
 const launcherSource = readFileSync('npm/mcp-gate/bin/mcp-gate.cjs', 'utf8');
 assertReleaseManifest(manifest, cargoToml, launcherSource);
 const executable = `mcp-gate${process.platform === 'win32' ? '.exe' : ''}`;
-const binary = readFileSync(join('target/release', executable));
+const binary = readFileSync(join('target', staticRustTarget(target) ?? '', 'release', executable));
 const roots = [homedir(), process.cwd(), realpathSync(process.cwd()), process.env.CARGO_HOME, process.env.RUSTUP_HOME];
 for (const path of roots) {
   if (path && [path, path.replaceAll('\\', '/')].some(value => binary.includes(Buffer.from(value)))) {
@@ -23,7 +22,7 @@ const output = resolve('dist');
 mkdirSync(output, { recursive: true });
 const native = join(output, `mcp-gate-bin-${target}`);
 mkdirSync(join(native, 'bin'), { recursive: true });
-cpSync(join('target/release', executable), join(native, 'bin', executable));
+writeFileSync(join(native, 'bin', executable), binary);
 chmodSync(join(native, 'bin', executable), 0o755);
 const packageJson = `${JSON.stringify(platformPackage(manifest, target), null, 2)}\n`;
 writeFileSync(join(native, 'package.json'), packageJson);

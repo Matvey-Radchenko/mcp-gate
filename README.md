@@ -52,7 +52,7 @@ You still install and update MCP packages, interpreters, Docker, and browsers. S
 
 The command is `mcp-gate`; `@matvei-radchenko/mcp-gate` is only the npm package name. Installing or updating the package does not switch existing connections by itself: run `setup` from the build you want (an older build downgrades compatibly).
 
-Release targets are **macOS ARM64**, **macOS Intel**, **Windows x64**, **Linux x64**, and **Linux ARM64**. Linux binaries require glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, and later). musl-based systems such as Alpine are not supported.
+Release targets are **macOS ARM64 and Intel**, **Windows x64 and ARM64**, and **Linux x64 and ARM64**. Linux has glibc builds for glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, and later) and static musl builds for distributions such as Alpine.
 
 <details>
 <summary>npm (recommended)</summary>
@@ -70,14 +70,21 @@ npm i -g @matvei-radchenko/mcp-gate
 mcp-gate setup
 ```
 
-The scoped packages are `@matvei-radchenko/mcp-gate` and the platform binaries `@matvei-radchenko/mcp-gate-bin-darwin-arm64`, `@matvei-radchenko/mcp-gate-bin-darwin-x64`, `@matvei-radchenko/mcp-gate-bin-win32-x64`, `@matvei-radchenko/mcp-gate-bin-linux-x64`, and `@matvei-radchenko/mcp-gate-bin-linux-arm64`.
+The `@matvei-radchenko/mcp-gate` launcher selects the matching `@matvei-radchenko/mcp-gate-bin-<target>` optional dependency. On Linux it uses the musl package on musl systems and the glibc package on glibc systems. Each Linux package declares its libc, so npm installs only one of them.
 
 </details>
 
 <details>
 <summary>GitHub Release binary</summary>
 
-Download the archive for your platform from the [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases) page (`mcp-gate-*-darwin-arm64.tar.gz`, `*-darwin-x64.tar.gz`, `*-win32-x64.tar.gz`, `*-linux-x64.tar.gz`, or `*-linux-arm64.tar.gz`) and verify it against the attached `SHA256SUMS`. Put `mcp-gate` on your `PATH`, then run `mcp-gate setup`.
+Download `mcp-gate-<version>-<target>.tar.gz` for your platform and verify it against the attached `SHA256SUMS`. Put `mcp-gate` on your `PATH`, then run `mcp-gate setup`. [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases)
+
+| Platform | Archive target suffix |
+| --- | --- |
+| macOS | `darwin-arm64`, `darwin-x64` |
+| Windows | `win32-x64`, `win32-arm64` |
+| Linux with glibc | `linux-x64`, `linux-arm64` |
+| Linux with musl | `linux-x64-musl`, `linux-arm64-musl` |
 
 </details>
 
@@ -203,7 +210,7 @@ mcp-gate is for one person's machine: you already run stdio MCP servers from Cod
 
 Releases are published on [npm](https://www.npmjs.com/package/@matvei-radchenko/mcp-gate) and [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases). Native login acceptance is **macOS ARM64 only**. The Intel x86_64 check under Rosetta 2 has not been run; Windows x64 was smoke-tested under Wine, not on a native Windows login; Linux is exercised on Ubuntu 22.04 GitHub runners (x64 and ARM64), not as a desktop login test. Stability on native Intel Macs, Windows, and Linux desktops is not guaranteed, and reports are welcome.
 
-CI runs formatting, Clippy, fixtures, and client/browser checks on all supported release platforms; that is not the same thing as a native login test. The evidence table, tested client versions, and recipe constraints are in [docs/compatibility.md](docs/compatibility.md). Automatic shared-ownership recipes currently carry reviewed `macos-aarch64` conditions only.
+CI runs formatting, Clippy, fixtures, and client/browser checks for the release targets. The static musl binaries run the service tests on Ubuntu and the install smoke on Alpine. Automatic shared-ownership recipes currently carry reviewed `macos-aarch64` conditions only. [Compatibility evidence and recipe constraints](docs/compatibility.md)
 
 ## FAQ
 
