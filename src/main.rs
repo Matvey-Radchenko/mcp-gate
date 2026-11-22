@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 mod cli;
 mod connect;
 
+use axum::serve::ListenerExt;
 use clap::Parser;
 use cli::{Action, Cli, apply_json, json_parse_error, plain, print_start};
 use fs2::FileExt;
@@ -195,7 +196,12 @@ async fn serve(config: PathBuf) -> Result<()> {
     let mut shutdown = mcp_gate::platform::ShutdownSignal::new()?;
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
-        .context("Cannot bind gateway listener")?;
+        .context("Cannot bind gateway listener")?
+        .tap_io(|stream| {
+            if let Err(error) = stream.set_nodelay(true) {
+                tracing::warn!(%error, "failed to set TCP_NODELAY on accepted connection");
+            }
+        });
     tracing::info!(listen = %config.listen, tools = catalog.tools.len(), "gateway ready; workers start on demand");
     let gateway = Gateway::new(config, catalog);
     let server = Server::new(gateway.clone(), token);
