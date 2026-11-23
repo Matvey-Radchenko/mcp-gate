@@ -131,6 +131,28 @@ async fn codex_native_discovery_and_helper() {
 }
 
 #[tokio::test]
+async fn health_and_status_report_build_commit_separately_from_version() {
+    let mut h = Harness::generic("session", 4, 10, 5).await;
+    let health = h.health().await.unwrap();
+    let status = tokio::process::Command::new(env!("CARGO_BIN_EXE_mcp-gate"))
+        .args(["status", "--json", "--config"])
+        .arg(&h.config)
+        .output()
+        .await
+        .unwrap();
+    assert!(status.status.success(), "{:?}", status.stderr);
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    for build in [&health, &status["gateway"]] {
+        assert_eq!(build["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            build.get("commit"),
+            mcp_gate::BUILD_COMMIT.map(Value::from).as_ref()
+        );
+    }
+    h.stop();
+}
+
+#[tokio::test]
 async fn auth_lazy_isolation_capacity_and_delete() {
     let mut h = Harness::new(false, 2).await;
     let client = Client::new();

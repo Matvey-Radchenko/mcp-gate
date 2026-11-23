@@ -1,10 +1,13 @@
 //! Public argument parsing and terminal diagnostics; execution stays in main.
 use clap::{Parser, Subcommand};
-use mcp_gate::manage;
-use std::path::PathBuf;
+use mcp_gate::{BUILD_COMMIT, manage};
+use std::{path::PathBuf, sync::LazyLock};
+
+static LONG_VERSION: LazyLock<String> =
+    LazyLock::new(|| format_version(env!("CARGO_PKG_VERSION"), BUILD_COMMIT));
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, long_version = LONG_VERSION.as_str(), about)]
 pub(crate) struct Cli {
     /// Write one JSON document to stdout. Accepted before or after the subcommand.
     #[arg(long, global = true)]
@@ -124,6 +127,14 @@ pub(crate) enum Action {
         output: PathBuf,
     },
 }
+
+fn format_version(version: &str, commit: Option<&str>) -> String {
+    match commit {
+        Some(commit) => format!("{version} ({commit})"),
+        None => version.to_owned(),
+    }
+}
+
 pub(crate) fn apply_json(action: &mut Action, json: bool) {
     match action {
         Action::Setup(options) | Action::Remove { options, .. } => options.json = json,
@@ -216,6 +227,15 @@ pub(crate) fn plain(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_version_with_or_without_commit() {
+        assert_eq!(
+            format_version("0.1.2", Some("2da2402f9")),
+            "0.1.2 (2da2402f9)"
+        );
+        assert_eq!(format_version("0.1.2", None), "0.1.2");
+    }
 
     #[test]
     fn connect_parses_both_client_binding_argument_orders() {

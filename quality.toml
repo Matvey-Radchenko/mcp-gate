@@ -5,6 +5,10 @@ path = "src"
 max_lines = 400
 
 [[limits]]
+path = "build.rs"
+max_lines = 400
+
+[[limits]]
 path = "tests"
 max_lines = 800
 

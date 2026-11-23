@@ -13,7 +13,7 @@ const version = JSON.parse(readFileSync('npm/mcp-gate/package.json')).version;
 assert.match(version, /^\d+\.\d+\.\d+$/);
 rmSync(directory, { recursive: true, force: true });
 mkdirSync(directory, { recursive: true });
-for (const name of ['Cargo.toml', 'Cargo.lock', 'src', 'xtask', 'recipes']) {
+for (const name of ['Cargo.toml', 'Cargo.lock', 'build.rs', 'src', 'xtask', 'recipes']) {
   cpSync(join(root, name), join(directory, name), { recursive: true });
 }
 const fixtureVersion = `${version}-compat-fixture`;
