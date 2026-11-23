@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Release archives and npm packages for Windows ARM64 and static Linux musl on x64 and ARM64. The musl builds have no glibc dependency and run on distributions such as Alpine. The musl packages declare `libc: ["musl"]`, so glibc hosts never download them, and the Linux npm launcher picks the package matching the host libc.
+- Shared backends can opt into parallel execution with `max_concurrent_calls`. Calls stay serial by default, and a failure on an overlapping call switches the gateway back to serial execution until restart. `mcp-gate isolate` removes `max_concurrent_calls`, because session-owned backends always run serially.
+- Setup supports Claude Desktop on macOS and Windows via the `connect` stdio bridge.
+- Windows setup can replace the stable client executable while headers helpers or stdio bridges are running.
+- Setup uses embedded client descriptors to discover Codex, OpenCode, and Claude Code configurations and render authenticated loopback HTTP bindings.
 - Fixed: gateway HTTP listeners set `TCP_NODELAY` on accepted connections, so loopback Streamable HTTP calls no longer wait ~40 ms for a delayed ACK.
 - `mcp-gate share <name>` and `mcp-gate isolate <name>` show shareability advice from the saved catalog and explicitly set a managed gateway's ownership. They support `--dry-run`, `--yes`, and `--json`, and print the command to apply the change by restarting the gateway. Unknown servers stay session-owned, `readOnlyHint` is not treated as evidence, and saving requires the gateway to run the same mcp-gate binary.
 - Catalog refreshes preserve explicit ownership choices. Setup continues to match new clients by their proposed ownership mode.
