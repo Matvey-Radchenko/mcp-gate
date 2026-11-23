@@ -25,13 +25,22 @@ field rather than interpreting it with different behavior.
   `max_concurrent_calls` above one, an error on an overlapping request switches
   the slot to serial execution, including after worker replacement.
 - Cancelling a queued request never dispatches it or stops another client's call.
-- Dropping an HTTP response alone does not cancel its handler. Explicit MCP
-  cancellation or session termination can cancel it. Cancellation is best-effort;
-  an MCP cancellation notification has no acknowledgement proving quiescence.
-- An interrupted shared call, deadline or broken backend transport retires that
-  worker generation. The failed action is **never retried**. Its external outcome
-  can be unknown even after the local process exits: verify writes before issuing
-  a replacement or a dependent write.
+- Explicit MCP cancellation, a disconnected HTTP POST response, or session
+  termination ends the originating client's wait for a shared call. For an
+  already dispatched call, the gateway sends a best-effort
+  `notifications/cancelled` with the upstream request ID. Dropping a standalone
+  GET stream does not cancel outstanding POSTs. Session-owned backends keep
+  their session lifetime rules.
+- A cancelled shared call holds its execution permit and admission slot until
+  the backend replies or the original call deadline expires. The gateway
+  discards the late reply. The cancellation notification is not an
+  acknowledgement that execution stopped, and client cancellation alone does
+  not change the worker generation or trigger recovery.
+- A missed call deadline (even after client cancellation), a broken backend
+  connection, or a backend protocol failure retires the worker generation. The
+  failed action is **never retried**. Its external outcome can be unknown even
+  after the local process exits. Verify writes before issuing a replacement or
+  a dependent write.
 - Cleanup waits for already dispatched calls and holds all execution permits
   while closing the protocol and owned process group/Windows job. Startup
   abandoned before producing a Worker retains the same
@@ -63,9 +72,10 @@ daemon PID and generation, never tool arguments/results or peer error text. It i
 private and rotates at 64 KiB to one previous file. Journal failure is reported to
 the service log. Previous history is diagnostic only; it never restores actions.
 
-Tests in `tests/recovery.rs` exercise timeout/cancel/crash recovery, queued-call
-rejection, concurrent fresh clients, no replay, late cleanup, catalog blocks,
-discovery outages, network error results, transport disconnection and cooldown.
+Tests in `tests/recovery.rs` exercise cancellation and late replies, deadline and
+crash recovery, queued-call rejection, concurrent fresh clients, no replay, late
+cleanup, catalog blocks, discovery outages, network error results, HTTP
+disconnection and cooldown.
 These ordinary tests run in `cargo xtask check` and the existing native CI matrix.
 Native Intel/Windows and real-backend results must be recorded separately from
 local mock coverage before publication.

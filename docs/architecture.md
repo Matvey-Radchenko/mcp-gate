@@ -191,8 +191,10 @@ takes every execution permit before the worker mutex. Failure blocks new
 dispatches for that generation and cleanup waits for admitted calls to finish.
 A broken upstream transport drops all pending responses.
 
-rmcp allocates IDs and progress tokens upstream. The dispatch task uses its own
-request handle to return results, filter progress and forward cancellation.
+rmcp allocates IDs and progress tokens upstream. The shared dispatch task uses
+its request handle to return results, filter progress and forward cancellation.
+After client cancellation it retains the handle and execution permit until the
+upstream reply or deadline, discarding any late reply.
 An error on an overlapping call switches the slot to acquiring all execution
 permits for each subsequent call. This serial fallback lasts for the lifetime
 of the gateway process, including across backend generations.

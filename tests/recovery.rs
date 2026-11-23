@@ -6,8 +6,99 @@
 mod support;
 use mcp_gate::config::{Config, SharedRecovery};
 use serde_json::{Value, json};
-use std::{sync::atomic::Ordering, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::Ordering,
+    time::Duration,
+};
 use support::*;
+
+const CANCEL_ID: u64 = 900;
+const WAIT: Duration = Duration::from_secs(8);
+
+struct CancellationFixture {
+    gateway: Harness,
+    wire: PathBuf,
+    started: PathBuf,
+    release: PathBuf,
+}
+
+impl CancellationFixture {
+    async fn new(timeout: u64, policy: SharedRecovery) -> Self {
+        let gateway = Harness::shared_with(1, |config| {
+            config.call_timeout_seconds = timeout;
+            config.queue_timeout_seconds = 1;
+            config.shared_recovery = policy;
+            config
+                .backend
+                .env
+                .insert("MOCK_IGNORE_CANCELLATION".into(), "1".into());
+            for (key, name) in [
+                ("MOCK_RAW_WIRE_FILE", "wire"),
+                ("MOCK_ECHO_JOURNAL", "echo-events"),
+                ("MOCK_ECHO_GATE_DIR", "echo-gates"),
+            ] {
+                let path = config.state_dir.with_file_name(name);
+                config
+                    .backend
+                    .env
+                    .insert(key.into(), path.to_str().unwrap().into());
+            }
+        })
+        .await;
+        let wire = gateway.config.with_file_name("wire");
+        let started = gateway.config.with_file_name("echo-events");
+        let gates = gateway.config.with_file_name("echo-gates");
+        std::fs::create_dir(&gates).unwrap();
+        Self {
+            gateway,
+            wire,
+            started,
+            release: gates.join("0"),
+        }
+    }
+
+    async fn start_call(&self, client: &Session) -> (reqwest::Response, Value) {
+        let response = client
+            .post(json!({
+                "jsonrpc":"2.0","id":CANCEL_ID,"method":"tools/call",
+                "params":{"name":"echo_delay","arguments":{"nonce":0,"hold":true}}
+            }))
+            .await;
+        let start = observe(&self.started, |entry| entry["event"] == "start").await;
+        (response, start["id"].clone())
+    }
+
+    async fn assert_forwarded(&self, upstream_id: &Value) {
+        let notification = observe(&self.wire, |entry| {
+            entry["method"] == "notifications/cancelled"
+        })
+        .await;
+        assert_ne!(upstream_id, CANCEL_ID);
+        assert_eq!(&notification["params"]["requestId"], upstream_id);
+    }
+}
+
+async fn observe(path: &Path, matches: impl Fn(&Value) -> bool) -> Value {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if let Some(entry) = records(path).into_iter().find(&matches) {
+                return entry;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("expected a backend fixture event")
+}
+
+async fn cancel(client: &Session) {
+    let notification = client
+        .post(json!({"jsonrpc":"2.0","method":"notifications/cancelled",
+            "params":{"requestId":CANCEL_ID}}))
+        .await;
+    assert_eq!(notification.status(), reqwest::StatusCode::ACCEPTED);
+}
 
 async fn recovering(timeout: u64) -> Harness {
     let mut h = Harness::generic("shared", 4, timeout, 15).await;
@@ -34,14 +125,18 @@ async fn recovering(timeout: u64) -> Harness {
 }
 
 async fn ready(h: &Harness) -> Value {
+    wait_for_state(h, "dormant").await
+}
+
+async fn wait_for_state(h: &Harness, state: &str) -> Value {
     for _ in 0..200 {
         let health = h.health().await.unwrap();
-        if health["runtime"]["shared_state"] == "dormant" {
+        if health["runtime"]["shared_state"] == state {
             return health;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("Gateway did not recover: {:?}", h.health().await);
+    panic!("Gateway did not reach {state}: {:?}", h.health().await);
 }
 
 async fn pause(session: &Session) -> tokio::task::JoinHandle<Value> {
@@ -115,31 +210,121 @@ async fn timeout_recovers_without_replaying_and_rejects_old_queue() {
 }
 
 #[tokio::test]
-async fn explicit_cancellation_and_client_close_recover() {
-    for close in [false, true] {
-        let mut h = recovering(15).await;
-        let a = h.session().await;
-        let pid = mock_value(&a.call("state", json!({})).await)["pid"]
-            .as_u64()
-            .unwrap() as u32;
-        let id = a.next.load(Ordering::SeqCst);
-        let running = pause(&a).await;
-        if close {
-            a.close().await;
+async fn shared_cancellation_drains_without_recovery() {
+    let mut f = CancellationFixture::new(15, SharedRecovery::Manual).await;
+    let (a, b) = tokio::join!(f.gateway.session(), f.gateway.session());
+    let first = mock_value(&a.call("state", json!({"value":"retained"})).await);
+    let (response, upstream_id) = f.start_call(&a).await;
+    cancel(&a).await;
+    assert_cancelled_stream(&a, response).await;
+    assert_call_drains(&f, &b, &upstream_id, &first).await;
+    f.gateway.stop();
+}
+
+#[tokio::test]
+async fn shared_session_delete_drains_without_recovery() {
+    let mut f = CancellationFixture::new(15, SharedRecovery::Manual).await;
+    let (a, b) = tokio::join!(f.gateway.session(), f.gateway.session());
+    let first = mock_value(&a.call("state", json!({"value":"retained"})).await);
+    let (response, upstream_id) = f.start_call(&a).await;
+    a.close().await;
+    assert_cancelled_stream(&a, response).await;
+    assert_call_drains(&f, &b, &upstream_id, &first).await;
+    f.gateway.stop();
+}
+
+#[tokio::test]
+async fn shared_http_disconnect_drains_without_recovery() {
+    let mut f = CancellationFixture::new(15, SharedRecovery::Manual).await;
+    let (a, b) = tokio::join!(f.gateway.session(), f.gateway.session());
+    let first = mock_value(&a.call("state", json!({"value":"retained"})).await);
+    let (response, upstream_id) = f.start_call(&a).await;
+    drop(response);
+    assert_call_drains(&f, &b, &upstream_id, &first).await;
+    f.gateway.stop();
+}
+
+async fn assert_cancelled_stream(client: &Session, response: reqwest::Response) {
+    let result = tokio::time::timeout(WAIT, client.read_message(response, Some(CANCEL_ID)))
+        .await
+        .expect("cancelled client should stop waiting before the backend replies");
+    assert_eq!(result, json!({"transportEnded":true}));
+}
+
+async fn assert_call_drains(
+    f: &CancellationFixture,
+    other: &Session,
+    upstream_id: &Value,
+    first: &Value,
+) {
+    f.assert_forwarded(upstream_id).await;
+    // The frontend is finished while the backend is still holding the gate.
+    let queued = other
+        .call("state", json!({"value":"must-not-execute"}))
+        .await;
+    assert!(content(&queued).contains("queue wait timed out"));
+    let health = f.gateway.health().await.unwrap();
+    assert_eq!(health["runtime"]["shared_state"], "running");
+    assert_eq!(health["workers"], 1);
+    assert!(health["runtime"]["recovery"]["last_failure"].is_null());
+
+    // Reuse the cancelled client's downstream ID on a different session.
+    let response = other
+        .post(json!({
+            "jsonrpc":"2.0","id":CANCEL_ID,"method":"tools/call","params":{"name":"state"}
+        }))
+        .await;
+    std::fs::write(&f.release, []).unwrap();
+    let response = other.read_message(response, Some(CANCEL_ID)).await;
+    assert_eq!(response["id"], CANCEL_ID);
+    let result = mock_value(&response);
+    assert_eq!(result["pid"], first["pid"]);
+    assert_eq!(result["value"], "retained");
+    let runtime = f.gateway.health().await.unwrap()["runtime"].clone();
+    assert_eq!(runtime["shared_state"], "running");
+    assert_eq!(runtime["recovery"]["generation"], 0);
+    assert!(runtime["recovery"]["last_failure"].is_null());
+}
+
+#[tokio::test]
+async fn cancelled_call_without_reply_fails_at_deadline() {
+    for (policy, expected) in [
+        (SharedRecovery::Manual, "failed"),
+        (SharedRecovery::Restart, "dormant"),
+    ] {
+        let mut f = CancellationFixture::new(5, policy).await;
+        let (a, b) = tokio::join!(f.gateway.session(), f.gateway.session());
+        let first = mock_value(&a.call("state", json!({})).await);
+        let (response, upstream_id) = f.start_call(&a).await;
+        cancel(&a).await;
+        assert_cancelled_stream(&a, response).await;
+        f.assert_forwarded(&upstream_id).await;
+        assert_eq!(
+            f.gateway.health().await.unwrap()["runtime"]["shared_state"],
+            "running"
+        );
+        // Leave the mock call gated. Only its original deadline should fail the worker.
+        let health = wait_for_state(&f.gateway, expected).await;
+        assert_eq!(health["workers"], 0);
+        assert_eq!(
+            health["runtime"]["recovery"]["last_failure"]["reason"],
+            "timeout"
+        );
+        let next = b.call("state", json!({})).await;
+        if policy == SharedRecovery::Manual {
+            assert!(content(&next).contains("restart the gateway"));
         } else {
-            a.post(json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id}})).await;
+            assert_ne!(mock_value(&next)["pid"], first["pid"]);
         }
-        tokio::time::timeout(Duration::from_secs(5), running)
-            .await
-            .unwrap()
-            .unwrap();
-        let status = ready(&h).await;
-        assert!(matches!(
-            status["runtime"]["recovery"]["last_failure"]["reason"].as_str(),
-            Some("cancelled" | "handler_dropped")
-        ));
-        assert_fresh_clients(&h, pid).await;
-        h.stop();
+        assert_eq!(
+            records(&f.started)
+                .iter()
+                .filter(|entry| entry["event"] == "start")
+                .count(),
+            1,
+            "the cancelled call was never replayed"
+        );
+        f.gateway.stop();
     }
 }
 
@@ -189,24 +374,6 @@ async fn network_errors_preserve_backend_and_resume_when_connection_returns() {
     let later = mock_value(&a.call("state", json!({})).await);
     assert_eq!(later["pid"], first["pid"]);
     assert_eq!(later["value"], "retained");
-    assert!(h.health().await.unwrap()["runtime"]["recovery"]["last_failure"].is_null());
-    h.stop();
-}
-
-#[tokio::test]
-async fn dropped_http_response_keeps_shared_call_and_process() {
-    let mut h = recovering(10).await;
-    let a = h.session().await;
-    let first = mock_value(&a.call("state", json!({})).await);
-    let get = a.req(reqwest::Method::GET).send().await.unwrap();
-    let response = a.post(json!({"jsonrpc":"2.0","id":900,"method":"tools/call","params":{"name":"pause","arguments":{"delay_ms":1200}}})).await;
-    drop(response);
-    drop(get);
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(
-        mock_value(&a.call("state", json!({})).await)["pid"],
-        first["pid"]
-    );
     assert!(h.health().await.unwrap()["runtime"]["recovery"]["last_failure"].is_null());
     h.stop();
 }

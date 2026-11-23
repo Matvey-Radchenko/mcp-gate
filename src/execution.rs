@@ -1,12 +1,15 @@
 //! Shared admission and lifecycle for all executable MCP operations.
 use crate::{
-    config::SharedClientRoots, dispatch::failure, gateway::Handler, recovery::Reason,
-    worker::Worker,
+    concurrency::ActiveCall,
+    config::SharedClientRoots,
+    dispatch::{RequestCancellation, failure},
+    gateway::Handler,
+    recovery::Reason,
+    worker::{RequestPeer, Worker},
 };
 use rmcp::{RoleServer, model::*, service::RequestContext};
 use std::{future::Future, sync::atomic::Ordering, time::Duration};
 use tokio::time::Instant;
-use tokio_util::sync::CancellationToken;
 
 impl Handler {
     pub(crate) async fn execute(
@@ -37,7 +40,7 @@ impl Handler {
                 "Shared mode does not accept client roots. Use session mode for client-specific filesystem context.",
             );
         }
-        let Ok(_admission) = backend.admission.try_acquire() else {
+        let Ok(admission) = backend.admission.clone().try_acquire_owned() else {
             return failure(
                 is_tool,
                 "Backend request queue is full; no action was dispatched.",
@@ -45,25 +48,33 @@ impl Handler {
         };
         let deadline =
             Instant::now().checked_add(Duration::from_secs(gateway.config.queue_timeout_seconds));
-        let (mut call, upstream) = loop {
-            match self.prepare_dispatch(generation, deadline, &context).await {
+        let cancellation = RequestCancellation::new(&context);
+        let (call, upstream) = loop {
+            match self
+                .prepare_dispatch(generation, deadline, &context, &cancellation)
+                .await
+            {
                 Ok(Some(prepared)) => break prepared,
                 Ok(None) => continue, // Degraded while waiting for a single permit.
                 Err(message) => return failure(is_tool, message),
             }
         };
-        let result = crate::dispatch::invoke(
-            upstream,
-            backend,
-            &gateway.config,
-            &mut call,
-            request,
-            context,
-        )
-        .await;
-        // Idle time starts when the call finishes, not when it was queued.
-        backend.touch();
-        result
+        let timeout = Duration::from_secs(gateway.config.call_timeout_seconds);
+        if gateway.shared.is_some() {
+            crate::dispatch::invoke_shared(
+                upstream,
+                backend.clone(),
+                call,
+                admission,
+                timeout,
+                request,
+                context,
+            )
+            .await
+        } else {
+            crate::dispatch::invoke_session(upstream, backend, call, timeout, request, context)
+                .await
+        }
     }
 
     async fn prepare_dispatch(
@@ -71,21 +82,16 @@ impl Handler {
         generation: u64,
         deadline: Option<Instant>,
         context: &RequestContext<RoleServer>,
-    ) -> Result<
-        Option<(
-            crate::concurrency::ActiveCall<'_>,
-            crate::worker::RequestPeer,
-        )>,
-        &'static str,
-    > {
+        cancellation: &RequestCancellation,
+    ) -> Result<Option<(ActiveCall, RequestPeer)>, &'static str> {
         let gateway = &self.session.gateway;
         let backend = &self.session.backend;
-        let permit = wait_in_queue(backend.execution.acquire(), deadline, &context.ct).await?;
+        let permit = wait_in_queue(backend.execution.acquire(), deadline, cancellation).await?;
         // Permits always precede the mutex. Only preparation owns the mutex.
         // The permit alone keeps the worker alive for the rest of the call.
         let mut slot = match backend.worker.try_lock() {
             Ok(slot) => slot,
-            Err(_) => wait_in_queue(backend.worker.lock(), deadline, &context.ct).await?,
+            Err(_) => wait_in_queue(backend.worker.lock(), deadline, cancellation).await?,
         };
         if gateway.stopping.load(Ordering::SeqCst) {
             return Err("Gateway is stopping");
@@ -107,7 +113,7 @@ impl Handler {
             // calls release their permits.
             backend.verify_catalog(gateway, worker).await?;
         }
-        if context.ct.is_cancelled() {
+        if cancellation.is_cancelled() {
             return Err("Request cancelled before execution");
         }
         let upstream = slot
@@ -138,7 +144,7 @@ impl Handler {
 async fn wait_in_queue<T>(
     wait: impl Future<Output = T>,
     deadline: Option<Instant>,
-    cancellation: &CancellationToken,
+    cancellation: &RequestCancellation,
 ) -> Result<T, &'static str> {
     let queued = async {
         match deadline {

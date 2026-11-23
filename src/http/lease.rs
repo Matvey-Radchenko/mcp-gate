@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::OwnedSemaphorePermit;
+use tokio_util::sync::{CancellationToken, DropGuard};
 
 #[cfg(test)]
 mod tests;
@@ -19,13 +20,21 @@ mod tests;
 // Shared backend shutdown has its own independently configured timer.
 const SHARED_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
 
+#[derive(PartialEq, Eq)]
+enum LeaseState {
+    Open,
+    Closing,
+    Removed,
+}
+
 pub(super) struct Lease {
     pub streams: usize,
     pub requests: usize,
     pub disconnected: Option<Instant>,
     pub last_activity: Instant,
-    pub closing: bool,
+    pub termination: CancellationToken,
     pub active: usize,
+    state: LeaseState,
     ownership: Ownership,
     capacity: Option<OwnedSemaphorePermit>,
 }
@@ -38,15 +47,47 @@ impl Lease {
             requests: 0,
             disconnected: None,
             last_activity: Instant::now(),
-            closing: false,
+            termination: CancellationToken::new(),
             active: 0,
+            state: LeaseState::Open,
             ownership,
             capacity: Some(capacity),
         }
     }
 
+    fn is_quiescent(&self) -> bool {
+        self.streams == 0 && self.requests == 0 && self.active == 0
+    }
+
     fn can_close(&self) -> bool {
-        !self.closing && self.streams == 0 && self.requests == 0 && self.active == 0
+        !self.is_closing() && self.is_quiescent()
+    }
+
+    pub(super) fn is_closing(&self) -> bool {
+        self.state != LeaseState::Open
+    }
+
+    fn mark_closing(&mut self) {
+        // Exclude new admissions and end existing POST waits at the same
+        // transition. Shared dispatch keeps its own upstream execution permit.
+        if !self.is_closing() {
+            self.state = LeaseState::Closing;
+            self.termination.cancel();
+        }
+    }
+
+    fn mark_removed(&mut self) {
+        self.mark_closing();
+        self.state = LeaseState::Removed;
+        self.release_removed_capacity();
+    }
+
+    fn release_removed_capacity(&mut self) {
+        // Cached SDK extensions can retain a lease after the SDK has removed
+        // its ID. Only tracked bodies and handlers still need its capacity.
+        if self.state == LeaseState::Removed && self.is_quiescent() {
+            drop(self.capacity.take());
+        }
     }
 
     fn expiry(
@@ -86,7 +127,7 @@ pub(super) async fn reap_sessions(state: &HttpState, now: Instant) {
     let backend_idle = state.gateway.config.idle_timeout();
     let grace = Duration::from_secs(state.gateway.config.disconnect_grace_seconds);
     // Mark closing while holding the lease lock, excluding new HTTP admissions.
-    // Release all blocking locks before SDK cancellation and backend cleanup.
+    // Release all blocking locks before awaiting SDK teardown.
     let expired: Vec<_> = state
         .leases
         .lock()
@@ -95,7 +136,7 @@ pub(super) async fn reap_sessions(state: &HttpState, now: Instant) {
         .filter_map(|(id, lease)| {
             let mut lease = lease.lock().unwrap();
             let reason = lease.expiry(now, backend_idle, grace)?;
-            lease.closing = true;
+            lease.mark_closing();
             Some((id.clone(), reason))
         })
         .collect();
@@ -124,7 +165,7 @@ pub(super) fn mark_idle_shared_sessions(state: &HttpState) -> Option<Vec<String>
         leases
             .into_iter()
             .map(|(id, mut lease)| {
-                lease.closing = true;
+                lease.mark_closing();
                 id.clone()
             })
             .collect(),
@@ -135,13 +176,17 @@ pub(super) async fn close_session(state: &HttpState, id: &str, reason: &'static 
     if state.manager.close_session(&id.into()).await.is_err() {
         tracing::warn!(reason, "HTTP session could not be closed by the SDK");
     }
-    if let Some(lease) = state.leases.lock().unwrap().remove(id) {
-        // The SDK removes the session ID before signalling its transport.
-        // A closing lease has no active work and cannot admit any, so cached
-        // SDK request extensions need not keep its capacity after removal.
-        drop(lease.lock().unwrap().capacity.take());
-    }
+    remove_session(state, id);
     tracing::info!(reason, "HTTP session lease removed");
+}
+
+// The SDK has removed the session ID by this point. Mark before unlocking the
+// map so requests that already cloned the lease also see the closing state.
+pub(super) fn remove_session(state: &HttpState, id: &str) {
+    let mut leases = state.leases.lock().unwrap();
+    if let Some(lease) = leases.remove(id) {
+        lease.lock().unwrap().mark_removed();
+    }
 }
 
 pub(super) struct ConnectionGuard {
@@ -155,7 +200,7 @@ impl Activity {
         let mut lease = self.0.lock().unwrap();
         // The HTTP response may have been dropped before the SDK dispatches
         // its handler. A session selected for closure cannot start new work.
-        if lease.closing {
+        if lease.is_closing() {
             return None;
         }
         lease.active += 1;
@@ -171,6 +216,7 @@ impl Drop for ActiveCall {
         let mut lease = self.0.lock().unwrap();
         lease.last_activity = Instant::now();
         lease.active -= 1;
+        lease.release_removed_capacity();
     }
 }
 impl Drop for ConnectionGuard {
@@ -194,11 +240,36 @@ impl Drop for ConnectionGuard {
                 value.disconnected = Some(now);
             }
         }
+        value.release_removed_capacity();
     }
 }
 pub(super) struct TrackedBody {
-    pub body: Body,
-    pub _guard: Option<ConnectionGuard>,
+    body: Body,
+    _guard: Option<ConnectionGuard>,
+    disconnect: Option<DropGuard>,
+}
+impl TrackedBody {
+    pub(super) fn new(
+        body: Body,
+        guard: Option<ConnectionGuard>,
+        disconnect: Option<DropGuard>,
+    ) -> Self {
+        let mut tracked = Self {
+            body,
+            _guard: guard,
+            disconnect,
+        };
+        if tracked.body.is_end_stream() {
+            tracked.complete();
+        }
+        tracked
+    }
+
+    fn complete(&mut self) {
+        if let Some(disconnect) = self.disconnect.take() {
+            disconnect.disarm();
+        }
+    }
 }
 impl HttpBody for TrackedBody {
     type Data = Bytes;
@@ -207,7 +278,13 @@ impl HttpBody for TrackedBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
-        Pin::new(&mut self.body).poll_frame(cx)
+        let frame = Pin::new(&mut self.body).poll_frame(cx);
+        if matches!(frame, Poll::Ready(None))
+            || (matches!(frame, Poll::Ready(Some(Ok(_)))) && self.body.is_end_stream())
+        {
+            self.complete();
+        }
+        frame
     }
     fn is_end_stream(&self) -> bool {
         self.body.is_end_stream()

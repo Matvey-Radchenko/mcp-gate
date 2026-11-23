@@ -204,25 +204,6 @@ async fn queued_cancellation_preserves_shared_worker_and_does_not_dispatch() {
 }
 
 #[tokio::test]
-async fn active_cancellation_fails_shared_state_instead_of_overlapping_calls() {
-    let mut h = Harness::generic("shared", 2, 10, 5).await;
-    let a = h.session().await;
-    let id = a.next.load(Ordering::SeqCst);
-    let running = pause(&a, 10000).await;
-    a.post(json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id}}))
-        .await;
-    tokio::time::timeout(Duration::from_secs(3), running)
-        .await
-        .unwrap()
-        .unwrap();
-    h.workers(0).await;
-    let b = h.session().await;
-    assert!(content(&b.call("state", json!({})).await).contains("restart the gateway"));
-    h.workers(0).await;
-    h.stop();
-}
-
-#[tokio::test]
 async fn active_timeout_fails_shared_state_and_new_clients_cannot_respawn_it() {
     let mut h = Harness::generic("shared", 2, 1, 5).await;
     let a = h.session().await;

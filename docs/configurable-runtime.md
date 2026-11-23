@@ -33,9 +33,12 @@ No live service deployment or client configuration changes are part of developme
   available with idle expiry disabled, and ignores the open GET stream exception.
   Existing disconnect grace still closes HTTP sessions after a lost GET when no
   executable call is active.
-- Cancellation or timeout of an active shared call fails its worker generation.
-  New dispatches are blocked, and calls already in flight can finish within
-  their own `call_timeout_seconds` before the gateway reaps the worker.
+- Client cancellation ends the frontend wait for an active shared call. The
+  gateway forwards cancellation by upstream request ID and holds the slot until
+  the backend replies or the original `call_timeout_seconds` expires. A reply
+  received after cancellation is discarded. A timeout fails the worker
+  generation, blocks new dispatches, and lets other in-flight calls drain
+  within their own deadlines before the gateway reaps the worker.
 - A backend crash promptly fails all in-flight requests with a connection
   error. Session clients can reconnect. Shared mode defaults to manual gateway
   restart, with an explicit [recovery option](backend-recovery.md) for reviewed
@@ -55,9 +58,10 @@ that request's upstream ID. Explicit HTTP cancellation ends that request's SSE
 stream. If a client falls behind, the bounded progress buffer can drop
 notifications while preserving routing for delivered events.
 
-If an overlapping call returns a tool error or JSON-RPC error, times out, is
-cancelled, or loses its transport, the gateway falls back to serial execution
-after in-flight calls drain. Errors in calls that ran alone leave the
+If an overlapping call returns a tool or JSON-RPC error, times out, or
+encounters a backend connection or protocol failure, the gateway falls back to
+serial execution after in-flight calls drain. Client cancellation alone leaves
+the concurrency setting in effect. Errors in calls that ran alone leave the
 concurrency setting in effect. The fallback survives worker replacement and
 resets on gateway restart. With parallel execution configured, health and JSON
 status report `max_concurrent_calls`, effective `concurrency_per_backend` and
@@ -253,8 +257,8 @@ rendered prompt results. Upstream pagination is flattened into one local snapsho
 Subscriptions and listChanged are not advertised by the immutable frontend catalog.
 Unknown prompt names are rejected locally; resource URI/template resolution remains
 the backend's responsibility. Tools keep `isError` execution failures; resource and
-prompt failures use JSON-RPC errors. All three share the same queue and fail-closed
-ownership policy, including timeout/cancellation; none is automatically retried.
+prompt failures use JSON-RPC errors. All three share the same queue, cancellation,
+and recovery policy. The gateway never automatically retries them.
 
 The UI fallback follows [MCP extension negotiation](https://modelcontextprotocol.io/extensions/overview):
 an advertisement alone is not a requirement to implement the extension. The gateway

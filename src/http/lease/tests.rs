@@ -144,7 +144,7 @@ fn shared_activity_protects_the_lease_and_request_completion_refreshes_its_ttl()
     drop(request);
     let mut value = lease.lock().unwrap();
     assert_eq!(value.expiry(original_deadline, None, Duration::ZERO), None);
-    value.closing = true;
+    value.mark_closing();
     drop(value);
     assert!(activity.start().is_none());
 }
@@ -235,15 +235,24 @@ async fn shared_session_reaps_at_http_ttl_and_its_id_returns_404() {
 
     let state = &server.state;
     let lease = state.leases.lock().unwrap()[&id].clone();
-    let deadline = lease.lock().unwrap().last_activity + SHARED_IDLE_TTL;
+    let (deadline, cancellation) = {
+        let lease = lease.lock().unwrap();
+        (
+            lease.last_activity + SHARED_IDLE_TTL,
+            lease.termination.child_token(),
+        )
+    };
     let sdk_id = id.clone().into();
     reap_sessions(state, deadline - Duration::from_secs(1)).await;
     assert!(state.manager.has_session(&sdk_id).await.unwrap());
     assert_eq!(state.capacity.available_permits(), 0);
+    assert!(!cancellation.is_cancelled());
     reap_sessions(state, deadline).await;
     assert!(!state.manager.has_session(&sdk_id).await.unwrap());
     assert_eq!(state.capacity.available_permits(), 1);
     assert!(state.leases.lock().unwrap().is_empty());
+    assert!(cancellation.is_cancelled());
+    assert!(Activity(lease).start().is_none());
 
     let ping = json!({"jsonrpc":"2.0","id":1,"method":"ping"});
     let response = route(
@@ -264,6 +273,7 @@ async fn shared_maintenance_conflicts_while_busy_and_closes_the_lease_when_idle(
     let mut server = shared_server();
     let id = initialize(&mut server.router).await;
     let lease = server.state.leases.lock().unwrap()[&id].clone();
+    let cancellation = lease.lock().unwrap().termination.child_token();
     let running = Activity(lease.clone()).start().unwrap();
     let router = &mut server.router;
     assert_eq!(
@@ -280,7 +290,10 @@ async fn shared_maintenance_conflicts_while_busy_and_closes_the_lease_when_idle(
     );
     drop(stream);
 
+    assert!(!cancellation.is_cancelled());
     assert_eq!(maintenance(router, Method::POST).await, StatusCode::OK);
+    assert!(cancellation.is_cancelled());
+    assert!(Activity(lease).start().is_none());
     assert_eq!(
         route(router, Method::GET, "/mcp", Some(&id), None)
             .await
@@ -314,4 +327,53 @@ async fn shared_maintenance_waits_for_the_initialization_response_to_finish() {
         StatusCode::OK
     );
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn delete_terminates_the_lease_and_keeps_capacity_for_active_handlers() {
+    let mut server = shared_server();
+    let id = initialize(&mut server.router).await;
+    let state = &server.state;
+    let lease = state.leases.lock().unwrap()[&id].clone();
+    let cancellation = lease.lock().unwrap().termination.child_token();
+    let activity = Activity(lease);
+    let running = activity.start().unwrap();
+
+    let response = route(&mut server.router, Method::DELETE, "/mcp", Some(&id), None).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    drop(response);
+    assert!(state.leases.lock().unwrap().is_empty());
+    assert!(cancellation.is_cancelled());
+    assert!(activity.start().is_none());
+    assert_eq!(state.capacity.available_permits(), 0);
+    drop(running);
+    assert_eq!(state.capacity.available_permits(), 1);
+    drop(activity);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn tracked_body_cancels_only_on_incomplete_drop() {
+    let session = CancellationToken::new();
+    let abandoned = session.child_token();
+    drop(TrackedBody::new(
+        Body::from("unread"),
+        None,
+        Some(abandoned.clone().drop_guard()),
+    ));
+    assert!(abandoned.is_cancelled());
+    assert!(!session.is_cancelled());
+
+    let completed = session.child_token();
+    let mut body = TrackedBody::new(
+        Body::from("read"),
+        None,
+        Some(completed.clone().drop_guard()),
+    );
+    let frame = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await;
+    assert!(matches!(frame, Some(Ok(_))));
+    drop(body);
+    assert!(!completed.is_cancelled());
+    session.cancel();
+    assert!(completed.is_cancelled());
 }
