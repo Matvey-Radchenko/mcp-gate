@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed: idle shared HTTP sessions no longer pile up. A shared session with no GET stream, in-flight request or active call closes after 30 minutes of inactivity; its old id gets 404 and the client re-initializes. Backend `idle_seconds` is unchanged. Maintenance on a shared gateway closes quiescent sessions instead of returning 409, so setup no longer reports "migration pending; gateway busy" because of abandoned clients.
+- Fixed: one client cancelling or disconnecting from its own call no longer blocks a shared backend for everyone. The gateway forwards `notifications/cancelled` upstream, keeps the execution slot until the backend replies or the call deadline expires, and discards the late reply. Missed deadlines, broken transport and protocol failures still trigger the recovery policy; nothing is replayed.
+- Fixed: the shareability advisor recommends session ownership only for real per-client selection changes such as browser page or tab selection. Tool names that merely mention project, page, context or configure (Atlassian, Telegram, TestOps) no longer count. `share`, `isolate` and `idle` say "Nothing to change" when the setting is already saved, without a restart command.
+- `mcp-gate --version` shows the git commit for builds from a checkout, e.g. `0.1.2 (2da2402f9)`, and health and `status --json` report it as `commit`. Packaged release builds keep the plain version.
 - Release archives and npm packages for Windows ARM64 and static Linux musl on x64 and ARM64. The musl builds have no glibc dependency and run on distributions such as Alpine. The musl packages declare `libc: ["musl"]`, so glibc hosts never download them, and the Linux npm launcher picks the package matching the host libc.
 - Shared backends can opt into parallel execution with `max_concurrent_calls`. Calls stay serial by default, and a failure on an overlapping call switches the gateway back to serial execution until restart. `mcp-gate isolate` removes `max_concurrent_calls`, because session-owned backends always run serially.
 - Setup supports Claude Desktop on macOS and Windows via the `connect` stdio bridge.
