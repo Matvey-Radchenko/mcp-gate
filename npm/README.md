@@ -2,9 +2,9 @@
 
 Local Rust gateways reuse compatible MCP servers and start backends on demand.
 
-Supported release targets: macOS ARM64, macOS Intel, Windows x64. See the
-[verified compatibility matrix](https://github.com/Matvey-Radchenko/mcp-gate/blob/main/docs/compatibility.md)
-for the client versions and scenarios actually tested.
+Release targets include macOS ARM64 and Intel, Windows x64 and ARM64, and Linux
+x64 and ARM64 with glibc 2.35 or newer or static musl. The launcher selects the
+binary for your system from its optional dependencies. [Verified compatibility matrix](https://github.com/Matvey-Radchenko/mcp-gate/blob/main/docs/compatibility.md)
 
 ```sh
 npx @matvei-radchenko/mcp-gate@latest setup
@@ -23,6 +23,8 @@ Setup skips entries without a verified local override.
 
 Setup registers user services and copies the Rust binary to permanent private
 storage. The npm launcher itself does not change client settings or services.
+Linux service setup requires `systemd --user`. On systems such as Alpine without
+it, you can run a configured gateway manually with `mcp-gate serve --config <path>`.
 MCP packages and their dependencies remain managed by you. Initial discovery
 runs the existing command, which can download dependencies through npx, uvx,
 or Docker. Restart each affected client once after setup or remove.

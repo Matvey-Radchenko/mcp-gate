@@ -79,8 +79,8 @@ impl Terminal {
         // SAFETY: the child closure calls only async-signal-safe session/ioctl operations before exec.
         unsafe {
             command.pre_exec(|| {
-                if libc::setsid() == -1 || libc::ioctl(0, libc::TIOCSCTTY as libc::c_ulong, 0) == -1
-                {
+                // ioctl's request type is c_ulong on glibc and macOS but c_int on musl.
+                if libc::setsid() == -1 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
                     return Err(std::io::Error::last_os_error());
                 }
                 Ok(())

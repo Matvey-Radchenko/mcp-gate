@@ -26,6 +26,8 @@ jobs:
           test "$REPOSITORY_PRIVATE" = false
   native:
     needs: evidence
+    # Publication requires fresh checks on every release target, including both
+    # Alpine smoke runs and Windows ARM64, in addition to stored acceptance.
     uses: ./.github/workflows/ci.yml
   publish:
     needs: native
@@ -137,20 +139,39 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel, windows-2025, ubuntu-22.04, ubuntu-22.04-arm]
+        runner: [macos-15, macos-15-intel, windows-2025, windows-11-arm, ubuntu-22.04, ubuntu-22.04-arm]
+        include:
+          - runner: ubuntu-24.04
+            alpine: true
+          - runner: ubuntu-24.04-arm
+            alpine: true
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+        if: ${{ !matrix.alpine }}
         with:
           node-version: '24'
       - name: Download and verify the GitHub Release binary
+        if: ${{ !matrix.alpine }}
         shell: bash
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: node packaging/download-smoke.mjs "$RELEASE_VERSION"
       - name: Install from the real npm registry
+        if: ${{ !matrix.alpine }}
         shell: bash
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: node packaging/registry-install.mjs "$RELEASE_VERSION"
+      - name: Verify the GitHub archive and npm installation on Alpine
+        if: matrix.alpine
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --env RELEASE_VERSION \
+            --volume "$PWD/packaging:/workspace/packaging:ro" --volume "$PWD/npm:/workspace/npm:ro" \
+            --workdir /workspace node:24.22.3-alpine sh -euc '
+              node packaging/download-smoke.mjs "$RELEASE_VERSION"
+              node packaging/registry-install.mjs "$RELEASE_VERSION"
+            '

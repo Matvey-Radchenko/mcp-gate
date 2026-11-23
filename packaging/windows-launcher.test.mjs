@@ -7,13 +7,13 @@ import test from 'node:test';
 
 for (const longPath of [false, true]) {
   test(`Windows launcher forwards arguments and exit status from a ${longPath ? 'long' : 'short'} native path`, {
-    skip: process.platform !== 'win32' || process.arch !== 'x64',
+    skip: process.platform !== 'win32' || !['x64', 'arm64'].includes(process.arch),
   }, t => {
     const temporary = mkdtempSync(join(tmpdir(), 'mcp-gate-launcher-'));
     t.after(() => rmSync(temporary, { recursive: true, force: true }));
     const root = join(temporary, 'space and юникод', ...(longPath ? ['nested-'.repeat(10), 'cache-'.repeat(10)] : []));
     const launcher = join(root, 'bin', 'mcp-gate.cjs');
-    const binary = join(root, 'node_modules', '@matvei-radchenko', 'mcp-gate-bin-win32-x64', 'bin', 'mcp-gate.exe');
+    const binary = join(root, 'node_modules', '@matvei-radchenko', `mcp-gate-bin-win32-${process.arch}`, 'bin', 'mcp-gate.exe');
     mkdirSync(join(root, 'bin'), { recursive: true });
     mkdirSync(join(binary, '..'), { recursive: true });
     copyFileSync(new URL('../npm/mcp-gate/package.json', import.meta.url), join(root, 'package.json'));

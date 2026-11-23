@@ -24,8 +24,10 @@ Set `MCP_GATE_RELEASE_BINARY` to the absolute `target/release/mcp-gate` path and
 cargo test --locked --all-features --test installer_versions -- --ignored
 ```
 
-On Windows both filenames end in `.exe`; the compatibility path is
-`target/compatibility/x86_64-pc-windows-msvc/release/mcp-gate.exe`.
+Static builds put the compatibility binary under
+`target/compatibility/<rust-target>/release/`. Use `x86_64-pc-windows-msvc` or
+`aarch64-pc-windows-msvc` for Windows, where both filenames end in `.exe`. Use
+`x86_64-unknown-linux-musl` or `aarch64-unknown-linux-musl` for the musl builds.
 GitHub CI sets these paths automatically on each native runner.
 
 The test uses a temporary home, personal Claude fixture configuration and a unique

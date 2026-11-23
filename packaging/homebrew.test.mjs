@@ -11,6 +11,9 @@ const checksums = [
   `${arm}  mcp-gate-0.1.0-darwin-arm64.tar.gz`,
   `${intel}  mcp-gate-0.1.0-darwin-x64.tar.gz`,
   `${'d'.repeat(64)}  mcp-gate-0.1.0-win32-x64.tar.gz`,
+  `${'e'.repeat(64)}  mcp-gate-0.1.0-win32-arm64.tar.gz`,
+  `${'f'.repeat(64)}  mcp-gate-0.1.0-linux-x64-musl.tar.gz`,
+  `${'0'.repeat(64)}  mcp-gate-0.1.0-linux-arm64-musl.tar.gz`,
   '',
 ].join('\n');
 
@@ -29,6 +32,7 @@ test('Homebrew formula installs both macOS archives and does not register a serv
   assert.match(formula, /Re-run `mcp-gate setup` after upgrading/);
   assert.match(formula, /mcp-gate --version/);
   assert.doesNotMatch(formula, /service do/);
+  assert.doesNotMatch(formula, /linux-|win32-/);
   assert.doesNotMatch(formula, /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/);
   assert.doesNotMatch(formula, /\{\{/);
 });

@@ -3,11 +3,15 @@ import { delimiter, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-const directory = mkdtempSync(join(tmpdir(), 'mcp-gate clean Юникод '));
-const target = `${process.platform}-${process.arch}`;
+import { nativeBuildTarget } from './manifest.mjs';
+const target = nativeBuildTarget();
 const version = JSON.parse(readFileSync('npm/mcp-gate/package.json')).version;
 const npm = process.env.npm_execpath;
-assert(npm, 'Run through npm exec -- node packaging/smoke.mjs');
+assert(npm, "Run through npm exec --offline --call 'node packaging/smoke.mjs'");
+// `npm exec --call` exports npm_config_call to this process. Nested `npm exec -- <cmd>`
+// calls would inherit it and fail with EUSAGE, so drop it before running npm again.
+delete process.env.npm_config_call;
+const directory = mkdtempSync(join(tmpdir(), 'mcp-gate clean Юникод '));
 const local = join(directory, 'local');
 const prefix = join(directory, 'global');
 const globalRun = join(directory, 'global-run');

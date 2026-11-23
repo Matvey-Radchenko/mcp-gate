@@ -16,6 +16,7 @@ jobs:
     uses: ./.github/workflows/docker-intel.yml
   docker-windows:
     name: Docker on Windows
+    # This separate acceptance job uses a checksum-pinned amd64 WSL image.
     uses: ./.github/workflows/docker-windows.yml
   launcher:
     name: Shared npm launcher
@@ -60,11 +61,26 @@ jobs:
           - runner: windows-2025
             target: win32-x64
             timeout: 40
+          - runner: windows-11-arm
+            target: win32-arm64
+            rust_target: aarch64-pc-windows-msvc
+            timeout: 70
           - runner: ubuntu-22.04
             target: linux-x64
             timeout: 40
           - runner: ubuntu-22.04-arm
             target: linux-arm64
+            timeout: 70
+          # Same images as the glibc jobs. Ubuntu 24.04 runners restrict unprivileged
+          # user namespaces through AppArmor, so Chrome's sandbox cannot start there and
+          # the real-browser tests fail for reasons unrelated to the musl binary.
+          - runner: ubuntu-22.04
+            target: linux-x64-musl
+            rust_target: x86_64-unknown-linux-musl
+            timeout: 40
+          - runner: ubuntu-22.04-arm
+            target: linux-arm64-musl
+            rust_target: aarch64-unknown-linux-musl
             timeout: 70
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout }}
@@ -74,6 +90,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
+      MCP_GATE_NATIVE_TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -88,7 +105,23 @@ jobs:
         shell: pwsh
         run: ./packaging/check-task-scheduler.ps1
       - name: Install Rust checks
-        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy && rustup default 1.95.0
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.95.0
+          if [[ -n "$RUST_TARGET" ]]; then rustup target add "$RUST_TARGET"; fi
+          if [[ "$RUNNER_OS" == Windows && -n "$RUST_TARGET" ]]; then
+            test "$(rustc --print host-tuple)" = "$RUST_TARGET"
+          fi
+      - name: Build the static musl target with Rust's self-contained toolchain
+        if: endsWith(matrix.rust_target, '-musl')
+        # No musl-gcc: Rust's musl targets link their own crt objects and musl libc,
+        # and no crate here compiles C for Linux. Ubuntu 22.04's musl-gcc (musl 1.2.2)
+        # produced x86_64 binaries that segfault at startup (CI run 45081653064).
+        env:
+          MUSL_TARGET: ${{ matrix.rust_target }}
+        run: echo "CARGO_BUILD_TARGET=$MUSL_TARGET" >> "$GITHUB_ENV"
       - uses: actions/cache@v4
         with:
           path: |
@@ -128,9 +161,17 @@ jobs:
           echo "systemd user manager version: $version"
           printf '%s\n' "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
       - name: Temporary user service lifecycle
+        # Skipped on win32-arm64: the windows-11-arm runner ran these tests 15-25x
+        # slower than windows-2025 (523 s vs 21 s, 979 s vs 65 s in run 45073914008),
+        # past the 25-minute budget and the 60 s recovery bound the test asserts.
+        # The Task Scheduler code paths are architecture-independent and run
+        # unchanged on win32-x64; the ARM64 job keeps the harness, real clients,
+        # release binary, update/downgrade and archive install checks.
+        if: matrix.target != 'win32-arm64'
         timeout-minutes: 25
         run: cargo test --locked --all-features --test installer --test installer_recovery -- --ignored
       - name: Install pinned native clients
+        # Codex, OpenCode and Claude Code each ship a native win32-arm64 package.
         run: npm install --global @openai/codex@0.153.4 opencode-ai@1.14.23 @anthropic-ai/claude-code@2.1.160
       - name: Locate native client commands
         run: |
@@ -215,7 +256,7 @@ jobs:
       - name: Build release binary
         run: node packaging/compile.mjs
       - name: Verify Linux release binary and glibc 2.35 compatibility
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !endsWith(matrix.rust_target, '-musl')
         run: |
           binary=./target/release/mcp-gate
           highest=$(readelf --version-info --wide "$binary" | grep -oE 'GLIBC_[[:alnum:]_.]+' | LC_ALL=C sort -V | tail -n 1)
@@ -225,16 +266,30 @@ jobs:
           fi
           echo "Highest required glibc symbol version: $highest"
           "$binary" --version
+      - name: Verify static Linux release linkage
+        if: endsWith(matrix.rust_target, '-musl')
+        run: |
+          binary=./target/release/mcp-gate
+          readelf --program-headers --wide "$binary" > "$RUNNER_TEMP/mcp-gate-elf-headers"
+          readelf --dynamic --wide "$binary" > "$RUNNER_TEMP/mcp-gate-elf-dynamic"
+          if grep -Eq '^[[:space:]]*INTERP[[:space:]]' "$RUNNER_TEMP/mcp-gate-elf-headers" ||
+             grep -Fq '(NEEDED)' "$RUNNER_TEMP/mcp-gate-elf-dynamic"; then
+            echo "Expected a statically linked musl executable" >&2
+            exit 1
+          fi
+          "$binary" --version
       - name: Verify standalone Windows runtime dependencies
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./packaging/check-windows-runtime.ps1
       - name: Build unpublished version compatibility fixture
-        run: |
-          node packaging/compat-build.mjs
-          node -e 'const fs = require("node:fs"); const path = require("node:path"); const win = process.platform === "win32"; fs.appendFileSync(process.env.GITHUB_ENV, `MCP_GATE_RELEASE_BINARY=${path.resolve("target/release", win ? "mcp-gate.exe" : "mcp-gate")}\nMCP_GATE_COMPAT_BINARY=${path.resolve("target/compatibility", win ? "x86_64-pc-windows-msvc/release/mcp-gate.exe" : "release/mcp-gate")}\n`);'
+        run: node packaging/compat-build.mjs
       - name: Actual release update and compatible downgrade
-        timeout-minutes: 5
+        # Both binaries are built in this job (compat-build.mjs), so no published
+        # win32-arm64 release is needed. The test takes ~25 s on windows-2025 but
+        # was still running after 5 min on windows-11-arm (run 45094446937), which
+        # is 15-25x slower for service tests; 20 min leaves about 2x headroom.
+        timeout-minutes: ${{ matrix.target == 'win32-arm64' && 20 || 5 }}
         run: cargo test --locked --all-features --test installer_versions -- --ignored
       - uses: actions/download-artifact@v4
         with:
@@ -246,7 +301,19 @@ jobs:
           cd dist
           npm pack ./mcp-gate-bin-${{ matrix.target }} --ignore-scripts
       - name: Clean archive installation
-        run: npm exec -- node packaging/smoke.mjs
+        # npm installs the musl package only on musl hosts; the Alpine step below covers it.
+        if: ${{ !endsWith(matrix.rust_target, '-musl') }}
+        run: npm exec --offline --call 'node packaging/smoke.mjs'
+      - name: Clean musl archive installation without glibc
+        if: endsWith(matrix.rust_target, '-musl')
+        # The musl npm package declares libc musl, so its install smoke runs only
+        # here. Alpine has no systemd user manager; the service tests above run
+        # the musl binary against systemd on the Ubuntu host.
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
+            --volume "$PWD/packaging:/workspace/packaging:ro" --volume "$PWD/npm:/workspace/npm:ro" \
+            --volume "$PWD/dist:/workspace/dist:ro" --workdir /workspace node:24.22.3-alpine \
+            npm exec --offline --call 'node packaging/smoke.mjs'
       - name: Download archive
         run: |
           version=$(node -p "require('./npm/mcp-gate/package.json').version")
