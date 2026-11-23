@@ -228,7 +228,7 @@ async fn shared_session_delete_drains_without_recovery() {
     let first = mock_value(&a.call("state", json!({"value":"retained"})).await);
     let (response, upstream_id) = f.start_call(&a).await;
     a.close().await;
-    assert_cancelled_stream(&a, response).await;
+    assert_deleted_stream(&a, response).await;
     assert_call_drains(&f, &b, &upstream_id, &first).await;
     f.gateway.stop();
 }
@@ -242,6 +242,18 @@ async fn shared_http_disconnect_drains_without_recovery() {
     drop(response);
     assert_call_drains(&f, &b, &upstream_id, &first).await;
     f.gateway.stop();
+}
+
+// DELETE races the cancelled handler: the SDK may write its cancellation
+// result before it ends the stream. Either way the client stops waiting.
+async fn assert_deleted_stream(client: &Session, response: reqwest::Response) {
+    let result = tokio::time::timeout(WAIT, client.read_message(response, Some(CANCEL_ID)))
+        .await
+        .expect("deleted session should stop waiting before the backend replies");
+    if result != json!({"transportEnded":true}) {
+        assert_eq!(result["id"], CANCEL_ID);
+        assert!(content(&result).contains("Request cancelled"), "{result}");
+    }
 }
 
 async fn assert_cancelled_stream(client: &Session, response: reqwest::Response) {
