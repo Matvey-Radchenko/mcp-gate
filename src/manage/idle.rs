@@ -71,17 +71,13 @@ pub fn run(options: Idle) -> Result<()> {
     let after = edit(&before, seconds)?;
     let phase = if after == before {
         "unchanged"
+    } else if options.dry_run {
+        "preview"
     } else {
         "complete"
     };
-    if options.dry_run || phase == "unchanged" {
-        report(
-            &options,
-            record,
-            if options.dry_run { "preview" } else { phase },
-            &config,
-            previous,
-        );
+    if phase != "complete" {
+        report(&options, record, phase, &config, previous);
         return Ok(());
     }
     ensure!(
@@ -106,6 +102,14 @@ fn edit(before: &[u8], seconds: u64) -> Result<Vec<u8>> {
         .parse()
         .map_err(|_| anyhow::anyhow!("Invalid gateway configuration; values hidden"))?;
     let table = document.as_table_mut();
+    let seconds = i64::try_from(seconds)?;
+    // A canonical key already holding this value needs no edit. Legacy keys
+    // still migrate when the operator saves an explicit setting.
+    if table.get("idle_seconds").is_some_and(|item| {
+        item.as_integer() == Some(seconds) || (seconds == 0 && item.as_str() == Some("off"))
+    }) {
+        return Ok(before.to_vec());
+    }
     // Config validation guarantees at most one of these keys, with a scalar value.
     let previous = [
         "idle_seconds",
@@ -115,7 +119,7 @@ fn edit(before: &[u8], seconds: u64) -> Result<Vec<u8>> {
     .into_iter()
     .find_map(|name| table.remove_entry(name));
     let mut key = toml_edit::Key::new("idle_seconds");
-    let mut value = toml_edit::Value::from(i64::try_from(seconds)?);
+    let mut value = toml_edit::Value::from(seconds);
     if let Some((old_key, old_value)) = previous {
         key = key.with_leaf_decor(old_key.leaf_decor().clone());
         *value.decor_mut() = old_value
@@ -135,33 +139,29 @@ fn report(options: &Idle, record: &store::Record, phase: &str, config: &Config, 
     } else {
         format!("{seconds}s")
     };
-    let restart = service::restart_command(record);
+    let id = ui::safe(&record.id);
+    let restart = matches!(phase, "preview" | "complete").then(|| service::restart_command(record));
     let message = match phase {
-        "current" => {
-            "Configured idle policy; the running service may still use its previous setting."
-        }
+        "current" => "Configured idle policy.".into(),
         "preview" if options.dry_run => {
-            "Dry run. The configuration and running service stay as they are."
+            "Dry run. The configuration and running service stay as they are.".into()
         }
-        "preview" => "Proposed idle policy. Saving it requires a later gateway restart.",
-        "unchanged" => {
-            "Idle setting is already saved. The running service may still need a restart."
-        }
-        _ => "Idle setting saved. Restart required to apply it to the running service.",
+        "preview" => "Proposed idle policy. Saving it requires a later gateway restart.".into(),
+        "unchanged" => format!("Nothing to change: {id} already has idle set to {value}."),
+        _ => "Idle setting saved. Restart required to apply it to the running service.".into(),
     };
     if options.json {
-        println!(
-            "{}",
-            json!({"format_version":1,"phase":phase,"gateway":record.id,
+        let mut report = json!({"format_version":1,"phase":phase,"gateway":record.id,
             "config":record.config(),"ownership":config.ownership,"idle_seconds":seconds,
             "uses_ownership_default":config.idle_seconds.is_none(),"message":message,
-            "previous_idle_seconds":previous,
-            "restart_command":restart,"restart_required":phase != "current"})
-        );
+            "previous_idle_seconds":previous,"restart_required":restart.is_some()});
+        if let Some(command) = restart {
+            report["restart_command"] = json!(command);
+        }
+        println!("{report}");
     } else {
         println!(
-            "Gateway {}: idle {value}{}",
-            ui::safe(&record.id),
+            "Gateway {id}: idle {value}{}",
             if config.idle_seconds.is_none() {
                 " (ownership default)"
             } else {
@@ -177,6 +177,8 @@ fn report(options: &Idle, record: &store::Record, phase: &str, config: &Config, 
             println!("  Previous idle setting: {previous}");
         }
         println!("{message}");
-        println!("After current actions finish, restart the gateway: {restart}");
+        if let Some(command) = restart {
+            println!("After current actions finish, restart the gateway: {command}");
+        }
     }
 }

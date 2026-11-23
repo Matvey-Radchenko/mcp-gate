@@ -77,7 +77,6 @@ impl Fixture {
     fn run(&self, args: &[&str]) -> Output {
         let output = Command::new(env!("CARGO_BIN_EXE_mcp-gate"))
             .args(args)
-            .arg("--json")
             .env("MCP_GATE_TEST_ROOT", &self.root)
             .env("MCP_GATE_TEST_HOME", &self.root)
             .output()
@@ -95,8 +94,11 @@ impl Fixture {
         }
         output
     }
+    fn run_json(&self, args: &[&str]) -> Output {
+        self.run(&[&["--json"], args].concat())
+    }
     fn ok(&self, args: &[&str]) -> Value {
-        let output = self.run(args);
+        let output = self.run_json(args);
         assert!(
             output.status.success(),
             "{}",
@@ -119,6 +121,8 @@ fn show_uses_ownership_defaults_without_reading_credentials_or_creating_a_lock()
             assert_eq!(value["phase"], "current");
             assert_eq!(value["idle_seconds"], seconds);
             assert_eq!(value["uses_ownership_default"], true);
+            assert_eq!(value["restart_required"], false);
+            assert!(value.get("restart_command").is_none());
         }
         assert_eq!(fixture.bytes(), before);
         assert!(!fixture.root.join("setup.lock").exists());
@@ -131,10 +135,10 @@ fn duration_previews_and_applies_preserve_config_and_never_restart_services() {
     let registry = fs::read(fixture.root.join("registry.json")).unwrap();
     for (duration, seconds) in [
         ("900", 900),
-        ("15m", 900),
         ("1h", 3600),
-        ("90s", 90),
+        ("15m", 900),
         ("off", 0),
+        ("90s", 90),
         ("0", 0),
     ] {
         let before = fixture.bytes();
@@ -166,15 +170,38 @@ fn duration_previews_and_applies_preserve_config_and_never_restart_services() {
 }
 
 #[test]
+fn saved_idle_setting_does_not_suggest_a_restart() {
+    let fixture = Fixture::new("shared");
+    let config = String::from_utf8(fixture.bytes()).unwrap();
+    let before = format!("idle_seconds = +900 # Retain the spelling.\n{config}");
+    store::atomic(&fixture.record.config(), before.as_bytes()).unwrap();
+    let message = "Nothing to change: fixture-id already has idle set to 900s.";
+    for option in ["--dry-run", "--yes"] {
+        let report = fixture.ok(&["idle", "fixture", "15m", option]);
+        assert_eq!(report["phase"], "unchanged");
+        assert_eq!(report["message"], message);
+        assert_eq!(report["restart_required"], false);
+        assert!(report.get("restart_command").is_none());
+    }
+    let output = fixture.run(&["idle", "fixture", "900", "--dry-run"]);
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(text.lines().last(), Some(message));
+    assert!(!text.contains("restart"));
+    assert_eq!(fixture.bytes(), before.as_bytes());
+    assert!(!fixture.root.join("setup.lock").exists());
+}
+
+#[test]
 fn saving_requires_explicit_confirmation_and_rejects_invalid_durations() {
     let fixture = Fixture::new("shared");
     let before = fixture.bytes();
-    let refused = fixture.run(&["idle", "fixture", "15m"]);
+    let refused = fixture.run_json(&["idle", "fixture", "15m"]);
     assert!(!refused.status.success());
     let value: Value = serde_json::from_slice(&refused.stdout).unwrap();
     assert!(value["error"].as_str().unwrap().contains("--yes"));
     for invalid in ["-1", "1.5m", "1d", "1h30m", "m", "18446744073709551615h"] {
-        let output = fixture.run(&["idle", "fixture", invalid, "--yes"]);
+        let output = fixture.run_json(&["idle", "fixture", invalid, "--yes"]);
         assert_eq!(output.status.code(), Some(2));
         assert_eq!(
             serde_json::from_slice::<Value>(&output.stdout).unwrap()["phase"],
@@ -197,7 +224,7 @@ fn enabling_shared_docker_idle_is_rejected_but_off_is_supported() {
     )
     .unwrap();
     let before = fixture.bytes();
-    let output = fixture.run(&["idle", "fixture", "15m", "--yes"]);
+    let output = fixture.run_json(&["idle", "fixture", "15m", "--yes"]);
     assert!(!output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(value["error"].as_str().unwrap().contains("shared Docker"));
@@ -212,7 +239,7 @@ fn enabling_shared_docker_idle_is_rejected_but_off_is_supported() {
 fn session_eviction_validation_applies_only_when_idle_is_enabled() {
     let fixture = Fixture::new("session");
     let before = fixture.bytes();
-    let output = fixture.run(&["idle", "fixture", "90s", "--yes"]);
+    let output = fixture.run_json(&["idle", "fixture", "90s", "--yes"]);
     assert!(!output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(
@@ -260,7 +287,7 @@ fn concurrent_setup_lock_prevents_an_idle_write() {
     let before = fixture.bytes();
     let lock = fs::File::create(fixture.root.join("setup.lock")).unwrap();
     fs2::FileExt::lock_exclusive(&lock).unwrap();
-    let output = fixture.run(&["idle", "fixture", "15m", "--yes"]);
+    let output = fixture.run_json(&["idle", "fixture", "15m", "--yes"]);
     assert!(!output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(
