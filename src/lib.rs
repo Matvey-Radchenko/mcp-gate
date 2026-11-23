@@ -18,3 +18,6 @@ pub mod policy;
 mod process;
 mod recovery;
 pub mod worker;
+
+/// Abbreviated Git commit for builds from a checkout, when available.
+pub const BUILD_COMMIT: Option<&str> = option_env!("MCP_GATE_BUILD_COMMIT");

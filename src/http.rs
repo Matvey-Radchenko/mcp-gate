@@ -2,7 +2,7 @@
 //! MCP framing, negotiation, SSE and session IDs belong to the official SDK.
 mod lease;
 
-use crate::gateway::Gateway;
+use crate::{BUILD_COMMIT, gateway::Gateway};
 use axum::{
     Router,
     body::Body,
@@ -129,15 +129,17 @@ async fn health(State(state): State<HttpState>) -> impl IntoResponse {
             "disconnected_seconds":l.disconnected.map(|t|t.elapsed().as_secs())})
         })
         .collect();
-    axum::Json(
-        json!({ "service": "mcp-gate", "version": env!("CARGO_PKG_VERSION"),
+    let mut response = json!({ "service": "mcp-gate", "version": env!("CARGO_PKG_VERSION"),
         "pid": std::process::id(), "sessions": state.leases.lock().unwrap().len(),
         "maintenance":state.maintenance.lock().unwrap().is_some(),
         "workers": state.gateway.live.load(std::sync::atomic::Ordering::SeqCst),
         "max_workers": state.gateway.config.max_workers, "tools": state.gateway.catalog.tools.len(),
         "runtime": state.gateway.runtime_status(),
-        "backend_version": state.gateway.catalog.backend_version, "session_details":details }),
-    )
+        "backend_version": state.gateway.catalog.backend_version, "session_details":details });
+    if let Some(commit) = BUILD_COMMIT {
+        response["commit"] = json!(commit);
+    }
+    axum::Json(response)
 }
 async fn guard(State(state): State<HttpState>, mut req: Request, next: Next) -> Response {
     for header in [

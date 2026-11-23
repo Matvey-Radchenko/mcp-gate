@@ -30,7 +30,7 @@ if (rustTarget) {
 }
 const result = spawnSync('cargo', args, {
   stdio: 'inherit',
-  env: { ...process.env, CARGO_ENCODED_RUSTFLAGS: flags.join('\x1f') },
+  env: { ...process.env, CARGO_ENCODED_RUSTFLAGS: flags.join('\x1f'), MCP_GATE_RELEASE_BUILD: '1' },
 });
 if (result.error) console.error(result.error.message);
 if (result.status === 0 && rustTarget) {
