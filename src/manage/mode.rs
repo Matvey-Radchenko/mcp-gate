@@ -64,7 +64,7 @@ pub fn run(options: Mode, ownership: Ownership) -> Result<()> {
         );
         config.validate()?;
         if config.ownership == ownership {
-            return Ok(Phase::Unchanged);
+            return Ok(Phase::Unchanged(ownership));
         }
         let plan = Plan::new(source, &config, ownership)?;
         report.changes = plan.changes;
@@ -129,7 +129,7 @@ fn approved(options: &Mode, command: &str) -> Result<bool> {
 
 enum Phase {
     Preview,
-    Unchanged,
+    Unchanged(Ownership),
     Canceled,
     Complete,
 }
@@ -188,16 +188,26 @@ impl Report<'_> {
 
     fn finish(&self, phase: Phase, json_output: bool) {
         let (name, message) = match phase {
-            Phase::Preview => ("preview", "Dry run. Ownership is unchanged."),
-            Phase::Unchanged => (
-                "unchanged",
-                "This ownership mode is already saved. The running gateway may still need a restart.",
+            Phase::Preview => ("preview", "Dry run. Ownership is unchanged.".into()),
+            Phase::Unchanged(ownership) => {
+                let mode = match ownership {
+                    Ownership::Shared => "shared",
+                    Ownership::Session => "session",
+                };
+                let id = ui::safe(&self.record.id);
+                (
+                    "unchanged",
+                    format!("Nothing to change: {id} is already {mode}."),
+                )
+            }
+            Phase::Canceled => ("canceled", "Canceled. No changes applied.".into()),
+            Phase::Complete => (
+                "complete",
+                "Ownership saved. Restart required to apply it.".into(),
             ),
-            Phase::Canceled => ("canceled", "Canceled. No changes applied."),
-            Phase::Complete => ("complete", "Ownership saved. Restart required to apply it."),
         };
-        let restart =
-            (!matches!(phase, Phase::Canceled)).then(|| service::restart_command(self.record));
+        let restart = matches!(phase, Phase::Preview | Phase::Complete)
+            .then(|| service::restart_command(self.record));
         if json_output {
             let mut value = self.json(name);
             value["message"] = json!(message);

@@ -13,11 +13,6 @@
       "reason": "Filesystem uses client roots for allowed directories. Share only with a fixed directory list and shared_client_roots = \"reject\"."
     }
   ],
-  "stateful_tool_tokens": [
-    "browser", "tab", "tabs", "page", "pages", "navigate", "click", "screenshot",
-    "snapshot", "session", "sessions", "login", "logout", "select", "activate",
-    "configure", "connect", "disconnect", "context", "workspace", "project"
-  ],
   "roots_tool_tokens": ["roots"],
   "roots_tool_names": ["list_allowed_directories"]
 }

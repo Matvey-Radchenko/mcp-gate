@@ -72,6 +72,96 @@ fn chrome_selected_page_is_stateful_even_when_annotated_read_only() {
 }
 
 #[test]
+fn api_tool_names_do_not_imply_client_selection() {
+    for (name, tools) in [
+        (
+            "atlassian",
+            [
+                "jira_get_project_issues",
+                "confluence_get_page",
+                "get_all_projects",
+                "confluence_get_page_children",
+                "jira_get_project_versions",
+            ]
+            .as_slice(),
+        ),
+        (
+            "telegram",
+            &["get_message_context", "send_message", "get_chats"],
+        ),
+        (
+            "testops",
+            &["configure_testops", "get_launch", "list_projects"],
+        ),
+    ] {
+        let advice = advise(Some(&catalog(name, tools)), &backend(&[]));
+        assert_eq!(
+            advice.recommendation,
+            Recommendation::SharedCandidate,
+            "{name}"
+        );
+        assert!(advice.signals.is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn selection_actions_are_recognized_across_tool_name_styles() {
+    for tool in [
+        "new_page",
+        "switch-tab",
+        "browser_tab_select",
+        "browser_tabs",
+        "selectPage",
+        "BrowserTabSelect",
+        "setCurrentContext",
+        "SET-selected-project",
+        "select_session",
+        "APISetState",
+    ] {
+        let advice = advise(Some(&catalog("renamed", &[tool])), &backend(&[]));
+        assert_eq!(advice.recommendation, Recommendation::Session, "{tool}");
+        assert_eq!(signal_kinds(&advice), [SignalKind::StatefulTool], "{tool}");
+    }
+}
+
+#[test]
+fn page_navigation_and_closing_require_browser_context() {
+    for name in ["documentation", "remoteBrowser"] {
+        let catalog = catalog(name, &["navigate-page", "closePage"]);
+        let advice = advise(Some(&catalog), &backend(&[]));
+        if name == "documentation" {
+            assert_eq!(advice.recommendation, Recommendation::SharedCandidate);
+            assert!(advice.signals.is_empty());
+        } else {
+            assert_eq!(advice.recommendation, Recommendation::Session);
+            assert_eq!(signal_kinds(&advice), [SignalKind::StatefulTool; 2]);
+        }
+    }
+}
+
+#[test]
+fn read_actions_and_partial_tokens_do_not_count_as_selection() {
+    let catalog = catalog(
+        "remote-browser",
+        &[
+            "getSelectedPage",
+            "getNewPage",
+            "list_browser_tabs",
+            "browser_tabs_count",
+            "get_project_settings",
+            "set_page_size",
+            "set_statement",
+            "select_pageant",
+            "selectable_tab",
+            "reset_session",
+        ],
+    );
+    let advice = advise(Some(&catalog), &backend(&[]));
+    assert_eq!(advice.recommendation, Recommendation::SharedCandidate);
+    assert!(advice.signals.is_empty());
+}
+
+#[test]
 fn filesystem_detects_roots_and_requires_a_fixed_directory_list_to_share() {
     let catalog = catalog(
         "secure-filesystem-server",

@@ -9,7 +9,6 @@ const RULES: &str = include_str!("../recipes/shareability.json");
 #[serde(deny_unknown_fields)]
 struct Rules {
     known_servers: Vec<KnownServer>,
-    stateful_tool_tokens: Vec<String>,
     roots_tool_tokens: Vec<String>,
     roots_tool_names: Vec<String>,
 }
@@ -142,24 +141,87 @@ fn package_name(arg: &str) -> &str {
 }
 
 fn tool_signals<'a>(rules: &'a Rules, catalog: &'a Catalog) -> impl Iterator<Item = Signal> + 'a {
-    catalog.tools.iter().filter_map(|tool| {
-        let name = tool.name.to_lowercase();
-        let tokens = || name.split(|c: char| !c.is_alphanumeric());
-        if rules.roots_tool_names.contains(&name)
-            || tokens().any(|token| rules.roots_tool_tokens.iter().any(|rule| rule == token))
+    let tools: Vec<_> = catalog
+        .tools
+        .iter()
+        .map(|tool| (&tool.name, name_tokens(&tool.name)))
+        .collect();
+    let browser = has_browser_token(&name_tokens(&catalog.server_info.server_info.name))
+        || tools.iter().any(|(_, tokens)| has_browser_token(tokens));
+    tools.into_iter().filter_map(move |(name, tokens)| {
+        if rules.roots_tool_names.contains(&name.to_lowercase())
+            || tokens
+                .iter()
+                .any(|token| rules.roots_tool_tokens.contains(token))
         {
             return Some(Signal {
                 kind: SignalKind::Roots,
-                message: format!("Tool {} suggests use of client roots.", tool.name),
+                message: format!("Tool {name} suggests use of client roots."),
             });
         }
-        tokens()
-            .any(|token| rules.stateful_tool_tokens.iter().any(|rule| rule == token))
-            .then(|| Signal {
-                kind: SignalKind::StatefulTool,
-                message: format!("Tool {} suggests client-specific state.", tool.name),
-            })
+        changes_selection(&tokens, browser).then(|| Signal {
+            kind: SignalKind::StatefulTool,
+            message: format!("Tool {name} suggests client-specific state."),
+        })
     })
+}
+
+fn has_browser_token(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| token == "browser")
+}
+
+fn changes_selection(tokens: &[String], browser: bool) -> bool {
+    let page_or_tab = tokens
+        .iter()
+        .any(|token| matches!(token.as_str(), "page" | "pages" | "tab" | "tabs"));
+    let selection = tokens
+        .iter()
+        .any(|token| matches!(token.as_str(), "current" | "selected" | "session" | "state"));
+    // The first recognized action governs the name. For example, a getter may
+    // refer to a selection without changing it, and some tools put the verb last.
+    for token in tokens {
+        match token.as_str() {
+            "get" | "list" | "read" | "fetch" | "find" | "search" | "query" | "show"
+            | "describe" | "inspect" | "view" | "configure" | "config" | "settings" => {
+                return false;
+            }
+            "set" => return selection,
+            "select" | "switch" | "activate" | "focus" => return selection || page_or_tab,
+            "new" => return page_or_tab,
+            "navigate" | "close" | "open" => return browser && page_or_tab,
+            _ => {}
+        }
+    }
+    // Browser tab managers may expose selection as a tool argument.
+    matches!(tokens, [.., domain, target] if domain == "browser" && target == "tabs")
+}
+
+fn name_tokens(name: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for segment in name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+    {
+        let mut start = 0;
+        let mut previous = None;
+        let mut chars = segment.char_indices().peekable();
+        while let Some((index, current)) = chars.next() {
+            if current.is_uppercase()
+                && previous.is_some_and(|previous: char| {
+                    previous.is_lowercase()
+                        || previous.is_numeric()
+                        || (previous.is_uppercase()
+                            && chars.peek().is_some_and(|(_, next)| next.is_lowercase()))
+                })
+            {
+                tokens.push(segment[start..index].to_lowercase());
+                start = index;
+            }
+            previous = Some(current);
+        }
+        tokens.push(segment[start..].to_lowercase());
+    }
+    tokens
 }
 
 #[cfg(test)]

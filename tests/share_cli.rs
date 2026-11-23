@@ -235,22 +235,31 @@ fn isolate_restores_workers_and_removes_shared_only_keys() {
 
 #[test]
 fn requested_mode_is_unchanged_even_in_dry_run() {
-    for (mode, command, workers) in [
-        (Ownership::Session, "isolate", 4),
-        (Ownership::Shared, "share", 1),
+    for (mode, command, workers, mode_name) in [
+        (Ownership::Session, "isolate", 4, "session"),
+        (Ownership::Shared, "share", 1, "shared"),
     ] {
         let mut fixture = Fixture::new();
         fixture.config.ownership = mode;
         fixture.config.max_workers = workers;
         fixture.write_config();
         let before = fixture.text();
+        let message = format!("Nothing to change: fixture-id is already {mode_name}.");
         for args in [
             vec![command, "fixture"],
             vec![command, "fixture", "--dry-run"],
         ] {
             let report = fixture.json(&args, "unchanged");
             assert_eq!(report["changes"], json!([]));
+            assert_eq!(report["message"], message);
+            assert_eq!(report["restart_required"], false);
+            assert!(report.get("restart_command").is_none());
         }
+        let output = fixture.run(&[command, "fixture", "--dry-run"]);
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(text.lines().last(), Some(message.as_str()));
+        assert!(!text.contains("restart"));
         assert_eq!(fixture.text(), before);
         assert!(!fixture.root.join("setup.lock").exists());
     }
