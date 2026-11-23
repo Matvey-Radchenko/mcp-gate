@@ -14,7 +14,6 @@ use std::{
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Reason {
     Cancelled,
-    HandlerDropped,
     Idle,
     Timeout,
     TransportClosed,

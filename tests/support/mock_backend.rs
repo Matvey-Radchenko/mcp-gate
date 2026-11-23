@@ -277,6 +277,7 @@ fn mock_stdin() -> Box<dyn tokio::io::AsyncRead + Unpin + Send> {
     let Ok(path) = std::env::var("MOCK_RAW_WIRE_FILE") else {
         return Box::new(stdin);
     };
+    let ignore_cancellation = std::env::var_os("MOCK_IGNORE_CANCELLATION").is_some();
     let (input, mut writer) = tokio::io::duplex(8192);
     tokio::spawn(async move {
         use std::io::Write;
@@ -289,7 +290,13 @@ fn mock_stdin() -> Box<dyn tokio::io::AsyncRead + Unpin + Send> {
         let mut line = Vec::new();
         while stdin.read_until(b'\n', &mut line).await.unwrap() > 0 {
             log.write_all(&line).unwrap();
-            if writer.write_all(&line).await.is_err() {
+            // Some backends complete the call after receiving cancellation.
+            // rmcp's server suppresses that response, so swallow only the
+            // logged notification when testing such a backend.
+            let ignored = ignore_cancellation
+                && serde_json::from_slice::<Value>(&line).unwrap()["method"]
+                    == "notifications/cancelled";
+            if !ignored && writer.write_all(&line).await.is_err() {
                 break; // The mock MCP service closed its input.
             }
             line.clear();

@@ -15,6 +15,20 @@ pub(crate) mod native_codex;
 pub(crate) mod process_tree;
 pub(crate) const TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+pub(crate) fn records(path: &Path) -> Vec<Value> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => panic!("Cannot read fixture journal: {error}"),
+    };
+    // The writer may still be appending the last line.
+    bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .filter(|line| line.ends_with(b"\n"))
+        .map(|line| serde_json::from_slice(line).unwrap())
+        .collect()
+}
+
 pub(crate) fn browser_executable() -> Option<String> {
     std::env::var_os("MCP_GATE_TEST_BROWSER").map(|value| {
         let value = value

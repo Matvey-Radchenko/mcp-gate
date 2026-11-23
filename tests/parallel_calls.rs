@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use support::{Harness, Session, content, mock_value};
+use support::{Harness, Session, content, mock_value, records};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 
 const DOWNSTREAM_ID: u64 = 1000;
@@ -30,6 +30,10 @@ impl Fixture {
                 config.max_concurrent_calls = limit;
             }
             config.shared_recovery = recovery;
+            config
+                .backend
+                .env
+                .insert("MOCK_IGNORE_CANCELLATION".into(), "1".into());
             for (key, file) in [
                 ("MOCK_ECHO_JOURNAL", "echo-events"),
                 ("MOCK_ECHO_GATE_DIR", "echo-gates"),
@@ -121,20 +125,6 @@ impl Fixture {
 
 fn release(gates: &Path, nonce: u64) {
     std::fs::write(gates.join(nonce.to_string()), []).unwrap();
-}
-
-fn records(path: &Path) -> Vec<Value> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
-        Err(error) => panic!("Cannot read fixture journal: {error}"),
-    };
-    // The writer may still be appending the last line.
-    bytes
-        .split_inclusive(|byte| *byte == b'\n')
-        .filter(|line| line.ends_with(b"\n"))
-        .map(|line| serde_json::from_slice(line).unwrap())
-        .collect()
 }
 
 async fn eventually<T>(mut observe: impl FnMut() -> Option<T>) -> T {
@@ -279,7 +269,7 @@ async fn omitted_limit_is_serial_under_load() {
 }
 
 #[tokio::test]
-async fn cancelling_one_call_uses_its_upstream_id_and_drains_siblings() {
+async fn cancelling_one_call_keeps_its_slot_while_siblings_finish() {
     let f = Fixture::new(Some(4), 0, SharedRecovery::Manual).await;
     let clients = futures::future::join_all((0..4).map(|_| f.session())).await;
     let calls: Vec<_> = clients
@@ -313,11 +303,9 @@ async fn cancelling_one_call_uses_its_upstream_id_and_drains_siblings() {
     .await;
     assert_ne!(upstream["params"]["requestId"], DOWNSTREAM_ID);
     assert_eq!(upstream["params"]["requestId"], cancelled["id"]);
-    let runtime = f
-        .wait_for_runtime(|r| r["shared_state"] == "recovering" && r["degraded"] == true)
-        .await;
-    assert_eq!(runtime["recovery"]["phase"], "cleanup");
-    assert_eq!(runtime["recovery"]["last_failure"]["reason"], "cancelled");
+    // The frontend is gone, but the cancelled upstream call still owns its slot.
+    let full = clients[3].call("echo_delay", json!({"nonce":5})).await;
+    assert!(content(&full).contains("Backend request queue is full"));
     for (index, call) in calls.enumerate() {
         let nonce = index as u64 + 1;
         assert!(!call.is_finished());
@@ -325,12 +313,19 @@ async fn cancelling_one_call_uses_its_upstream_id_and_drains_siblings() {
         let response = timeout(WAIT, call).await.unwrap().unwrap();
         assert_eq!(mock_value(&response)["nonce"], nonce);
     }
-    f.wait_for_runtime(|r| r["shared_state"] == "failed").await;
-    assert_eq!(f.gateway.health().await.unwrap()["workers"], 0);
-    let blocked = clients[0].call("echo_delay", json!({"nonce":5})).await;
-    assert!(
-        content(&blocked).starts_with("Backend state was lost; the last action was NOT retried.")
-    );
+    f.release(0);
+    eventually(|| {
+        records(&f.journal)
+            .into_iter()
+            .find(|entry| entry["nonce"] == 0 && entry["event"] == "end")
+    })
+    .await;
+    let next = clients[0].call("echo_delay", json!({"nonce":6})).await;
+    assert_eq!(mock_value(&next)["nonce"], 6);
+    let runtime = f.runtime().await;
+    assert_eq!(runtime["shared_state"], "running");
+    assert_eq!(runtime["degraded"], false);
+    assert!(runtime["recovery"]["last_failure"].is_null());
     assert_eq!(
         records(&f.wire)
             .iter()

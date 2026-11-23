@@ -15,16 +15,18 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{Mutex, Semaphore, SemaphorePermit};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 pub(crate) struct BackendSlot {
     pub(crate) worker: Mutex<Option<Worker>>,
-    pub(crate) execution: Execution,
+    pub(crate) execution: Arc<Execution>,
+    pub(crate) closing: CancellationToken,
     lifecycle: StdMutex<Lifecycle>,
     live: Arc<AtomicUsize>,
     shared: bool,
     last_active: StdMutex<Instant>,
-    pub admission: Semaphore,
+    pub admission: Arc<Semaphore>,
     admission_capacity: usize,
 }
 impl BackendSlot {
@@ -32,7 +34,8 @@ impl BackendSlot {
         let admission_capacity = config.max_pending_calls + config.max_concurrent_calls as usize;
         Arc::new(Self {
             worker: Mutex::new(None),
-            execution: Execution::new(config.max_concurrent_calls, config.listen),
+            execution: Arc::new(Execution::new(config.max_concurrent_calls, config.listen)),
+            closing: CancellationToken::new(),
             lifecycle: StdMutex::new(Lifecycle::new(
                 config.shared_recovery,
                 (config.ownership == Ownership::Shared)
@@ -41,7 +44,7 @@ impl BackendSlot {
             live,
             shared: config.ownership == Ownership::Shared,
             last_active: StdMutex::new(Instant::now()),
-            admission: Semaphore::new(admission_capacity),
+            admission: Arc::new(Semaphore::new(admission_capacity)),
             admission_capacity,
         })
     }
@@ -142,6 +145,9 @@ impl BackendSlot {
     }
 
     pub async fn shutdown(&self) {
+        // Daemon shutdown closes the process itself, so shared dispatches can
+        // release their permits without waiting for a reply from that process.
+        self.closing.cancel();
         let _exclusive = self.execution.acquire_all().await;
         let worker = self.worker.lock().await.take();
         if let Some(worker) = worker {
@@ -181,11 +187,11 @@ impl BackendSlot {
     pub fn admit(&self, generation: u64) -> Result<(), &'static str> {
         self.lifecycle.lock().unwrap().admit(generation)
     }
-    pub fn begin_call<'a>(
-        &'a self,
+    pub fn begin_call(
+        &self,
         generation: u64,
-        permit: SemaphorePermit<'a>,
-    ) -> Result<Option<ActiveCall<'a>>, &'static str> {
+        permit: OwnedSemaphorePermit,
+    ) -> Result<Option<ActiveCall>, &'static str> {
         // Linearize dispatch admission against failure, including failures
         // that occurred while this caller was waiting for catalog verification.
         let lifecycle = self.lifecycle.lock().unwrap();
@@ -274,17 +280,16 @@ impl BackendSlot {
     }
 }
 
-/// A cancelled or timed-out action may still be running upstream. Block new
-/// dispatches for the generation even if its other calls are still draining.
-pub(crate) struct FailureGuard {
+/// An abandoned or failed startup can still own a process that needs reaping.
+struct FailureGuard {
     slot: Option<Arc<BackendSlot>>,
-    pub reason: Reason,
+    reason: Reason,
 }
 impl FailureGuard {
-    pub fn new(slot: Option<Arc<BackendSlot>>, reason: Reason) -> Self {
+    fn new(slot: Option<Arc<BackendSlot>>, reason: Reason) -> Self {
         Self { slot, reason }
     }
-    pub fn disarm(&mut self) {
+    fn disarm(&mut self) {
         self.slot = None;
     }
 }

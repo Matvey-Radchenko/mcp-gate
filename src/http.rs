@@ -43,6 +43,9 @@ pub struct Server {
     pub cancellation: CancellationToken,
     state: HttpState,
 }
+
+#[derive(Clone)]
+pub(crate) struct ResponseCancellation(pub CancellationToken);
 impl Server {
     pub fn new(gateway: Arc<Gateway>, token: String) -> Self {
         let cancellation = CancellationToken::new();
@@ -212,6 +215,7 @@ async fn guard(State(state): State<HttpState>, mut req: Request, next: Next) -> 
     let method = req.method().clone();
     let mut capacity = None;
     let mut body_guard = None;
+    let mut disconnect = None;
     if let Some(id) = &id {
         let lease = state.leases.lock().unwrap().get(id).cloned();
         let Some(lease) = lease else {
@@ -219,10 +223,18 @@ async fn guard(State(state): State<HttpState>, mut req: Request, next: Next) -> 
         };
         {
             let mut value = lease.lock().unwrap();
-            if value.closing {
+            if value.is_closing() {
                 return StatusCode::NOT_FOUND.into_response();
             }
             req.extensions_mut().insert(Activity(lease.clone()));
+            if method == Method::POST && state.gateway.shared.is_some() {
+                // The SDK can keep a handler alive after the body disconnects
+                // or while the session transport drains after DELETE.
+                let token = value.termination.child_token();
+                req.extensions_mut()
+                    .insert(ResponseCancellation(token.clone()));
+                disconnect = Some(token.drop_guard());
+            }
             if method == Method::GET {
                 value.last_activity = Instant::now();
                 value.streams += 1;
@@ -278,14 +290,11 @@ async fn guard(State(state): State<HttpState>, mut req: Request, next: Next) -> 
         && response.status().is_success()
         && let Some(id) = id
     {
-        state.leases.lock().unwrap().remove(&id);
+        lease::remove_session(&state, &id);
     }
     let (parts, body) = response.into_parts();
     Response::from_parts(
         parts,
-        Body::new(TrackedBody {
-            body,
-            _guard: body_guard,
-        }),
+        Body::new(TrackedBody::new(body, body_guard, disconnect)),
     )
 }

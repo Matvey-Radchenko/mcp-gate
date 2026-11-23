@@ -1,10 +1,13 @@
 //! Execution permits protect worker ownership. The call tracker records actual
 //! dispatch intervals, excluding time spent waiting for startup or a permit.
-use std::{net::SocketAddr, sync::Mutex};
-use tokio::sync::{Semaphore, SemaphorePermit};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, SemaphorePermit};
 
 pub(crate) struct Execution {
-    permits: Semaphore,
+    permits: Arc<Semaphore>,
     limit: u32,
     gateway: SocketAddr,
     state: Mutex<Calls>,
@@ -29,7 +32,7 @@ pub(crate) enum CallFailure {
 impl Execution {
     pub fn new(limit: u32, gateway: SocketAddr) -> Self {
         Self {
-            permits: Semaphore::new(limit as usize),
+            permits: Arc::new(Semaphore::new(limit as usize)),
             limit,
             gateway,
             state: Mutex::default(),
@@ -40,27 +43,27 @@ impl Execution {
         self.state.lock().unwrap().degraded
     }
 
-    pub async fn acquire(&self) -> SemaphorePermit<'_> {
+    pub async fn acquire(&self) -> OwnedSemaphorePermit {
         let count = if self.degraded() { self.limit } else { 1 };
-        self.acquire_many(count).await
+        self.permits
+            .clone()
+            .acquire_many_owned(count)
+            .await
+            .expect("execution semaphore is never closed")
     }
 
     pub async fn acquire_all(&self) -> SemaphorePermit<'_> {
-        self.acquire_many(self.limit).await
+        self.permits
+            .acquire_many(self.limit)
+            .await
+            .expect("execution semaphore is never closed")
     }
 
     pub fn try_acquire_all(&self) -> Option<SemaphorePermit<'_>> {
         self.permits.try_acquire_many(self.limit).ok()
     }
 
-    async fn acquire_many(&self, count: u32) -> SemaphorePermit<'_> {
-        self.permits
-            .acquire_many(count)
-            .await
-            .expect("execution semaphore is never closed")
-    }
-
-    pub fn start<'a>(&'a self, permit: SemaphorePermit<'a>) -> Option<ActiveCall<'a>> {
+    pub fn start(self: &Arc<Self>, permit: OwnedSemaphorePermit) -> Option<ActiveCall> {
         let mut state = self.state.lock().unwrap();
         // A previously queued one-permit waiter may wake after degradation.
         // Check in the same critical section as the start so it has to requeue
@@ -72,25 +75,26 @@ impl Execution {
         state.active += 1;
         Some(ActiveCall {
             _permit: permit,
-            execution: self,
+            execution: self.clone(),
             start: state.started,
             overlapped_at_start: state.active > 1,
-            failure: Some(CallFailure::Cancelled),
+            failure: None,
         })
     }
 }
 
-/// Owned by the dispatch future. Dropping that future counts as cancellation.
-pub(crate) struct ActiveCall<'a> {
+/// The backend dispatch owns this permit through its response or deadline,
+/// even when the frontend request has already ended.
+pub(crate) struct ActiveCall {
     // Released after Drop records the outcome and any fallback policy change.
-    _permit: SemaphorePermit<'a>,
-    execution: &'a Execution,
+    _permit: OwnedSemaphorePermit,
+    execution: Arc<Execution>,
     start: u64,
     overlapped_at_start: bool,
     pub failure: Option<CallFailure>,
 }
 
-impl Drop for ActiveCall<'_> {
+impl Drop for ActiveCall {
     fn drop(&mut self) {
         let degraded = {
             let mut state = self.execution.state.lock().unwrap();
@@ -118,7 +122,7 @@ mod tests {
 
     #[tokio::test]
     async fn overlap_is_remembered_and_stale_single_permits_cannot_dispatch() {
-        let execution = Execution::new(4, "127.0.0.1:12345".parse().unwrap());
+        let execution = Arc::new(Execution::new(4, "127.0.0.1:12345".parse().unwrap()));
         let mut first = execution.start(execution.acquire().await).unwrap();
         let mut sibling = execution.start(execution.acquire().await).unwrap();
         let stale = execution.acquire().await;
