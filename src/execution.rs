@@ -15,11 +15,18 @@ impl Handler {
         context: RequestContext<RoleServer>,
     ) -> Result<ServerResult, ErrorData> {
         let is_tool = matches!(&request, ClientRequest::CallToolRequest(_));
-        let _activity = context
+        let activity = context
             .extensions
             .get::<axum::http::request::Parts>()
-            .and_then(|p| p.extensions.get::<crate::http::Activity>())
-            .map(|a| a.start());
+            .and_then(|p| p.extensions.get::<crate::http::Activity>());
+        let _activity = if let Some(activity) = activity {
+            let Some(call) = activity.start() else {
+                return failure(is_tool, "MCP session is closing. Reinitialize the session.");
+            };
+            Some(call)
+        } else {
+            None
+        };
         let gateway = &self.session.gateway;
         let backend = &self.session.backend;
         backend.touch();

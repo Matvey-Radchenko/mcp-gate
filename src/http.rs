@@ -2,7 +2,7 @@
 //! MCP framing, negotiation, SSE and session IDs belong to the official SDK.
 mod lease;
 
-use crate::{BUILD_COMMIT, gateway::Gateway};
+use crate::{BUILD_COMMIT, config::Ownership, gateway::Gateway};
 use axum::{
     Router,
     body::Body,
@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 use subtle::ConstantTimeEq;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -35,12 +35,13 @@ struct HttpState {
     host: String,
     leases: Arc<Mutex<HashMap<String, LeaseRef>>>,
     capacity: Arc<Semaphore>,
-    maintenance: Arc<Mutex<Option<OwnedSemaphorePermit>>>,
+    maintenance: Arc<AsyncMutex<Option<OwnedSemaphorePermit>>>,
+    manager: Arc<LocalSessionManager>,
 }
 pub struct Server {
     pub router: Router,
     pub cancellation: CancellationToken,
-    manager: Arc<LocalSessionManager>,
+    state: HttpState,
 }
 impl Server {
     pub fn new(gateway: Arc<Gateway>, token: String) -> Self {
@@ -65,15 +66,15 @@ impl Server {
             maintenance: Arc::default(),
             gateway,
             leases: Arc::new(Mutex::new(HashMap::new())),
+            manager,
         };
         let clean_state = state.clone();
-        let clean_manager = manager.clone();
         let clean_cancel = cancellation.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(1));
             loop {
                 tokio::select! { _ = clean_cancel.cancelled() => break, _ = tick.tick() => {} }
-                lease::reap_sessions(&clean_state, &clean_manager).await;
+                lease::reap_sessions(&clean_state, Instant::now()).await;
                 clean_state.gateway.reap_closed_workers().await;
             }
         });
@@ -82,28 +83,48 @@ impl Server {
             .route("/admin/maintenance", post(maintenance).delete(resume))
             .nest_service("/mcp", service)
             .with_state(state.clone())
-            .layer(middleware::from_fn_with_state(state, guard));
+            .layer(middleware::from_fn_with_state(state.clone(), guard));
         Self {
             router,
             cancellation,
-            manager,
+            state,
         }
     }
     pub async fn shutdown(&self) {
         self.cancellation.cancel();
-        let ids: Vec<_> = self.manager.sessions.read().await.keys().cloned().collect();
-        futures::future::join_all(ids.iter().map(|id| self.manager.close_session(id))).await;
+        let manager = &self.state.manager;
+        let ids: Vec<_> = manager.sessions.read().await.keys().cloned().collect();
+        futures::future::join_all(ids.iter().map(|id| manager.close_session(id))).await;
     }
 }
-// Holding every permit atomically excludes live sessions, initialization and active handlers.
 async fn maintenance(State(state): State<HttpState>) -> StatusCode {
-    let mut held = state.maintenance.lock().unwrap();
+    // Finish closing marked leases even if the admin client drops its request.
+    match tokio::spawn(enter_maintenance(state)).await {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::error!(%error, "maintenance task failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+async fn enter_maintenance(state: HttpState) -> StatusCode {
+    // This lock serializes initialization and resume through the drain. After
+    // it is released, holding every capacity permit keeps initialization paused.
+    let mut held = state.maintenance.lock().await;
     if held.is_some() {
         return StatusCode::OK;
     }
     let Ok(count) = u32::try_from(state.gateway.config.max_sessions) else {
         return StatusCode::CONFLICT;
     };
+    if state.gateway.config.ownership == Ownership::Shared {
+        let Some(ids) = lease::mark_idle_shared_sessions(&state) else {
+            return StatusCode::CONFLICT;
+        };
+        for id in ids {
+            lease::close_session(&state, &id, "maintenance").await;
+        }
+    }
     match state.capacity.clone().try_acquire_many_owned(count) {
         Ok(permit) => {
             *held = Some(permit);
@@ -113,10 +134,11 @@ async fn maintenance(State(state): State<HttpState>) -> StatusCode {
     }
 }
 async fn resume(State(state): State<HttpState>) -> StatusCode {
-    state.maintenance.lock().unwrap().take();
+    drop(state.maintenance.lock().await.take());
     StatusCode::OK
 }
 async fn health(State(state): State<HttpState>) -> impl IntoResponse {
+    let maintenance = state.maintenance.lock().await.is_some();
     let details: Vec<_> = state
         .leases
         .lock()
@@ -130,8 +152,8 @@ async fn health(State(state): State<HttpState>) -> impl IntoResponse {
         })
         .collect();
     let mut response = json!({ "service": "mcp-gate", "version": env!("CARGO_PKG_VERSION"),
-        "pid": std::process::id(), "sessions": state.leases.lock().unwrap().len(),
-        "maintenance":state.maintenance.lock().unwrap().is_some(),
+        "pid": std::process::id(), "sessions": details.len(),
+        "maintenance":maintenance,
         "workers": state.gateway.live.load(std::sync::atomic::Ordering::SeqCst),
         "max_workers": state.gateway.config.max_workers, "tools": state.gateway.catalog.tools.len(),
         "runtime": state.gateway.runtime_status(),
@@ -220,6 +242,7 @@ async fn guard(State(state): State<HttpState>, mut req: Request, next: Next) -> 
         if method != Method::POST {
             return StatusCode::BAD_REQUEST.into_response();
         }
+        let _admission = state.maintenance.lock().await;
         match state.capacity.clone().try_acquire_owned() {
             Ok(permit) => capacity = Some(permit),
             Err(_) => {
@@ -236,18 +259,20 @@ async fn guard(State(state): State<HttpState>, mut req: Request, next: Next) -> 
             .get("mcp-session-id")
             .and_then(|h| h.to_str().ok())
     {
-        state.leases.lock().unwrap().insert(
-            id.into(),
-            Arc::new(Mutex::new(Lease {
-                streams: 0,
-                requests: 0,
-                disconnected: None,
-                last_activity: Instant::now(),
-                closing: false,
-                active: 0,
-                _capacity: permit,
-            })),
-        );
+        // The new lease is already visible while its initialize response is
+        // still in flight, so track that body before publishing the lease.
+        let mut lease = Lease::new(state.gateway.config.ownership, permit);
+        lease.requests = 1;
+        let lease = Arc::new(Mutex::new(lease));
+        state
+            .leases
+            .lock()
+            .unwrap()
+            .insert(id.into(), lease.clone());
+        body_guard = Some(ConnectionGuard {
+            lease,
+            stream: false,
+        });
     }
     if method == Method::DELETE
         && response.status().is_success()
