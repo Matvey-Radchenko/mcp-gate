@@ -4,9 +4,7 @@ use super::HttpState;
 use crate::config::Ownership;
 use axum::body::{Body, Bytes};
 use http_body::{Body as HttpBody, Frame, SizeHint};
-use rmcp::transport::streamable_http_server::session::{
-    SessionManager, local::LocalSessionManager,
-};
+use rmcp::transport::streamable_http_server::session::SessionManager;
 use std::{
     pin::Pin,
     sync::{Arc, Mutex},
@@ -18,6 +16,9 @@ use tokio::sync::OwnedSemaphorePermit;
 #[cfg(test)]
 mod tests;
 
+// Shared backend shutdown has its own independently configured timer.
+const SHARED_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
+
 pub(super) struct Lease {
     pub streams: usize,
     pub requests: usize,
@@ -25,18 +26,48 @@ pub(super) struct Lease {
     pub last_activity: Instant,
     pub closing: bool,
     pub active: usize,
-    pub _capacity: OwnedSemaphorePermit,
+    ownership: Ownership,
+    capacity: Option<OwnedSemaphorePermit>,
 }
 pub(super) type LeaseRef = Arc<Mutex<Lease>>;
 
 impl Lease {
-    fn expiry(&self, idle: Option<Duration>, grace: Duration) -> Option<&'static str> {
-        if self.closing || self.streams > 0 || self.requests > 0 || self.active > 0 {
+    pub fn new(ownership: Ownership, capacity: OwnedSemaphorePermit) -> Self {
+        Self {
+            streams: 0,
+            requests: 0,
+            disconnected: None,
+            last_activity: Instant::now(),
+            closing: false,
+            active: 0,
+            ownership,
+            capacity: Some(capacity),
+        }
+    }
+
+    fn can_close(&self) -> bool {
+        !self.closing && self.streams == 0 && self.requests == 0 && self.active == 0
+    }
+
+    fn expiry(
+        &self,
+        now: Instant,
+        backend_idle: Option<Duration>,
+        grace: Duration,
+    ) -> Option<&'static str> {
+        if !self.can_close() {
             return None;
         }
-        if self.disconnected.is_some_and(|t| t.elapsed() >= grace) {
+        let idle = match self.ownership {
+            Ownership::Session => backend_idle,
+            Ownership::Shared => Some(SHARED_IDLE_TTL),
+        };
+        if self
+            .disconnected
+            .is_some_and(|t| now.duration_since(t) >= grace)
+        {
             Some("disconnected")
-        } else if idle.is_some_and(|idle| self.last_activity.elapsed() >= idle) {
+        } else if idle.is_some_and(|idle| now.duration_since(self.last_activity) >= idle) {
             Some("idle")
         } else {
             None
@@ -44,11 +75,15 @@ impl Lease {
     }
 }
 
-pub(super) async fn reap_sessions(state: &HttpState, manager: &LocalSessionManager) {
-    let idle = match state.gateway.config.ownership {
-        Ownership::Session => state.gateway.config.idle_timeout(),
-        Ownership::Shared => None,
+pub(super) async fn reap_sessions(state: &HttpState, now: Instant) {
+    // A shared maintenance request waits for any teardown already in progress
+    // so a lease being reaped cannot cause a transient maintenance conflict.
+    let _maintenance = if state.gateway.config.ownership == Ownership::Shared {
+        Some(state.maintenance.lock().await)
+    } else {
+        None
     };
+    let backend_idle = state.gateway.config.idle_timeout();
     let grace = Duration::from_secs(state.gateway.config.disconnect_grace_seconds);
     // Mark closing while holding the lease lock, excluding new HTTP admissions.
     // Release all blocking locks before SDK cancellation and backend cleanup.
@@ -59,18 +94,54 @@ pub(super) async fn reap_sessions(state: &HttpState, manager: &LocalSessionManag
         .iter()
         .filter_map(|(id, lease)| {
             let mut lease = lease.lock().unwrap();
-            let reason = lease.expiry(idle, grace)?;
+            let reason = lease.expiry(now, backend_idle, grace)?;
             lease.closing = true;
             Some((id.clone(), reason))
         })
         .collect();
     for (id, reason) in expired {
-        if manager.close_session(&id.clone().into()).await.is_err() {
-            tracing::warn!("expired HTTP session could not be closed by the SDK");
-        }
-        state.leases.lock().unwrap().remove(&id);
-        tracing::info!(reason, "expired HTTP session closed");
+        close_session(state, &id, reason).await;
     }
+}
+
+// The caller has paused initialization. Check every lease before marking any
+// closing, holding their locks together so a delayed handler cannot start
+// between the check and the transition.
+pub(super) fn mark_idle_shared_sessions(state: &HttpState) -> Option<Vec<String>> {
+    let leases = state.leases.lock().unwrap();
+    if state.capacity.available_permits() + leases.len() != state.gateway.config.max_sessions {
+        // An initializer or a removed lease still owns capacity.
+        return None;
+    }
+    let leases: Vec<_> = leases
+        .iter()
+        .map(|(id, lease)| (id, lease.lock().unwrap()))
+        .collect();
+    if leases.iter().any(|(_, lease)| !lease.can_close()) {
+        return None;
+    }
+    Some(
+        leases
+            .into_iter()
+            .map(|(id, mut lease)| {
+                lease.closing = true;
+                id.clone()
+            })
+            .collect(),
+    )
+}
+
+pub(super) async fn close_session(state: &HttpState, id: &str, reason: &'static str) {
+    if state.manager.close_session(&id.into()).await.is_err() {
+        tracing::warn!(reason, "HTTP session could not be closed by the SDK");
+    }
+    if let Some(lease) = state.leases.lock().unwrap().remove(id) {
+        // The SDK removes the session ID before signalling its transport.
+        // A closing lease has no active work and cannot admit any, so cached
+        // SDK request extensions need not keep its capacity after removal.
+        drop(lease.lock().unwrap().capacity.take());
+    }
+    tracing::info!(reason, "HTTP session lease removed");
 }
 
 pub(super) struct ConnectionGuard {
@@ -80,11 +151,16 @@ pub(super) struct ConnectionGuard {
 #[derive(Clone)]
 pub(crate) struct Activity(pub(super) LeaseRef);
 impl Activity {
-    pub fn start(&self) -> ActiveCall {
+    pub fn start(&self) -> Option<ActiveCall> {
         let mut lease = self.0.lock().unwrap();
+        // The HTTP response may have been dropped before the SDK dispatches
+        // its handler. A session selected for closure cannot start new work.
+        if lease.closing {
+            return None;
+        }
         lease.active += 1;
         lease.last_activity = Instant::now();
-        ActiveCall(self.0.clone())
+        Some(ActiveCall(self.0.clone()))
     }
 }
 // The lease also owns its session-capacity permit. Cancellation may outlive the
@@ -100,18 +176,22 @@ impl Drop for ActiveCall {
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         let mut value = self.lease.lock().unwrap();
+        let now = Instant::now();
         if self.stream {
             // A GET stream protects session-owned recordings. Once the last
             // stream closes, allow a full idle interval to reconnect.
-            value.last_activity = Instant::now();
+            value.last_activity = now;
             value.streams -= 1;
             if value.streams == 0 {
-                value.disconnected = Some(Instant::now());
+                value.disconnected = Some(now);
             }
         } else {
             value.requests -= 1;
+            if value.ownership == Ownership::Shared {
+                value.last_activity = now;
+            }
             if value.disconnected.is_some() {
-                value.disconnected = Some(Instant::now());
+                value.disconnected = Some(now);
             }
         }
     }

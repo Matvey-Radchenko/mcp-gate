@@ -100,10 +100,16 @@ The ownership-specific consequences are:
   opens GET must DELETE or explicitly close its session if it wants to release it.
 - **Shared:** enabling idle is an explicit review decision that volatile backend
   state may be discarded. Shared Docker backends cannot enable it; omitted or `0`
-  is valid for Docker. Open SSE streams do not extend shared idle. Expiry closes
-  only the backend, keeping HTTP sessions; the next executable request starts one
+  is valid for Docker. Open SSE streams do not extend the backend timer. Backend
+  idle expiry leaves HTTP sessions open; the next executable request starts one
   fresh backend after owned-process cleanup. Idle shutdown never replays actions,
   hides an external process exit, enables crash recovery or clears a failure block.
+
+Shared HTTP sessions have a separate 30-minute idle timeout that starts after
+initialization and resets when a request, GET stream or executable call ends. An
+open GET stream, in-flight request or active call keeps the session alive. The
+disconnect grace period also applies after the last GET stream closes. A client
+using a closed session ID receives HTTP 404 and can initialize a new session.
 
 `session_idle_evict_seconds` keeps its name and session-only meaning. When session
 idle is enabled, eviction must be no greater than `idle_seconds`. When disabled,
