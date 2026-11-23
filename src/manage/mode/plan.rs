@@ -61,6 +61,8 @@ impl Plan {
             for (field, previous) in [
                 ("shared_client_roots", json!(config.shared_client_roots)),
                 ("shared_recovery", json!(config.shared_recovery)),
+                // Parallel dispatch is shared-only; session ownership must stay serial.
+                ("max_concurrent_calls", json!(config.max_concurrent_calls)),
             ] {
                 if document.remove(field).is_some() {
                     changes.push(Change {

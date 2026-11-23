@@ -1,13 +1,15 @@
 //! Request-scoped forwarding: response IDs, progress and cancellation never cross clients.
 use crate::{
+    concurrency::{ActiveCall, CallFailure},
+    config::{Config, Ownership},
     ownership::{BackendSlot, FailureGuard},
     recovery::Reason,
-    worker::Worker,
+    worker::RequestPeer,
 };
 use rmcp::{
     Peer, RoleClient, RoleServer,
     model::*,
-    service::{PeerRequestOptions, RequestContext},
+    service::{PeerRequestOptions, RequestContext, ServiceError},
 };
 use std::{sync::Arc, time::Duration};
 
@@ -38,39 +40,65 @@ impl Drop for CancelOnDrop {
     }
 }
 pub(crate) async fn invoke(
-    worker: &Worker,
+    upstream: RequestPeer,
     backend: &Arc<BackendSlot>,
-    timeout_seconds: u64,
-    shared: bool,
+    config: &Config,
+    call: &mut ActiveCall<'_>,
     request: ClientRequest,
     context: RequestContext<RoleServer>,
 ) -> Result<ServerResult, ErrorData> {
     let is_tool = matches!(&request, ClientRequest::CallToolRequest(_));
-    let peer = worker.peer();
-    let mut shared_guard =
-        FailureGuard::new(shared.then(|| backend.clone()), Reason::HandlerDropped);
-    let mut progress = worker.subscribe_progress();
+    let mut shared_guard = FailureGuard::new(
+        (config.ownership == Ownership::Shared).then(|| backend.clone()),
+        Reason::HandlerDropped,
+    );
+    let timeout = Duration::from_secs(config.call_timeout_seconds);
+    let result = if config.max_concurrent_calls == 1 {
+        forward(
+            upstream,
+            request,
+            context,
+            PeerRequestOptions::with_timeout(timeout),
+        )
+        .await
+    } else {
+        // Bound the whole opted-in dispatch, including peer backpressure and
+        // progress forwarding, so a failed generation can always drain.
+        let cancellation = context.ct.clone();
+        tokio::select! {
+            result = tokio::time::timeout(
+                timeout,
+                forward(upstream, request, context, PeerRequestOptions::no_options()),
+            ) => result.unwrap_or(Err(ForwardError::Response(ServiceError::Timeout { timeout }))),
+            _ = cancellation.cancelled() => Err(ForwardError::Cancelled),
+        }
+    };
+    complete(result, backend, &mut shared_guard, call, is_tool)
+}
+
+enum ForwardError {
+    Send,
+    Cancelled,
+    Response(ServiceError),
+}
+
+async fn forward(
+    upstream: RequestPeer,
+    request: ClientRequest,
+    context: RequestContext<RoleServer>,
+    options: PeerRequestOptions,
+) -> Result<ServerResult, ForwardError> {
+    let peer = upstream.peer;
+    let bounded_dispatch = options.timeout.is_none();
+    let mut progress = upstream.progress.subscribe();
     let downstream_progress: Option<ProgressToken> = context
         .meta
         .get("progressToken")
         .and_then(|v| serde_json::from_value(v.clone()).ok());
-    let handle = match peer
-        .send_request_with_option(
-            request,
-            PeerRequestOptions::with_timeout(Duration::from_secs(timeout_seconds))
-                .with_meta(context.meta),
-        )
+    let handle = peer
+        .send_request_with_option(request, options.with_meta(context.meta))
         .await
-    {
-        Ok(handle) => handle,
-        Err(_) => {
-            backend.fail(Reason::TransportClosed);
-            return failure(
-                is_tool,
-                "Backend connection lost; the action was NOT retried and its outcome is unknown. Check status for recovery. Check network/VPN if required by the backend.",
-            );
-        }
-    };
+        .map_err(|_| ForwardError::Send)?;
     let mut cancel = CancelOnDrop {
         peer: peer.clone(),
         id: Some(handle.id.clone()),
@@ -85,32 +113,79 @@ pub(crate) async fn invoke(
                 if let Ok(mut notification) = notification
                     && notification.progress_token == upstream_progress {
                         notification.progress_token = downstream_progress.clone().unwrap();
-                        let _ = context.peer.notify_progress(notification).await;
+                        let notify = context.peer.notify_progress(notification);
+                        if bounded_dispatch {
+                            // A blocked downstream progress write must not delay
+                            // an upstream response or transport failure.
+                            tokio::select! {
+                                result = &mut response => break result,
+                                _ = notify => {},
+                            }
+                        } else {
+                            // A disconnected client can no longer receive progress.
+                            let _ = notify.await;
+                        }
                     }
             }
             _ = context.ct.cancelled() => {
-                shared_guard.reason = Reason::Cancelled;
-                return failure(is_tool, "Request cancelled. An in-flight tool action may already have occurred; it was not retried. Check status for recovery.");
+                return Err(ForwardError::Cancelled);
             },
         }
     };
-    if result.is_ok() || matches!(&result, Err(rmcp::service::ServiceError::McpError(_))) {
+    if result.is_ok()
+        || matches!(&result, Err(ServiceError::McpError(_)))
+        || (bounded_dispatch && matches!(&result, Err(ServiceError::TransportClosed)))
+    {
         cancel.id = None;
-        shared_guard.disarm();
     }
+    result.map_err(ForwardError::Response)
+}
+
+fn complete(
+    result: Result<ServerResult, ForwardError>,
+    backend: &Arc<BackendSlot>,
+    shared_guard: &mut FailureGuard,
+    call: &mut ActiveCall<'_>,
+    is_tool: bool,
+) -> Result<ServerResult, ErrorData> {
     match result {
-        Ok(result) => Ok(result),
-        Err(rmcp::service::ServiceError::McpError(error)) => Err(error),
-        Err(error) => {
-            shared_guard.reason = match &error {
-                rmcp::service::ServiceError::Timeout { .. } => Reason::Timeout,
-                rmcp::service::ServiceError::Cancelled { .. } => Reason::Cancelled,
-                _ => Reason::TransportClosed,
+        Ok(result) => {
+            let tool_failed = matches!(&result, ServerResult::CallToolResult(tool) if tool.is_error == Some(true));
+            call.failure = tool_failed.then_some(CallFailure::ToolError);
+            shared_guard.disarm();
+            Ok(result)
+        }
+        Err(ForwardError::Response(ServiceError::McpError(error))) => {
+            call.failure = Some(CallFailure::JsonRpcError);
+            shared_guard.disarm();
+            Err(error)
+        }
+        Err(ForwardError::Send) => {
+            call.failure = Some(CallFailure::Transport);
+            backend.fail(Reason::TransportClosed);
+            failure(
+                is_tool,
+                "Backend connection lost; the action was NOT retried and its outcome is unknown. Check status for recovery. Check network/VPN if required by the backend.",
+            )
+        }
+        Err(ForwardError::Cancelled) => {
+            shared_guard.reason = Reason::Cancelled;
+            failure(
+                is_tool,
+                "Request cancelled. An in-flight tool action may already have occurred; it was not retried. Check status for recovery.",
+            )
+        }
+        Err(ForwardError::Response(error)) => {
+            let (reason, category) = match &error {
+                ServiceError::Timeout { .. } => (Reason::Timeout, CallFailure::Timeout),
+                ServiceError::Cancelled { .. } => (Reason::Cancelled, CallFailure::Cancelled),
+                _ => (Reason::TransportClosed, CallFailure::Transport),
             };
+            shared_guard.reason = reason;
+            call.failure = Some(category);
             if matches!(
                 error,
-                rmcp::service::ServiceError::TransportClosed
-                    | rmcp::service::ServiceError::TransportSend(_)
+                ServiceError::TransportClosed | ServiceError::TransportSend(_)
             ) {
                 backend.fail(Reason::TransportClosed);
             }

@@ -81,6 +81,10 @@ pub struct Worker {
     progress: tokio::sync::broadcast::Sender<ProgressNotificationParam>,
     catalog_dirty: Arc<AtomicBool>,
 }
+pub(crate) struct RequestPeer {
+    pub peer: Peer<RoleClient>,
+    pub progress: tokio::sync::broadcast::Sender<ProgressNotificationParam>,
+}
 struct Resources {
     service: RunningService<RoleClient, UpstreamClient>,
     process: ProcessOwner,
@@ -112,7 +116,10 @@ impl Worker {
             ListRootsResult::default()
         };
         let roots = Arc::new(tokio::sync::RwLock::new(roots));
-        let (progress, _) = tokio::sync::broadcast::channel(32);
+        // Each dispatched request filters its own receiver. Lagging receivers
+        // lose old progress events while request routing stays intact.
+        let (progress, _) =
+            tokio::sync::broadcast::channel(32 * config.max_concurrent_calls as usize);
         let catalog_dirty = Arc::new(AtomicBool::new(false));
         let mut command = config.backend.command()?;
         command.current_dir(
@@ -178,10 +185,11 @@ impl Worker {
             .as_ref()
             .is_none_or(|r| r.service.is_closed() || r.service.peer().is_transport_closed())
     }
-    pub fn subscribe_progress(
-        &self,
-    ) -> tokio::sync::broadcast::Receiver<ProgressNotificationParam> {
-        self.progress.subscribe()
+    pub(crate) fn request_peer(&self) -> RequestPeer {
+        RequestPeer {
+            peer: self.peer().clone(),
+            progress: self.progress.clone(),
+        }
     }
     pub async fn set_roots(&self, roots: ListRootsResult) {
         *self.roots.write().await = roots;

@@ -1,6 +1,7 @@
 //! Process ownership is independent of the HTTP session. Shared slots have a
 //! gateway owner; session slots disappear with their last handler.
 use crate::{
+    concurrency::{ActiveCall, Execution},
     config::{Config, Ownership, SharedRecovery},
     gateway::Gateway,
     recovery::{Lifecycle, Reason},
@@ -14,20 +15,24 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, SemaphorePermit};
 
 pub(crate) struct BackendSlot {
-    pub worker: Mutex<Option<Worker>>,
+    pub(crate) worker: Mutex<Option<Worker>>,
+    pub(crate) execution: Execution,
     lifecycle: StdMutex<Lifecycle>,
     live: Arc<AtomicUsize>,
     shared: bool,
     last_active: StdMutex<Instant>,
     pub admission: Semaphore,
+    admission_capacity: usize,
 }
 impl BackendSlot {
     pub fn new(config: &Config, live: Arc<AtomicUsize>) -> Arc<Self> {
+        let admission_capacity = config.max_pending_calls + config.max_concurrent_calls as usize;
         Arc::new(Self {
             worker: Mutex::new(None),
+            execution: Execution::new(config.max_concurrent_calls, config.listen),
             lifecycle: StdMutex::new(Lifecycle::new(
                 config.shared_recovery,
                 (config.ownership == Ownership::Shared)
@@ -36,7 +41,8 @@ impl BackendSlot {
             live,
             shared: config.ownership == Ownership::Shared,
             last_active: StdMutex::new(Instant::now()),
-            admission: Semaphore::new(config.max_pending_calls + 1),
+            admission: Semaphore::new(admission_capacity),
+            admission_capacity,
         })
     }
 
@@ -48,8 +54,8 @@ impl BackendSlot {
         self.last_active.lock().unwrap().elapsed()
     }
 
-    // The caller holds `worker` across startup and execution: no duplicate spawn,
-    // interleaved stateful calls, or unbounded admission queue.
+    // The caller holds an execution permit before locking `worker`. Startup
+    // and catalog verification run under that mutex to prevent duplicate work.
     pub async fn start_worker(
         self: &Arc<Self>,
         gateway: &Gateway,
@@ -136,26 +142,33 @@ impl BackendSlot {
     }
 
     pub async fn shutdown(&self) {
-        if let Some(worker) = self.worker.lock().await.take() {
+        let _exclusive = self.execution.acquire_all().await;
+        let worker = self.worker.lock().await.take();
+        if let Some(worker) = worker {
             worker.shutdown().await;
         }
     }
 
     /// Normal idle shutdown preserves the lifecycle and every HTTP session
-    pub async fn shutdown_if_idle(&self, minimum: Duration, admission_capacity: usize) -> bool {
+    pub async fn shutdown_if_idle(&self, minimum: Duration) -> bool {
+        let Some(_exclusive) = self.execution.try_acquire_all() else {
+            return false;
+        };
         let Ok(mut guard) = self.worker.try_lock() else {
             return false;
         };
         if self.idle() < minimum
-            || self.admission.available_permits() != admission_capacity
+            || self.admission.available_permits() != self.admission_capacity
             || self.admit(self.generation()).is_err()
             || guard.as_ref().is_none_or(Worker::closed)
         {
             return false;
         }
-        // Keep the execution lock through cleanup. A new request may queue,
-        // then start one fresh worker only after its predecessor is fully gone
-        if let Some(worker) = guard.take() {
+        // Keep all permits through cleanup so a queued call starts a fresh
+        // worker only after its predecessor is fully gone.
+        let worker = guard.take();
+        drop(guard);
+        if let Some(worker) = worker {
             worker.shutdown().await;
         }
         tracing::info!("stopped idle shared backend; next executable request starts it again");
@@ -168,6 +181,17 @@ impl BackendSlot {
     pub fn admit(&self, generation: u64) -> Result<(), &'static str> {
         self.lifecycle.lock().unwrap().admit(generation)
     }
+    pub fn begin_call<'a>(
+        &'a self,
+        generation: u64,
+        permit: SemaphorePermit<'a>,
+    ) -> Result<Option<ActiveCall<'a>>, &'static str> {
+        // Linearize dispatch admission against failure, including failures
+        // that occurred while this caller was waiting for catalog verification.
+        let lifecycle = self.lifecycle.lock().unwrap();
+        lifecycle.admit(generation)?;
+        Ok(self.execution.start(permit))
+    }
     pub fn status(&self) -> serde_json::Value {
         self.lifecycle
             .lock()
@@ -175,9 +199,8 @@ impl BackendSlot {
             .snapshot(self.live.load(Ordering::SeqCst))
     }
 
-    /// Record the failure before returning. The caller may still hold `worker`,
-    /// so cleanup runs separately and must not lock inline. A waiter has to see
-    /// the new generation as soon as it acquires that lock, not after scheduling.
+    /// Block new dispatches immediately. Cleanup runs separately because the
+    /// failing caller and its siblings may still hold execution permits.
     pub fn fail(self: &Arc<Self>, reason: Reason) {
         let Some(generation) = self.lifecycle.lock().unwrap().fail(reason) else {
             return;
@@ -188,26 +211,15 @@ impl BackendSlot {
         });
     }
 
-    /// Stop the current worker, if one is idle, and record why it cannot be reused.
-    /// A call that holds the worker lock is left running.
-    pub async fn retire(self: &Arc<Self>, reason: Reason) -> bool {
-        let Some(generation) = self.lifecycle.lock().unwrap().fail(reason) else {
-            return false;
-        };
-        self.reap_generation(generation).await;
-        true
-    }
-
     async fn reap_generation(self: &Arc<Self>, generation: u64) {
-        // Hold the execution lock until owned resources are gone. No new
-        // worker can appear between taking the old one and its cleanup.
-        // Keep the worker lock through shutdown. The next call on this session
-        // waits, then observes the drained state instead of a half-finished one.
-        let mut guard = self.worker.lock().await;
+        // Let admitted siblings finish with their own deadlines. Keep all
+        // permits through cleanup so no waiter can observe a half-drained slot.
+        let _exclusive = self.execution.acquire_all().await;
         if self.generation() != generation {
             return;
         }
-        if let Some(worker) = guard.take() {
+        let worker = self.worker.lock().await.take();
+        if let Some(worker) = worker {
             worker.shutdown().await;
         }
         // A cancelled startup can leave a ProcessOwner cleaning up via Drop.
@@ -217,13 +229,19 @@ impl BackendSlot {
     }
 
     pub async fn retire_if_idle(self: &Arc<Self>, reason: Reason) -> bool {
-        // Do not wait for the worker lock. The caller may already hold another
-        // session's lock, and waiting here could deadlock two startups.
+        // Do not wait for permits or the mutex. The caller may already hold
+        // another session's locks, and waiting here could deadlock two startups.
+        let Some(_exclusive) = self.execution.try_acquire_all() else {
+            return false;
+        };
         let worker = {
             let mut guard = match self.worker.try_lock() {
                 Ok(guard) => guard,
                 Err(_) => return false,
             };
+            if reason == Reason::TransportClosed && guard.as_ref().is_none_or(|w| !w.closed()) {
+                return false;
+            }
             guard.take()
         };
         let Some(worker) = worker else {
@@ -237,6 +255,17 @@ impl BackendSlot {
         true
     }
 
+    #[allow(
+        deprecated,
+        reason = "Session roots are part of the supported MCP protocol"
+    )]
+    pub async fn set_roots(&self, roots: rmcp::model::ListRootsResult) {
+        let _exclusive = self.execution.acquire_all().await;
+        if let Some(worker) = self.worker.lock().await.as_ref() {
+            worker.set_roots(roots).await;
+        }
+    }
+
     async fn finish_drain(&self, generation: u64) {
         while self.shared && self.live.load(Ordering::SeqCst) > 0 {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -245,8 +274,8 @@ impl BackendSlot {
     }
 }
 
-/// A cancelled/timed-out action may still be running upstream. A serial shared
-/// backend must not accept the next client's call in that uncertain state.
+/// A cancelled or timed-out action may still be running upstream. Block new
+/// dispatches for the generation even if its other calls are still draining.
 pub(crate) struct FailureGuard {
     slot: Option<Arc<BackendSlot>>,
     pub reason: Reason,

@@ -1,4 +1,8 @@
 #![allow(deprecated)]
+#[path = "mock_backend/echo.rs"]
+mod echo;
+
+use echo::Echo;
 use rmcp::{RoleServer, ServerHandler, ServiceExt, model::*, service::RequestContext};
 use serde_json::{Value, json};
 use std::{
@@ -8,8 +12,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 #[derive(Default)]
 struct Mock {
+    echo: Option<Echo>,
     state: Mutex<Value>,
     changed_tools: AtomicBool,
     changed_core: AtomicBool,
@@ -47,7 +53,7 @@ impl ServerHandler for Mock {
                 None,
             ));
         }
-        let tools = ["state", "pause", "roots", "crash"]
+        let mut tools: Vec<Tool> = ["state", "pause", "roots", "crash"]
             .into_iter()
             .filter(|name| *name != "roots" || !self.changed_tools.load(Ordering::SeqCst))
             .map(|name| {
@@ -56,6 +62,9 @@ impl ServerHandler for Mock {
         })).unwrap()
             })
             .collect();
+        if self.echo.is_some() {
+            tools.push(Echo::tool());
+        }
         Ok(ListToolsResult {
             tools,
             ..Default::default()
@@ -163,6 +172,11 @@ impl ServerHandler for Mock {
             }
             context.peer.notify_tool_list_changed().await.unwrap();
         }
+        if request.name == "echo_delay"
+            && let Some(echo) = &self.echo
+        {
+            return echo.call(request, context).await;
+        }
         let value = match request.name.as_ref() {
             "state" => {
                 let mut state = self.state.lock().unwrap();
@@ -246,11 +260,40 @@ async fn main() {
         std::fs::write(path, child.id().to_string()).unwrap();
         child
     });
-    Mock::default()
-        .serve((tokio::io::stdin(), tokio::io::stdout()))
-        .await
-        .unwrap()
-        .waiting()
-        .await
-        .unwrap();
+    Mock {
+        echo: Echo::from_env(),
+        ..Mock::default()
+    }
+    .serve((mock_stdin(), tokio::io::stdout()))
+    .await
+    .unwrap()
+    .waiting()
+    .await
+    .unwrap();
+}
+
+fn mock_stdin() -> Box<dyn tokio::io::AsyncRead + Unpin + Send> {
+    let stdin = tokio::io::stdin();
+    let Ok(path) = std::env::var("MOCK_RAW_WIRE_FILE") else {
+        return Box::new(stdin);
+    };
+    let (input, mut writer) = tokio::io::duplex(8192);
+    tokio::spawn(async move {
+        use std::io::Write;
+        let mut log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        let mut stdin = tokio::io::BufReader::new(stdin);
+        let mut line = Vec::new();
+        while stdin.read_until(b'\n', &mut line).await.unwrap() > 0 {
+            log.write_all(&line).unwrap();
+            if writer.write_all(&line).await.is_err() {
+                break; // The mock MCP service closed its input.
+            }
+            line.clear();
+        }
+    });
+    Box::new(input)
 }

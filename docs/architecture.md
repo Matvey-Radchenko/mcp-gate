@@ -170,6 +170,21 @@ concurrently, and forwards POST and optional GET responses through one stdout
 writer. On stdin EOF or a shutdown signal, it cancels its streams and sends a
 bounded session DELETE.
 
+## Parallel calls to shared backends
+
+Shared slots can opt into `max_concurrent_calls`. An execution permit keeps
+the worker alive during dispatch. The worker mutex covers startup, catalog
+verification and cloning the upstream peer and progress sender. Maintenance
+takes every execution permit before the worker mutex. Failure blocks new
+dispatches for that generation and cleanup waits for admitted calls to finish.
+A broken upstream transport drops all pending responses.
+
+rmcp allocates IDs and progress tokens upstream. The dispatch task uses its own
+request handle to return results, filter progress and forward cancellation.
+An error on an overlapping call switches the slot to acquiring all execution
+permits for each subsequent call. This serial fallback lasts for the lifetime
+of the gateway process, including across backend generations.
+
 ## Дальнейшие задачи (не обещания текущей версии)
 
 - Регулярный smoke на обновлениях Chrome и при переходе на другой Node.

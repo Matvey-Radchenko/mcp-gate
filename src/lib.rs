@@ -2,6 +2,7 @@ pub mod advisor;
 pub mod backend;
 pub mod catalog;
 pub mod clients;
+mod concurrency;
 pub mod config;
 pub mod deployment;
 mod discovery;

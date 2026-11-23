@@ -84,7 +84,7 @@ impl Harness {
         panic!("Replacement test gateway did not start");
     }
     pub(crate) async fn new(real: bool, max_workers: usize) -> Self {
-        Self::configured(real, max_workers, None, None).await
+        Self::configured(real, max_workers, None, None, |_| {}).await
     }
     pub(crate) async fn generic(
         ownership: &str,
@@ -97,7 +97,19 @@ impl Harness {
             if ownership == "shared" { 1 } else { 4 },
             Some((ownership, pending, call_timeout, queue_timeout)),
             None,
+            |_| {},
         )
+        .await
+    }
+    pub(crate) async fn shared_with(
+        pending: usize,
+        configure: impl FnOnce(&mut mcp_gate::config::Config),
+    ) -> Self {
+        Self::configured(false, 1, Some(("shared", pending, 30, 20)), None, |path| {
+            let mut config = mcp_gate::config::Config::load(path).unwrap();
+            configure(&mut config);
+            std::fs::write(path, toml::to_string(&config).unwrap()).unwrap();
+        })
         .await
     }
     pub(crate) async fn session_limits(max_workers: usize, idle: u64, evict: u64) -> Self {
@@ -106,6 +118,7 @@ impl Harness {
             max_workers,
             Some(("session", 16, 30, 30)),
             Some((idle, evict)),
+            |_| {},
         )
         .await
     }
@@ -114,6 +127,7 @@ impl Harness {
         max_workers: usize,
         generic: Option<(&str, usize, u64, u64)>,
         idle: Option<(u64, u64)>,
+        configure: impl FnOnce(&Path),
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -203,6 +217,7 @@ MOCK_CANCEL_FILE = {cancel_file:?}
             text
         };
         std::fs::write(&config, text).unwrap();
+        configure(&config);
         let result = Command::new(env!("CARGO_BIN_EXE_mcp-gate"))
             .args(["catalog", "--config"])
             .arg(&config)

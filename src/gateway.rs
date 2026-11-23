@@ -31,7 +31,7 @@ pub struct Gateway {
 impl Gateway {
     pub fn runtime_status(&self) -> serde_json::Value {
         let recovery = self.shared.as_ref().map(|slot| slot.status());
-        serde_json::json!({
+        let mut status = serde_json::json!({
             "ownership": self.config.ownership,
             "shared_client_roots": self.config.shared_client_roots,
             "concurrency_per_backend": 1,
@@ -40,7 +40,21 @@ impl Gateway {
             "idle_seconds": self.config.idle_timeout().map(|idle| idle.as_secs()),
             "shared_state": recovery.as_ref().map(|r| &r["state"]),
             "recovery": recovery,
-        })
+        });
+        if let Some(slot) = &self.shared
+            && self.config.max_concurrent_calls > 1
+        {
+            let degraded = slot.execution.degraded();
+            status["max_concurrent_calls"] = self.config.max_concurrent_calls.into();
+            status["concurrency_per_backend"] = (if degraded {
+                1
+            } else {
+                self.config.max_concurrent_calls
+            })
+            .into();
+            status["degraded"] = degraded.into();
+        }
+        status
     }
     pub fn new(config: Config, catalog: Catalog) -> Arc<Self> {
         let live = Arc::new(AtomicUsize::new(0));
@@ -69,8 +83,7 @@ impl Gateway {
             if !self.stopping.load(Ordering::SeqCst)
                 && let Some(idle) = self.config.idle_timeout()
             {
-                slot.shutdown_if_idle(idle, self.config.max_pending_calls + 1)
-                    .await;
+                slot.shutdown_if_idle(idle).await;
             }
             // Failures are still observed by requests; idle shutdown must not
             // turn an actual crash into successful automatic recovery
@@ -82,14 +95,7 @@ impl Gateway {
             .map(|session| session.backend.clone())
             .collect();
         for slot in slots {
-            let closed = slot
-                .worker
-                .try_lock()
-                .ok()
-                .is_some_and(|guard| guard.as_ref().is_some_and(crate::worker::Worker::closed));
-            if closed {
-                slot.retire(Reason::TransportClosed).await;
-            }
+            slot.retire_if_idle(Reason::TransportClosed).await;
         }
     }
 
@@ -181,11 +187,7 @@ impl ServerHandler for Handler {
             info.instructions.unwrap_or_default(),
             self.session.gateway.config.tool_policy.instructions,
             if self.session.gateway.shared.is_some() {
-                if self.session.gateway.config.shared_client_roots == SharedClientRoots::Ignore {
-                    "One backend is shared by all clients. Calls are serialized. Client roots are explicitly ignored; only the fixed backend configuration defines context."
-                } else {
-                    "One backend is shared by all clients. Calls are serialized. Roots-capable clients are rejected."
-                }
+                shared_instructions(&self.session.gateway.config)
             } else {
                 "The backend is isolated to this MCP session and starts on first executable request. Reinitializing creates fresh state, not restored state."
             },
@@ -359,9 +361,24 @@ impl ServerHandler for Handler {
         else {
             return;
         };
-        if let Some(worker) = self.session.backend.worker.lock().await.as_ref() {
-            worker.set_roots(roots).await;
-        }
+        self.session.backend.set_roots(roots).await;
     }
     async fn on_initialized(&self, _: NotificationContext<RoleServer>) {}
+}
+
+fn shared_instructions(config: &Config) -> &'static str {
+    match (config.max_concurrent_calls == 1, config.shared_client_roots) {
+        (true, SharedClientRoots::Ignore) => {
+            "One backend is shared by all clients. Calls are serialized. Client roots are explicitly ignored; only the fixed backend configuration defines context."
+        }
+        (true, SharedClientRoots::Reject) => {
+            "One backend is shared by all clients. Calls are serialized. Roots-capable clients are rejected."
+        }
+        (false, SharedClientRoots::Ignore) => {
+            "One backend is shared by all clients. Calls may run in parallel. Client roots are explicitly ignored; only the fixed backend configuration defines context."
+        }
+        (false, SharedClientRoots::Reject) => {
+            "One backend is shared by all clients. Calls may run in parallel. Roots-capable clients are rejected."
+        }
+    }
 }
