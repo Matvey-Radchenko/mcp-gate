@@ -151,6 +151,13 @@ CI matrices (`ubuntu-22.04` and `ubuntu-22.04-arm`, glibc 2.35+). That does not
 add native login or protected-folder evidence, and no 0.1.2 check is newly
 marked passed. Publication still does not change those limits.
 
+0.2.0 also reuses the 0.1.0 evidence, with the same `passed-with-limitations`
+and the same remaining limits. Windows ARM64 (`windows-11-arm`) and static
+Linux musl builds for x64 and ARM64 (Alpine containers on `ubuntu-24.04` and
+`ubuntu-24.04-arm`) join the native and registry CI matrices. That does not add
+native login or protected-folder evidence, and no 0.2.0 check is newly marked
+passed.
+
 Reference contracts: [Claude scope precedence and headers helpers](https://code.claude.com/docs/en/mcp),
 [GitHub native runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
 [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).

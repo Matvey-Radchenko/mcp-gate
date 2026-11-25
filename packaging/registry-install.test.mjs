@@ -30,15 +30,15 @@ test('a new release asset is retried only while the response is 404', async () =
 test('npm install retries a 404 and fails immediately on any other error', async () => {
   const waits = [];
   let calls = 0;
-  const stdout = await installPublished('0.1.2', async () => {
+  const stdout = await installPublished('0.2.0', async () => {
     calls += 1;
     if (calls < 3) return { status: 1, stderr: 'npm error code E404\n404 Not Found' };
-    return { status: 0, stdout: 'mcp-gate 0.1.2\n' };
+    return { status: 0, stdout: 'mcp-gate 0.2.0\n' };
   }, ms => { waits.push(ms); });
-  assert.equal(stdout, 'mcp-gate 0.1.2\n');
+  assert.equal(stdout, 'mcp-gate 0.2.0\n');
   assert.deepEqual(waits, notFoundWaitsMs.slice(0, 2));
   await assert.rejects(
-    () => installPublished('0.1.2', async () => ({ status: 1, stderr: 'npm error code ETARGET' }), () => {
+    () => installPublished('0.2.0', async () => ({ status: 1, stderr: 'npm error code ETARGET' }), () => {
       throw new Error('a non-404 must not wait');
     }),
     /ETARGET/,
