@@ -1,4 +1,4 @@
-{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"capabilities":{},"clientInfo":{"name":"mcp-gate","version":"0.1.2"},"protocolVersion":"2025-11-25"}}
+{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"capabilities":{},"clientInfo":{"name":"mcp-gate","version":"0.2.0"},"protocolVersion":"2025-11-25"}}
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"progressToken":0}}}
 {"jsonrpc":"2.0","id":2,"method":"resources/list","params":{"_meta":{"progressToken":1}}}

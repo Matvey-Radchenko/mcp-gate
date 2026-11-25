@@ -1,7 +1,15 @@
-This release adds Windows ARM64 and static musl builds for Linux x64 and ARM64.
-The npm launcher selects the binary for the host architecture and Linux libc.
-Glibc hosts install only the glibc package and never download the musl binary.
-`mcp-gate connect` lets stdio MCP clients use an existing local gateway.
+This release adds shared/session ownership controls and new release targets.
+`mcp-gate share <name>` and `mcp-gate isolate <name>` set a gateway's ownership
+explicitly, with advice from the saved catalog. Shared backends can opt into
+parallel calls with `max_concurrent_calls`. `mcp-gate connect` lets stdio MCP
+clients, including Claude Desktop on macOS and Windows, use an existing local
+gateway. Windows ARM64 and static musl builds for Linux x64 and ARM64 are new;
+the npm launcher selects the binary for the host architecture and Linux libc.
+
+Upgrading: run `mcp-gate setup` once after installing 0.2.0. It migrates
+selected adopted and legacy gateway services to the managed binary store and
+moves Codex and Claude Code headers helpers to a stable executable path. Then
+restart the clients it lists. `mcp-gate setup --dry-run` previews the change.
 
 Install with `npx @matvei-radchenko/mcp-gate@latest setup` or
 `npm i -g @matvei-radchenko/mcp-gate`. The command remains `mcp-gate`.

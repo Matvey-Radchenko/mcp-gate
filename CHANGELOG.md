@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-25
+
+**Upgrade note:** after upgrading, run `mcp-gate setup` once. It migrates selected adopted and legacy gateway services to the managed binary store and rewrites Codex and Claude Code headers helpers to an executable path that stays the same across upgrades. Then restart the clients it lists. Use `mcp-gate setup --dry-run` to preview the migration first.
+
 - Fixed: idle shared HTTP sessions no longer pile up. A shared session with no GET stream, in-flight request or active call closes after 30 minutes of inactivity; its old id gets 404 and the client re-initializes. Backend `idle_seconds` is unchanged. Maintenance on a shared gateway closes quiescent sessions instead of returning 409, so setup no longer reports "migration pending; gateway busy" because of abandoned clients.
 - Fixed: one client cancelling or disconnecting from its own call no longer blocks a shared backend for everyone. The gateway forwards `notifications/cancelled` upstream, keeps the execution slot until the backend replies or the call deadline expires, and discards the late reply. Missed deadlines, broken transport and protocol failures still trigger the recovery policy; nothing is replayed.
 - Fixed: the shareability advisor recommends session ownership only for real per-client selection changes such as browser page or tab selection. Tool names that merely mention project, page, context or configure (Atlassian, Telegram, TestOps) no longer count. `share`, `isolate` and `idle` say "Nothing to change" when the setting is already saved, without a restart command.

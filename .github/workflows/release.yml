@@ -5,7 +5,7 @@ on:
       version:
         description: Verified stable version (must match Cargo, npm and acceptance evidence)
         required: true
-        default: '0.1.2'
+        default: '0.2.0'
 permissions:
   contents: read
 jobs:
