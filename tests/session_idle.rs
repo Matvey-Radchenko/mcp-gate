@@ -20,31 +20,41 @@ async fn core_session_limits(idle: u64) -> Harness {
 
 #[tokio::test]
 async fn discovery_and_ping_do_not_keep_session_backend_alive() {
-    let mut h = core_session_limits(1).await;
+    // The reaper checks leases once per second and, by design, skips a session
+    // with an HTTP request in flight. Back-to-back discovery could cover every
+    // tick on a slow runner, so each burst is followed by a quiet gap longer
+    // than the tick. Bursts still recur well inside the idle window, so a
+    // session that discovery kept alive could never expire here.
+    let idle = Duration::from_secs(3);
+    let quiet = Duration::from_millis(1500);
+    let mut h = core_session_limits(idle.as_secs()).await;
     let a = h.session().await;
     a.call("state", json!({})).await;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
-    let mut closed = false;
-    while tokio::time::Instant::now() < deadline {
+    let mut last_success = tokio::time::Instant::now();
+    let deadline = last_success + idle * 4;
+    let closed_at = 'discovery: loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "Discovery and ping extended the session idle deadline"
+        );
+        tokio::time::sleep(quiet).await;
         for method in ["tools/list", "resources/list", "prompts/list", "ping"] {
             let response = a
                 .post(json!({"jsonrpc":"2.0","id":100,"method":method,"params":{}}))
                 .await;
             if response.status() == StatusCode::NOT_FOUND {
-                closed = true;
-                break;
+                break 'discovery tokio::time::Instant::now();
             }
             assert!(response.status().is_success());
             let message = a.read_message(response, Some(100)).await;
             assert!(message["result"].is_object(), "{method}: {message}");
+            last_success = tokio::time::Instant::now();
         }
-        if closed {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    };
+    // Had any discovery request counted as activity, the session would still
+    // be open for a full idle window after the last successful one.
     assert!(
-        closed,
+        closed_at < last_success + idle,
         "Discovery and ping extended the session idle deadline"
     );
     h.workers(0).await;
