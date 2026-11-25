@@ -43,6 +43,23 @@ pub(crate) fn browser_executable() -> Option<String> {
     })
 }
 
+fn free_loopback() -> std::net::SocketAddr {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+}
+
+fn spawn_gateway(config: &Path) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_mcp-gate"))
+        .args(["serve", "--config"])
+        .arg(config)
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap()
+}
+
 pub(crate) struct Harness {
     _dir: TempDir,
     pub(crate) config: PathBuf,
@@ -82,20 +99,9 @@ impl Harness {
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
-        self.child = Command::new(env!("CARGO_BIN_EXE_mcp-gate"))
-            .args(["serve", "--config"])
-            .arg(&self.config)
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-        for _ in 0..600 {
-            if self.health().await.is_some() {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        panic!("Replacement test gateway did not start");
+        // The stopped gateway released its port; another fixture may take it.
+        self.child = spawn_gateway(&self.config);
+        self.await_ready().await;
     }
     pub(crate) async fn new(real: bool, max_workers: usize) -> Self {
         Self::configured(real, max_workers, None, None, |_| {}).await
@@ -144,11 +150,7 @@ impl Harness {
         configure: impl FnOnce(&Path),
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let port = free_loopback().port();
         let token = dir.path().join("token");
         std::fs::write(&token, TOKEN).unwrap();
         mcp_gate::platform::private_permissions(&token).unwrap();
@@ -242,14 +244,8 @@ MOCK_CANCEL_FILE = {cancel_file:?}
             "catalog: {}",
             String::from_utf8_lossy(&result.stderr)
         );
-        let child = Command::new(env!("CARGO_BIN_EXE_mcp-gate"))
-            .args(["serve", "--config"])
-            .arg(&config)
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
-        let harness = Self {
+        let child = spawn_gateway(&config);
+        let mut harness = Self {
             _dir: dir,
             config,
             base: format!("http://127.0.0.1:{port}"),
@@ -257,11 +253,46 @@ MOCK_CANCEL_FILE = {cancel_file:?}
             cancel_file,
             client_roots: generic.is_none(),
         };
+        harness.await_ready().await;
+        harness
+    }
+    /// Wait until this harness's own gateway serves health. The port was only
+    /// probed free, so a parallel fixture can bind it first. Every fixture
+    /// shares one token, so a health answer proves identity only by its PID;
+    /// signalling a gateway that has not installed its handlers kills it.
+    async fn await_ready(&mut self) {
+        for _ in 0..5 {
+            let Err(status) = self.own_health().await else {
+                return;
+            };
+            // Only a lost port race moves the fixture; any other early exit
+            // is a real startup failure.
+            let mut config = mcp_gate::config::Config::load(&self.config).unwrap();
+            assert!(
+                std::net::TcpListener::bind(config.listen).is_err(),
+                "Gateway exited during startup: {status}"
+            );
+            config.listen = free_loopback();
+            std::fs::write(&self.config, toml::to_string(&config).unwrap()).unwrap();
+            self.base = format!("http://{}", config.listen);
+            self.child = spawn_gateway(&self.config);
+        }
+        panic!("Gateway kept losing its loopback port to other fixtures")
+    }
+    async fn own_health(&mut self) -> Result<(), std::process::ExitStatus> {
+        let pid = json!(self.child.id());
         // Match the fixture's configured 30-second startup budget. Native CI
         // may still be reading/signature-checking large debug binaries at 5 s.
         for _ in 0..600 {
-            if harness.health().await.is_some() {
-                return harness;
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return Err(status);
+            }
+            if self
+                .health()
+                .await
+                .is_some_and(|health| health["pid"] == pid)
+            {
+                return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

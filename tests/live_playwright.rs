@@ -36,6 +36,21 @@ fn text(v: &Value) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+/// The tab list alone. Playwright appends asynchronous page events, such as
+/// a new console entry, to whichever response happens to follow them; they
+/// are not part of the tab state being compared.
+fn tab_list(v: &Value) -> String {
+    let text = text(v);
+    let result = text
+        .split_once("### Result")
+        .unwrap_or_else(|| panic!("Tab list without a result: {text}"))
+        .1;
+    result
+        .split_once("\n### ")
+        .map_or(result, |(list, _)| list)
+        .trim()
+        .to_owned()
+}
 async fn delete(c: &Config, id: &str, expected: u64) {
     reqwest::Client::builder()
         .no_proxy()
@@ -178,23 +193,10 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     assert_eq!(health(&c).await["workers"], 2);
     text(&a.call("browser_evaluate", json!({"function":"() => { window.name='A'; localStorage.setItem('fixture','A'); document.cookie='fixture=A;path=/'; document.body.style.background='red'; return 'ok'; }"})).await);
     assert!(text(&b.call("browser_evaluate", json!({"function":"() => window.name !== 'A' && localStorage.getItem('fixture') === null && !document.cookie.includes('fixture=A')"})).await).contains("true"));
-    let before = text(&b.call("browser_tabs", json!({"action":"list"})).await);
-    text(
-        &a.call(
-            "browser_tabs",
-            json!({"action":"new","url":format!("{url}?extra=A")}),
-        )
-        .await,
-    );
-    assert_eq!(
-        before,
-        text(&b.call("browser_tabs", json!({"action":"list"})).await)
-    );
-    text(
-        &a.call("browser_tabs", json!({"action":"select","index":0}))
-            .await,
-    );
-    assert!(text(&a.call("browser_evaluate", json!({"function":"() => window.name === 'A' && localStorage.getItem('fixture') === 'A'"})).await).contains("true"));
+    // Capture while each page is still its browser's only, foreground tab.
+    // Headless Chrome on Windows can stop producing frames for a page that
+    // was backgrounded by a new tab, even after it is selected again, so a
+    // screenshot then waits for a frame until its action timeout.
     let name = format!("fixture-{}.png", uuid::Uuid::new_v4());
     text(
         &a.call(
@@ -222,6 +224,23 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
         bytes[0], bytes[1],
         "Independent pages must produce different images"
     );
+    let before = tab_list(&b.call("browser_tabs", json!({"action":"list"})).await);
+    text(
+        &a.call(
+            "browser_tabs",
+            json!({"action":"new","url":format!("{url}?extra=A")}),
+        )
+        .await,
+    );
+    assert_eq!(
+        before,
+        tab_list(&b.call("browser_tabs", json!({"action":"list"})).await)
+    );
+    text(
+        &a.call("browser_tabs", json!({"action":"select","index":0}))
+            .await,
+    );
+    assert!(text(&a.call("browser_evaluate", json!({"function":"() => window.name === 'A' && localStorage.getItem('fixture') === 'A'"})).await).contains("true"));
     let all_pids = descendants(gateway_pid);
     let all_processes = track(&all_pids);
     delete(&c, &aid, 1).await;
