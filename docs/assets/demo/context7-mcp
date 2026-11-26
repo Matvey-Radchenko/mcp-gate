@@ -1,3 +1,4 @@
 #!/bin/sh
-# Demo wrapper: Context7 4.8.0 declares an MCP extension mcp-gate 0.2.0 rejects.
-exec npx -y @upstash/context7-mcp@4.7.3 "$@"
+# Demo wrapper: runs the current Context7 release. The committed GIF was
+# recorded with 4.7.3.
+exec npx -y @upstash/context7-mcp "$@"

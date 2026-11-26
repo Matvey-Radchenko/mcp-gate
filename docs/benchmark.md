@@ -114,8 +114,10 @@ How to read these numbers:
 The README figures come from this separate measurement, not from
 `cargo xtask bench`. It used the same Linux x86_64 VM, Node.js 24.22.1, npm 11.21.1,
 and `@upstash/context7-mcp@4.7.3` started with `npx -y`, without an API key.
-Context7 4.8.0, released on 2026-11-24, declares the `io.modelcontextprotocol/skills`
-extension, which mcp-gate 0.2.0 does not accept yet, so the measurement uses 4.7.3.
+The numbers are for 4.7.3, the version that was current when the measurement
+started. Context7 4.8.0, released on 2026-11-24, also works with mcp-gate 0.2.0: it
+declares the `io.modelcontextprotocol/skills` extension, which the gateway accepts
+and does not forward to clients.
 Each session sent `initialize`, `notifications/initialized`, `tools/list`, and one
 `resolve-library-id` call. Memory was sampled 3 seconds after the last call.
 

@@ -7,8 +7,9 @@
 # so this recording shows Codex and Claude Code connections.
 # This tape uses a local `cargo build --features test-backend --bin mcp-gate`
 # and a throwaway home with three connections. Context7 is real: the
-# docs/assets/demo/context7-mcp wrapper runs `npx -y @upstash/context7-mcp@4.7.3`
-# (4.8.0 declares an MCP extension that mcp-gate 0.2.0 does not accept yet).
+# docs/assets/demo/context7-mcp wrapper runs `npx -y @upstash/context7-mcp`
+# (the committed GIF was recorded with 4.7.3; with 4.8.0 and later, setup adds
+# a note that the skills extension is not forwarded).
 # The other two servers are stubs and are not selected. The recording machine
 # has no `systemd --user`, so docs/assets/demo/systemctl stands in for it and
 # starts the gateway in the background. Everything stays under /tmp.
