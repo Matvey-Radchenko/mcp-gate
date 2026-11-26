@@ -1,40 +1,46 @@
-# Setup wizard recording.
+# Setup wizard recording, happy path.
 #
-# Story: run setup, see the connections it found, select one,
-# read the preview of what would change, then cancel.
+# Story: run setup, see the connections it found, select Context7, read the
+# preview, apply it, then check `mcp-gate status`.
 #
 # Recorded on Linux. Claude Desktop discovery runs only on macOS and Windows,
 # so this recording shows Codex and Claude Code connections.
 # This tape uses a local `cargo build --features test-backend --bin mcp-gate`
-# and a throwaway home with three fixture connections. The fixture
-# executables are stubs that exit immediately. Nothing is registered.
+# and a throwaway home with three connections. Context7 is real: the
+# docs/assets/demo/context7-mcp wrapper runs `npx -y @upstash/context7-mcp@4.7.3`
+# (4.8.0 declares an MCP extension that mcp-gate 0.2.0 does not accept yet).
+# The other two servers are stubs and are not selected. The recording machine
+# has no `systemd --user`, so docs/assets/demo/systemctl stands in for it and
+# starts the gateway in the background. Everything stays under /tmp.
 #
-# Requires vhs (https://github.com/charmbracelet/vhs) with ttyd and ffmpeg.
-# Run from the repository root: vhs docs/assets/setup-demo.tape
+# Requires vhs (https://github.com/charmbracelet/vhs) with ttyd and ffmpeg,
+# plus Node.js with npx. Run from the repository root:
+#   vhs docs/assets/setup-demo.tape
+# Afterwards stop the demo gateway: pkill -f /tmp/mcp-gate-demo/state
 
 Output "docs/assets/setup-demo.gif"
 
 Set Shell "bash"
 Set FontSize 20
 Set Width 1380
-Set Height 680
+Set Height 760
 Set Padding 28
 Set Framerate 10
 Set TypingSpeed 80ms
 Set Theme "GitHub Dark"
 
 Hide
-Type `D=/tmp/mcp-gate-demo; rm -rf $D && mkdir -p $D/.codex $D/work $D/bin`
+Type `pkill -f /tmp/mcp-gate-demo/state; D=/tmp/mcp-gate-demo; rm -rf $D && mkdir -p $D/.codex $D/work $D/bin`
 Enter
-Type `for b in telegram-mcp github-mcp-server; do printf '#!/bin/sh\nexit 0\n' > $D/bin/$b; chmod +x $D/bin/$b; done`
+Type `printf '#!/bin/sh\nexit 0\n' > $D/bin/github-mcp-server; chmod +x $D/bin/github-mcp-server`
 Enter
-Type `printf '%s\n' '[mcp_servers.telegram]' 'command = "telegram-mcp"' 'cwd = "/tmp/mcp-gate-demo/work"' '' '[mcp_servers.playwright]' 'command = "npx"' 'args = ["@playwright/mcp@latest"]' 'cwd = "/tmp/mcp-gate-demo/work"' > $D/.codex/config.toml`
+Type `printf '%s\n' '[mcp_servers.context7]' 'command = "context7-mcp"' 'cwd = "/tmp/mcp-gate-demo/work"' '' '[mcp_servers.playwright]' 'command = "npx"' 'args = ["@playwright/mcp@latest"]' 'cwd = "/tmp/mcp-gate-demo/work"' > $D/.codex/config.toml`
 Enter
 Type `printf '%s\n' '{"mcpServers":{"github":{"command":"github-mcp-server","args":["stdio"],"cwd":"/tmp/mcp-gate-demo/work"}}}' > $D/.claude.json`
 Enter
-Type `export HOME=$D MCP_GATE_TEST_HOME=$D MCP_GATE_TEST_ROOT=$D/state`
+Type `export HOME=$D MCP_GATE_TEST_HOME=$D MCP_GATE_TEST_ROOT=$D/state XDG_CONFIG_HOME=$D/.config XDG_DATA_HOME=$D/.local/share`
 Enter
-Type `export PATH="$PWD/target/debug:$D/bin:$PATH" PS1='$ ' TERM=xterm-256color`
+Type `export PATH="$PWD/docs/assets/demo:$PWD/target/debug:$D/bin:$PATH" PS1='$ ' TERM=xterm-256color`
 Enter
 Type `cd $D && clear`
 Enter
@@ -51,23 +57,21 @@ Enter
 Sleep 2500ms
 Enter
 
-# 3. Found connections. Nothing is selected by default.
-Sleep 3000ms
-Down
-Sleep 900ms
+# 3. Found connections. Nothing is selected by default. Select Context7.
+Sleep 2500ms
 Space
-Sleep 2000ms
+Sleep 1500ms
 
 # 4. Review the preview of what changes.
 Enter
-Sleep 6500ms
+Sleep 5500ms
 
-# 5. Cancel. Nothing was changed.
-Down
-Sleep 700ms
-Down
-Sleep 700ms
-Down
-Sleep 1200ms
+# 5. Apply. Setup checks the server, starts the gateway, and edits the Codex config.
 Enter
-Sleep 3500ms
+Sleep 17000ms
+
+# 6. Check the result. The backend has not started yet.
+Type "mcp-gate status"
+Sleep 600ms
+Enter
+Sleep 6000ms

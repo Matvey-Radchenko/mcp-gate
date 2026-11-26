@@ -50,12 +50,12 @@ Run `setup` again with a newer or older build to update compatible background se
 
 ### Upgrading from 0.1.x
 
-Run `mcp-gate setup` once with 0.2.0, then restart the clients it lists. `mcp-gate setup --dry-run` previews the migration.
+Run `mcp-gate setup` once with 0.2.0, then restart the clients it lists. `mcp-gate setup --dry-run` shows what will change first. Setup moves everything to one fixed location, so later upgrades no longer have to touch your client settings:
 
-- Codex and Claude Code headers helpers move from managed versioned paths to `current/mcp-gate` (`current\mcp-gate.exe` on Windows), including helpers on external connections. Later setup runs refresh that executable in place, so client settings do not change on upgrade. OpenCode keeps using a file-backed Authorization header.
-- Selected adopted and legacy gateway services move to the managed binary store. Their LaunchAgent, systemd user unit, or Windows logon task settings stay intact. Connections with no saved bindings stay `external`.
+- Codex and Claude Code read each gateway's bearer token through a small helper command. Setup points that command at `current/mcp-gate` (`current\mcp-gate.exe` on Windows) instead of a versioned path, including on connections setup did not create. Later setup runs update that executable in place. OpenCode keeps reading the token from a file.
+- Gateway services you registered by hand with `mcp-gate adopt`, or that an older release created, move to mcp-gate's own versioned binary folder. Their LaunchAgent, systemd user unit, or Windows logon task settings stay the same. Connections with no saved settings stay `external`.
 
-### Adopting a legacy gateway
+### Taking over a gateway you set up by hand
 
 For a legacy user service, run `mcp-gate adopt <name>` once to record its identity. Then run `mcp-gate setup` with the official executable and select the adopted gateway. Use `setup --dry-run --json` to preview the migration. Setup points the service at `binaries/<version>-<sha256>/` and preserves its label, endpoint, credentials, backend, and service settings. Adoption saves no client bindings, so those connections stay `external`. Restart the client if setup migrated its headers helper. A subsequent setup leaves a gateway on the current managed binary running.
 
@@ -78,6 +78,10 @@ For unattended setup, select the external connection with the usual `--client`, 
 - `external` means the client uses a gateway without saved direct settings. Setup can migrate a headers helper from this installation's binary store. Remove has no saved connection to restore.
 - A healthy gateway does not prove that a running app has switched to it. Restart each affected app once after `setup`.
 
+## Idle backends and capacity
+
+`idle_seconds` defaults to 900 for per-session backends and off for shared ones; `0` disables it. Only executable requests (`tools/call`, `resources/read`, `prompts/get`) extend the timer. An open GET stream also keeps a per-session backend alive, for example while a browser recording runs. Shared backends, except Docker ones, can opt in while keeping their HTTP sessions open. When every worker slot is busy, `session_idle_evict_seconds` (default 120) lets the longest-idle per-session backend make room. Running calls are never evicted. See [configurable runtime](configurable-runtime.md#backend-idle-policy).
+
 ## Labels and shared gateways
 
 - New gateways get a readable service label, `local.mcp-gate.<name>`, or the next free `-2`, `-3`, … if it is taken. The preview shows the label before anything is registered.
@@ -99,3 +103,5 @@ mcp-gate adopt NAME --dry-run
 ```
 
 Do not pass `--yes` unless the user has already chosen the exact clients and servers. If a command may already have changed client settings, inspect `status --json` before running it again.
+
+Configurations from the project's earlier name, `mcp-session-gateway`, remain readable.

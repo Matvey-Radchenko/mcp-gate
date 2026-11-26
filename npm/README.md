@@ -18,13 +18,13 @@ Restart each affected app once after setup or remove.
 
 **New in 0.2:** Claude Desktop on macOS and Windows through the `mcp-gate connect`
 stdio bridge; `mcp-gate share` and `mcp-gate isolate` to choose shared or
-per-session backends with advice from the saved catalog; opt-in parallel calls
+per-session backends, with advice based on the saved tool list; opt-in parallel calls
 with `max_concurrent_calls`; Windows ARM64 and static Linux musl builds.
 
 **Upgrading from 0.1.x:** run `mcp-gate setup` once with 0.2.0, then restart the
-clients it lists. It moves Codex and Claude Code headers helpers to a stable
-executable path and migrates selected adopted and legacy gateway services to the
-managed binary store. `mcp-gate setup --dry-run` previews the change.
+clients it lists. Setup moves everything to one fixed location so later upgrades
+no longer have to touch your client settings. `mcp-gate setup --dry-run` shows
+what will change first.
 
 Release targets are macOS ARM64 and Intel, Windows x64 and ARM64, and Linux x64
 and ARM64 with glibc 2.35 or newer or static musl. The launcher selects the binary

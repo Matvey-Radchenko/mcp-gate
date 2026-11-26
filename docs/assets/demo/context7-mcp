@@ -1,0 +1,3 @@
+#!/bin/sh
+# Demo wrapper: Context7 4.8.0 declares an MCP extension mcp-gate 0.2.0 rejects.
+exec npx -y @upstash/context7-mcp@4.7.3 "$@"

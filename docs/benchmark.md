@@ -108,3 +108,32 @@ How to read these numbers:
 - An earlier run on 2026-11-22, before the gateway set `TCP_NODELAY` on accepted
   connections, measured a p50 of about 44 ms for both gateway modes. That was a
   delayed-ACK artifact on Linux loopback, fixed in 0.2.0.
+
+## Real server example: Context7 (2026-11-26)
+
+The README figures come from this separate measurement, not from
+`cargo xtask bench`. It used the same Linux x86_64 VM, Node.js 24.22.1, npm 11.21.1,
+and `@upstash/context7-mcp@4.7.3` started with `npx -y`, without an API key.
+Context7 4.8.0, released on 2026-11-24, declares the `io.modelcontextprotocol/skills`
+extension, which mcp-gate 0.2.0 does not accept yet, so the measurement uses 4.7.3.
+Each session sent `initialize`, `notifications/initialized`, `tools/list`, and one
+`resolve-library-id` call. Memory was sampled 3 seconds after the last call.
+
+Memory is PSS (proportional set size) from `/proc/<pid>/smaps_rollup`, summed over
+each process tree: the `npm exec` wrapper, its `sh`, and the Context7 Node.js
+process, plus the gateway in the mcp-gate row. PSS splits pages shared between
+processes, so the sum does not double-count them. Summed RSS is shown for comparison.
+
+| Setup | Processes | PSS total | RSS total |
+| --- | --- | ---: | ---: |
+| One session, direct stdio | 1 Context7 tree | 169,125 KiB (≈ 165 MB) | 226,984 KiB |
+| Five sessions, direct stdio | 5 Context7 trees | 623,189 KiB (≈ 610 MB) | 1,129,540 KiB |
+| Five sessions through one shared mcp-gate gateway | gateway + 1 Context7 tree | 189,524 KiB (≈ 185 MB) | 249,584 KiB |
+
+In the last row the gateway process alone had an RSS of 14,068 KiB and a PSS
+of 11,793 KiB. The five clients connected over loopback Streamable HTTP to a
+gateway with `ownership = "shared"`, configured as in
+[configurable runtime](configurable-runtime.md#example-ordinary-executable-no-node-entrypoint).
+
+This is one run on one machine. Node.js memory varies with version, heap growth,
+and workload, and macOS and Windows account memory differently.

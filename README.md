@@ -17,9 +17,9 @@
   <a href="https://github.com/Matvey-Radchenko/mcp-gate/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Matvey-Radchenko/mcp-gate/ci.yml?label=CI"></a>
 </p>
 
-**Every agent session starts its own copy of every stdio MCP server you configured, even when it only needs the tool list.** One Telegram MCP backend (Java + TDLib) used about 400 MB on a maintainer's Mac, so five sessions come to about 2 GB. With mcp-gate it runs once as a shared backend, behind a gateway of about 14 MB, and starts only when a tool is actually called.
+**Every agent session starts its own copy of every stdio MCP server you configured, even when it only needs the tool list.** Five sessions using [Context7](https://github.com/upstash/context7) (`npx @upstash/context7-mcp`) took about 610 MB on a Linux test machine. Behind mcp-gate, the same five sessions shared one Context7 backend plus a 14 MB gateway: about 185 MB. Browser servers such as Playwright MCP keep one backend per session, started on the first browser call instead of when the session opens, and closed after 15 idle minutes.
 
-mcp-gate puts a small Rust gateway in front of each stdio MCP server you already use in Codex, OpenCode, Claude Code, or Claude Desktop. Clients get the tool list right away from a saved catalog. A reviewed stateless server can share one backend across all sessions; session-owned servers, such as browsers, get one per session and close when idle.
+mcp-gate puts a small Rust gateway in front of each stdio MCP server you already use in Codex, OpenCode, Claude Code, or Claude Desktop. Clients get the tool list right away from a saved copy of it, and the real server starts only when a tool is actually called.
 
 ## Quick start
 
@@ -41,14 +41,14 @@ mcp-gate puts a small Rust gateway in front of each stdio MCP server you already
 
 `remove` puts the direct connections back.
 
-![Setup wizard: run setup, see the connections it found, select one, read the preview of what would change, then cancel with no changes applied](docs/assets/setup-demo.gif)
+![Setup wizard: run setup, see the connections it found, select codex / context7, read the preview, apply it, then run mcp-gate status and see context7 managed with its backend idle](docs/assets/setup-demo.gif)
 
 Keys: type to search, arrows move, Space selects, Enter reviews, Esc goes back.
 
 ## What's new in 0.2
 
 - **Claude Desktop** on macOS and Windows. Setup connects it through the new `mcp-gate connect` stdio bridge, which any other stdio-only client can use too.
-- **`mcp-gate share` and `mcp-gate isolate`** set a gateway's ownership explicitly, with [advice](#shared-or-per-session) from its saved catalog.
+- **`mcp-gate share` and `mcp-gate isolate`** set a gateway's ownership explicitly, with [advice](#shared-or-per-session) based on its saved tool list.
 - **`max_concurrent_calls`** lets a shared backend run calls in parallel. Calls stay serial by default.
 - **Windows ARM64** and **static Linux musl** builds for x64 and ARM64 (Alpine and similar).
 - **Fixes:** one client cancelling a call no longer blocks a shared backend for everyone; abandoned shared HTTP sessions close after 30 minutes; loopback calls no longer wait about 40 ms for a delayed ACK; the advisor no longer flags harmless tool names.
@@ -57,21 +57,19 @@ Keys: type to search, arrows move, Space selects, Enter reviews, Esc goes back.
 The full list is in the [CHANGELOG](CHANGELOG.md).
 
 > [!IMPORTANT]
-> **Upgrading from 0.1.x:** run `mcp-gate setup` once with 0.2.0, then restart the clients it lists. It moves Codex and Claude Code headers helpers to a stable executable path and migrates selected adopted and legacy gateway services to the managed binary store. `mcp-gate setup --dry-run` previews the change. [Details](docs/usage.md#upgrading-from-01x)
+> **Upgrading from 0.1.x:** run `mcp-gate setup` once with 0.2.0, then restart the clients it lists. Setup moves everything to one fixed location so later upgrades no longer have to touch your client settings. `mcp-gate setup --dry-run` shows what will change first. [Details](docs/usage.md#upgrading-from-01x)
 
 ## Why a gateway
 
-A stdio MCP server configured in a client starts with every session, even when the session only needed the tool list. Three sessions and three servers mean nine processes. mcp-gate keeps one small gateway per server and starts backends only when they are used:
+Three sessions and three servers mean nine processes, all started just to list tools. mcp-gate keeps one small gateway per server and starts backends only when they are used:
 
-![The same three sessions and three servers in both panels. Before: nine processes, one copy of every server per session. After: three gateways; Telegram runs one shared backend, mail is not started until a real call, and the browser has a backend only for the session using it, closed when idle. Below: one Telegram MCP backend uses about 400 MB, so five sessions without a gateway are about 2 GB by arithmetic; with mcp-gate it is one shared backend plus a gateway of about 14 MB.](docs/assets/before-after.svg)
+![The same three sessions and three servers, Context7, GitHub and Playwright, in both panels. Before: nine processes, one copy of every server per session. After: three gateways; Context7 runs one shared backend, GitHub is not started until a real call, and Playwright has a backend only for the session using it, closed when idle. Below, measured on Linux: five sessions with their own Context7 copies used about 610 MB; with mcp-gate, one shared Context7 backend plus a 14 MB gateway used about 185 MB.](docs/assets/before-after.svg)
 
-The Telegram figure is one observation on one machine, and the 2 GB is arithmetic, not a measurement.
-
-- **Lazy backends.** `initialize`, `tools/list`, and the rest of discovery are served from a reviewed catalog snapshot. The upstream process starts when a real call (`tools/call`, `resources/read`, `prompts/get`) needs it.
-- **Shared or session-owned.** A reviewed stateless API can share one backend across clients. A session-owned server (browsers, anything with per-client state) gets its own MCP connection. Shared mode is opt-in and is not safe for an arbitrary browser server.
-- **Idle backends close.** [`idle_seconds`](docs/configurable-runtime.md#backend-idle-policy) defaults to 900 for session-owned backends and off for shared ones; `0` disables it. Only executable requests extend the timer. An open GET stream also keeps a session-owned recording alive. Shared non-Docker backends can opt in while keeping HTTP sessions open. When every slot is busy, `session_idle_evict_seconds` (default 120) lets the longest-idle session backend make room. Running calls are never evicted.
+- **Backends start on first use.** The tool list and the rest of discovery come from a saved copy. The real server starts when a call (`tools/call`, `resources/read`, `prompts/get`) needs it.
+- **Shared or per-session.** A stateless server can share one backend across all clients. A server with per-client state, such as a browser, gets its own backend per session. Shared mode is opt-in; see [below](#shared-or-per-session).
+- **Idle backends close.** Per-session backends close after 15 idle minutes by default; shared ones stay up unless you opt in. `mcp-gate idle <name>` changes it. [Details](docs/configurable-runtime.md#backend-idle-policy)
 - **No automatic replay.** Actions are never retried or replayed. After a backend crash or a restart, sessions and unfinished work are not restored.
-- **Managed client setup.** `setup` copies the binary into permanent versioned storage (independent of the npx cache), registers a user service (LaunchAgent on macOS, a systemd --user unit on Linux, or a logon Task Scheduler task on Windows), checks readiness, and then connects the selected client entries. Names and permission settings are preserved.
+- **Setup does the wiring.** `setup` copies the binary to a fixed location (independent of the npx cache), registers a user service (LaunchAgent on macOS, a systemd --user unit on Linux, or a logon Task Scheduler task on Windows), checks it, and then connects the selected client entries. Names and permission settings are preserved.
 - **Yours to undo.** `remove` restores direct connections. It does not delete MCP packages, user data, logs, browser artifacts, or old releases.
 
 You still install and update MCP packages, interpreters, Docker, and browsers. Setup's discovery runs the existing command, so `npx`, `uvx`, or Docker may download their own dependencies.
@@ -97,21 +95,21 @@ So a call through the gateway adds about 0.1 to 0.25 ms of loopback HTTP, and th
 Every gateway is **session-owned** by default: each client connection gets its own backend, so browsers, tabs, cookies and other per-client state never leak between sessions. **Shared** ownership runs one backend for all clients. It saves the most memory, but is safe only for servers without per-client state, such as most API wrappers.
 
 ```sh
-mcp-gate share telegram --dry-run   # show the advice and the proposed config change
-mcp-gate share telegram             # confirm and save shared ownership
+mcp-gate share context7 --dry-run   # show the advice and the proposed config change
+mcp-gate share context7             # confirm and save shared ownership
 mcp-gate isolate playwright         # back to one backend per session
 ```
 
-Both commands print the gateway restart command that applies the change; run it after current actions finish. A saved choice survives catalog refreshes.
+Both commands print the gateway restart command that applies the change; run it after current actions finish. A saved choice survives tool list refreshes.
 
-**How the advisor decides.** It reads only the gateway's saved catalog and command; it never starts the server. It recommends staying per-session if it finds any of these:
+**How the advisor decides.** It reads only the gateway's saved tool list and command; it never starts the server. It recommends staying per-session if it finds any of these:
 
 - a known per-client server: Playwright, Chrome DevTools, or Filesystem ([rules](recipes/shareability.json));
 - a tool whose name changes a per-client selection, such as `select_page` or `switch_tab`. The first recognized verb decides, so `get_selected_page` does not count;
 - a roots tool such as `list_allowed_directories`;
 - the `resources.subscribe` capability.
 
-Without a saved catalog it recommends per-session. Tool annotations such as `readOnlyHint` are not trusted, and finding no signal does not prove a server is safe to share. The advisor never changes anything; only a confirmed `share` or `isolate` does.
+Without a saved tool list it recommends per-session. Tool annotations such as `readOnlyHint` are not trusted, and finding no signal does not prove a server is safe to share. The advisor never changes anything; only a confirmed `share` or `isolate` does.
 
 **Parallel calls.** Each backend runs one call at a time by default. For a shared backend you know handles simultaneous requests, set `max_concurrent_calls` (1 to 64) in its gateway `config.toml`; `mcp-gate share NAME --dry-run --json` prints that path:
 
@@ -131,9 +129,9 @@ Any other stdio MCP client can use the same bridge. Use `mcp-gate status` to fin
 ```json
 {
   "mcpServers": {
-    "telegram": {
+    "context7": {
       "command": "mcp-gate",
-      "args": ["connect", "telegram"]
+      "args": ["connect", "context7"]
     }
   }
 }
@@ -164,13 +162,13 @@ npm i -g @matvei-radchenko/mcp-gate           # or install every command globall
 Installing or updating the package does not switch existing connections by itself. Run `setup` from the build you want; an older build downgrades compatibly.
 
 <details>
-<summary>GitHub Release binaries, Linux services, state, and adopting a legacy gateway</summary>
+<summary>GitHub Release binaries, Linux services, and state</summary>
 
 Download `mcp-gate-<version>-<target>.tar.gz` from [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases), verify it against `SHA256SUMS`, put `mcp-gate` on your `PATH`, then run `mcp-gate setup`.
 
 State lives in `~/Library/Application Support/mcp-gate`, `%LOCALAPPDATA%\mcp-gate`, or `~/.local/share/mcp-gate`. On Linux, setup registers a `systemd --user` unit; without it, run a configured gateway with `mcp-gate serve --config <path>`.
 
-[docs/usage.md](docs/usage.md) covers every target, Linux services, updates and downgrades, adopting a legacy gateway, and all setup, remove and status options.
+[docs/usage.md](docs/usage.md) covers every target, Linux services, updates and downgrades, taking over a gateway you set up by hand, and all setup, remove and status options.
 
 </details>
 
@@ -185,7 +183,7 @@ State lives in `~/Library/Application Support/mcp-gate`, `%LOCALAPPDATA%\mcp-gat
 | `mcp-gate isolate <name>` | Save per-session backend ownership and drop `max_concurrent_calls`. |
 | `mcp-gate idle <name> [15m\|off]` | Show or set backend idle expiry. |
 | `mcp-gate connect <name>` | Bridge a stdio MCP client to a running gateway. |
-| `mcp-gate adopt <name>` | Record an unmanaged `local.mcp-gate.<name>` service so setup can migrate it. |
+| `mcp-gate adopt <name>` | Register a `local.mcp-gate.<name>` service you set up by hand, so setup can manage it. |
 | `mcp-gate --version` | Print the version, plus the git commit for builds from a checkout. |
 
 `setup`, `remove`, `share`, `isolate` and `idle` support `--dry-run`, `--yes` and `--json`. `share`, `isolate` and `idle` print the restart command instead of restarting anything. For agents and scripts, see [docs/agents.md](docs/agents.md) and [docs/usage.md](docs/usage.md#non-interactive-and-agent-use).
@@ -203,7 +201,7 @@ flowchart LR
   Bridge[mcp-gate connect<br/>stdio bridge]
   subgraph gate [mcp-gate gateway]
     HTTP[Loopback Streamable HTTP]
-    Catalog[Saved catalog]
+    Catalog[Saved tool list]
     HTTP --- Catalog
   end
   subgraph backends [Backends, started on demand]
@@ -220,7 +218,7 @@ flowchart LR
   HTTP --> Session
 ```
 
-Each configured MCP server gets one gateway process and one authenticated loopback HTTP endpoint. Codex, OpenCode and Claude Code connect to it over HTTP. Claude Desktop and other stdio-only clients connect through `mcp-gate connect`. Remote HTTP and OAuth backends are not implemented; the upstream transport is local stdio. Catalog drift fails closed until you regenerate and review the snapshot.
+Each configured MCP server gets one gateway process and one authenticated loopback HTTP endpoint. Codex, OpenCode and Claude Code connect to it over HTTP. Claude Desktop and other stdio-only clients connect through `mcp-gate connect`. Remote HTTP and OAuth backends are not implemented; the upstream transport is local stdio. If a server's tool list changes after an update, the gateway stops serving it until you re-run setup and review the new list.
 
 A reusable skill for agents lives in [`skills/mcp-gate/SKILL.md`](skills/mcp-gate/SKILL.md). Lower-level contracts are in [architecture](docs/architecture.md), [configurable runtime](docs/configurable-runtime.md), and [tool policy](docs/tool-policy.md).
 
@@ -230,9 +228,7 @@ mcp-gate is for one person's machine: you already run stdio MCP servers from Cod
 
 ## Compatibility
 
-Releases are published on [npm](https://www.npmjs.com/package/@matvei-radchenko/mcp-gate) and [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases). Native login acceptance is **macOS ARM64 only**. The Intel x86_64 check under Rosetta 2 has not been run, and Windows x64 was smoke-tested under Wine, not on a native Windows login. Stability on native Intel Macs, Windows, and Linux desktops is not guaranteed, and reports are welcome.
-
-CI builds and tests every release target on GitHub runners: macOS ARM64 and Intel, Windows x64 and ARM64 (`windows-11-arm`), Ubuntu 22.04 x64 and ARM64 for glibc, and Alpine containers for the musl install smoke. The musl binaries also run the service tests on Ubuntu. These are not desktop login tests. Automatic shared-ownership recipes currently carry reviewed `macos-aarch64` conditions only. [Compatibility evidence and recipe constraints](docs/compatibility.md)
+Releases are published on [npm](https://www.npmjs.com/package/@matvei-radchenko/mcp-gate) and [GitHub Releases](https://github.com/Matvey-Radchenko/mcp-gate/releases). mcp-gate is used daily on macOS ARM64. Every other release target is built and tested in CI on GitHub runners: macOS Intel, Windows x64 and ARM64, Ubuntu 22.04 x64 and ARM64, and Alpine containers for the musl builds. Reports from Intel Macs, Windows, and Linux desktops are welcome. Built-in sharing presets for known servers currently apply to macOS ARM64 only; elsewhere, use `mcp-gate share`. Tested client versions and remaining gaps: [docs/compatibility.md](docs/compatibility.md).
 
 ## FAQ
 
@@ -240,16 +236,29 @@ CI builds and tests every release target on GitHub runners: macOS ARM64 and Inte
 The scoped npm name is the package. The executable — what clients invoke — is `mcp-gate`. A GitHub Release binary provides the same command.
 
 **Does setup touch my project repo?**
-Setup converts selected direct connections in personal settings or verified machine-local overrides. If you include a project with `--project`, the preview can also list a helper path migration for a project entry that already points into this installation's binary store.
+Setup converts only the connections you select in your personal settings or machine-local overrides. Shared project files are never rewritten.
 
 **Will my browser / API sessions come back after a reboot?**
 No. Sessions and unfinished actions are not restored after restart. A new session starts a fresh backend.
 
 **Do I still have to update Playwright, Chrome DevTools, Docker, and so on?**
-Yes. mcp-gate does not analyze or copy arbitrary dependency trees. Reviewed recipes use narrow version and invocation conditions; a name alone never selects shared mode.
+Yes. mcp-gate does not install or update servers or their dependencies. Built-in sharing presets match exact versions and commands; a server name alone never turns on shared mode.
 
 **I already point a client at some other gateway.**
-`status` reports that connection as `external`. This installation will not adopt or rename it automatically. Old `mcp-session-gateway` configurations remain readable.
+`status` reports that connection as `external`. This installation will not take it over or rename it automatically.
+
+**Does it work with Cursor, VS Code, or Windsurf?**
+Setup does not detect them yet. Any stdio MCP client can still use a gateway that setup created for another client, through `mcp-gate connect`. For example, in Cursor's `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "context7": { "command": "mcp-gate", "args": ["connect", "context7"] }
+  }
+}
+```
+
+VS Code uses `"servers"` with `"type": "stdio"` and the same `command` and `args`. Use `mcp-gate status` to see gateway names.
 
 **Can I script this from an agent?**
 Yes — with `--json`, `--dry-run`, and explicit `--yes` only after the user has chosen the targets. See [docs/agents.md](docs/agents.md).
@@ -265,8 +274,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 cargo xtask check
 ```
 
-This runs formatting, strict Clippy, source-size budgets, and ordinary fixture/unit tests. GitHub CI runs native checks on all supported release platforms and verifies a clean npm archive installation. A workflow definition is not evidence that its acceptance runs passed.
+This runs formatting, strict Clippy, source-size budgets, and ordinary fixture/unit tests. GitHub CI runs the full test suite on every release platform and verifies a clean npm installation.
 
 ## License
 
-MIT. Issues and reports are welcome, especially from Intel Macs, native Windows logins, and Linux desktops, which have not been fully accepted yet.
+MIT. Issues and reports are welcome, especially from Intel Macs, Windows, and Linux desktops.
