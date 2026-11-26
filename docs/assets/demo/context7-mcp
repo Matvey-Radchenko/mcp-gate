@@ -1,0 +1,4 @@
+#!/bin/sh
+# Demo wrapper: runs the current Context7 release. The committed GIF was
+# recorded with 4.7.3.
+exec npx -y @upstash/context7-mcp "$@"

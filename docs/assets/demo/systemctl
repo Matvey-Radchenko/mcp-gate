@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+# Demo-only stand-in for `systemctl --user` on a recording machine without a
+# user service manager. It starts a unit's ExecStart= in the background and
+# reports it as running. Used only by docs/assets/setup-demo.tape.
+import sys,os,shlex,subprocess,glob,json
+args=[a for a in sys.argv[1:] if a not in ('--user','--no-pager')]
+home=os.environ.get('HOME','')
+udir=os.path.join(os.environ.get('XDG_CONFIG_HOME',os.path.join(home,'.config')),'systemd','user')
+state=os.path.join(home,'.demo-systemd'); os.makedirs(state,exist_ok=True)
+def pidfile(u): return os.path.join(state,u+'.pid')
+def alive(u):
+    try:
+        pid=int(open(pidfile(u)).read()); os.kill(pid,0); return pid
+    except Exception: return 0
+def start(u):
+    if alive(u): return
+    env=dict(os.environ); cwd=None; cmd=None
+    for line in open(os.path.join(udir,u)):
+        line=line.strip()
+        if line.startswith('ExecStart='):
+            cmd=shlex.split(line[len('ExecStart='):].lstrip(':-@+!')); cmd[0]=cmd[0].lstrip(':-@+!')
+        elif line.startswith('Environment='):
+            for kv in shlex.split(line[len('Environment='):]):
+                k,_,v=kv.partition('='); env[k]=v
+        elif line.startswith('WorkingDirectory='): cwd=line.split('=',1)[1]
+    log=open(os.path.join(state,u+'.log'),'ab')
+    p=subprocess.Popen(cmd,env=env,cwd=cwd,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
+    open(pidfile(u),'w').write(str(p.pid))
+def stop(u):
+    pid=alive(u)
+    if pid:
+        try: os.kill(pid,15)
+        except Exception: pass
+if not args: sys.exit(0)
+a=args[0]
+if a=='show':
+    if '--value' in args: print('255'); sys.exit(0)
+    u=args[-1]; pid=alive(u); exists=os.path.exists(os.path.join(udir,u))
+    frag=os.path.join(udir,u) if exists else ''
+    print(f"Id={u}\nLoadState={'loaded' if exists else 'not-found'}\nFragmentPath={frag}\nDropInPaths=\nNeedDaemonReload=no\nControlPID=0")
+    print(f"UnitFileState={'enabled' if exists and os.path.exists(os.path.join(state,u+'.enabled')) else ('disabled' if exists else '')}")
+    print(f"ActiveState={'active' if pid else 'inactive'}\nSubState={'running' if pid else 'dead'}\nResult=success\nMainPID={pid}\nNRestarts=0\nExecMainCode=0\nExecMainStatus=0")
+elif a=='enable':
+    open(os.path.join(state,args[-1]+'.enabled'),'w').close()
+    if '--now' in args: start(args[-1])
+elif a in('start','restart'):
+    if a=='restart': stop(args[-1])
+    start(args[-1])
+elif a=='stop': stop(args[-1])
+elif a=='disable':
+    try: os.remove(os.path.join(state,args[-1]+'.enabled'))
+    except FileNotFoundError: pass
+elif a in('list-unit-files','list-units'):
+    for f in sorted(glob.glob(os.path.join(udir,'local.mcp-gate.*.service'))):
+        u=os.path.basename(f)
+        print(f"{u} enabled enabled" if a=='list-unit-files' else f"{u} loaded {'active running' if alive(u) else 'inactive dead'} demo")
+sys.exit(0)

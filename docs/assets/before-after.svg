@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-labelledby="ba-title ba-desc">
   <title id="ba-title">Before and after mcp-gate</title>
-  <desc id="ba-desc">The same three sessions and three stdio servers in both panels. Before: every session starts its own copy of every server, nine processes. After: the sessions talk to one small gateway per server; a stateless server runs one shared backend, an unused server is not started, and a browser server gets a backend per session that is closed when idle. Example from one Mac: one Telegram MCP backend uses about 400 MB, so five sessions without a gateway would be about 2 GB by arithmetic, while mcp-gate runs one shared backend plus a gateway of about 14 MB.</desc>
+  <desc id="ba-desc">The same three sessions and three stdio servers in both panels: Context7, GitHub and Playwright. Before: every session starts its own copy of every server, nine processes. After: the sessions talk to one small gateway per server; Context7 runs one shared backend, GitHub is not started until a real call, and Playwright gets a backend per session that is closed when idle. Measured on a Linux x86_64 machine: five sessions each running their own Context7 used about 610 MB together; with mcp-gate the five sessions used one shared Context7 backend and a 14 MB gateway, about 185 MB.</desc>
   <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 L9 5 L1 9" fill="none" stroke="#1c1917" stroke-width="1.6"/></marker></defs>
   <rect width="960" height="600" rx="18" fill="#f6f5f2"/>
   <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#1c1917">
@@ -15,33 +15,33 @@
     <text x="88" y="265" font-size="13" font-weight="600" text-anchor="middle">Session 3</text>
     <path d="M136 132 H158" stroke="#1c1917" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
     <rect x="164" y="108" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="210" y="130" font-size="13" font-weight="600" text-anchor="middle">telegram</text>
+    <text x="210" y="130" font-size="13" font-weight="600" text-anchor="middle">context7</text>
     <text x="210" y="146" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <rect x="264" y="108" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="310" y="130" font-size="13" font-weight="600" text-anchor="middle">mail</text>
+    <text x="310" y="130" font-size="13" font-weight="600" text-anchor="middle">github</text>
     <text x="310" y="146" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <rect x="364" y="108" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="410" y="130" font-size="13" font-weight="600" text-anchor="middle">browser</text>
+    <text x="410" y="130" font-size="13" font-weight="600" text-anchor="middle">playwright</text>
     <text x="410" y="146" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <path d="M136 196 H158" stroke="#1c1917" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
     <rect x="164" y="172" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="210" y="194" font-size="13" font-weight="600" text-anchor="middle">telegram</text>
+    <text x="210" y="194" font-size="13" font-weight="600" text-anchor="middle">context7</text>
     <text x="210" y="210" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <rect x="264" y="172" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="310" y="194" font-size="13" font-weight="600" text-anchor="middle">mail</text>
+    <text x="310" y="194" font-size="13" font-weight="600" text-anchor="middle">github</text>
     <text x="310" y="210" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <rect x="364" y="172" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="410" y="194" font-size="13" font-weight="600" text-anchor="middle">browser</text>
+    <text x="410" y="194" font-size="13" font-weight="600" text-anchor="middle">playwright</text>
     <text x="410" y="210" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <path d="M136 260 H158" stroke="#1c1917" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
     <rect x="164" y="236" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="210" y="258" font-size="13" font-weight="600" text-anchor="middle">telegram</text>
+    <text x="210" y="258" font-size="13" font-weight="600" text-anchor="middle">context7</text>
     <text x="210" y="274" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <rect x="264" y="236" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="310" y="258" font-size="13" font-weight="600" text-anchor="middle">mail</text>
+    <text x="310" y="258" font-size="13" font-weight="600" text-anchor="middle">github</text>
     <text x="310" y="274" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <rect x="364" y="236" width="92" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
-    <text x="410" y="258" font-size="13" font-weight="600" text-anchor="middle">browser</text>
+    <text x="410" y="258" font-size="13" font-weight="600" text-anchor="middle">playwright</text>
     <text x="410" y="274" font-size="11" fill="#6b6560" text-anchor="middle">process</text>
     <text x="40" y="318" font-size="14" font-weight="700">3 sessions × 3 servers = 9 processes</text>
     <text x="40" y="338" font-size="12.5" fill="#6b6560">All start with the session, even just to list tools.</text>
@@ -63,13 +63,13 @@
     <path d="M626 260 H640" stroke="#1c1917" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
     <rect x="644" y="108" width="116" height="48" rx="8" fill="#1c1917"/>
     <text x="660" y="128" font-size="11" fill="#d6d3cd">mcp-gate</text>
-    <text x="660" y="145" font-size="13" font-weight="700" fill="#f6f5f2">telegram</text>
+    <text x="660" y="145" font-size="13" font-weight="700" fill="#f6f5f2">context7</text>
     <rect x="644" y="172" width="116" height="48" rx="8" fill="#1c1917"/>
     <text x="660" y="192" font-size="11" fill="#d6d3cd">mcp-gate</text>
-    <text x="660" y="209" font-size="13" font-weight="700" fill="#f6f5f2">mail</text>
+    <text x="660" y="209" font-size="13" font-weight="700" fill="#f6f5f2">github</text>
     <rect x="644" y="236" width="116" height="48" rx="8" fill="#1c1917"/>
     <text x="660" y="256" font-size="11" fill="#d6d3cd">mcp-gate</text>
-    <text x="660" y="273" font-size="13" font-weight="700" fill="#f6f5f2">browser</text>
+    <text x="660" y="273" font-size="13" font-weight="700" fill="#f6f5f2">playwright</text>
     <path d="M760 132 H782" stroke="#1c1917" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
     <rect x="786" y="108" width="134" height="48" rx="8" fill="#fffefb" stroke="#1c1917"/>
     <text x="800" y="129" font-size="13" font-weight="600">1 shared backend</text>
@@ -85,31 +85,31 @@
     <rect x="786" y="262" width="134" height="22" rx="6" fill="#fffefb" stroke="#8a847c" stroke-dasharray="4 3"/>
     <text x="798" y="277" font-size="11.5" fill="#6b6560">Session 2: idle, closed</text>
     <text x="508" y="318" font-size="14" font-weight="700">3 gateways + only the backends in use</text>
-    <text x="508" y="338" font-size="12.5" fill="#6b6560">Shared for a stateless API, per session for a browser.</text>
+    <text x="508" y="338" font-size="12.5" fill="#6b6560">Shared for a stateless server, per session for a browser.</text>
     <rect x="20" y="372" width="920" height="208" rx="14" fill="#fffefb" stroke="#e4e0d8"/>
-    <text x="40" y="402" font-size="14" font-weight="700">Example: Telegram MCP server (Java + TDLib) on one maintainer's Mac</text>
-    <text x="40" y="422" font-size="12.5" fill="#6b6560">macOS Apple Silicon, phys_footprint, 2026-11-15. One observation, not a benchmark.</text>
+    <text x="40" y="402" font-size="14" font-weight="700">Measured: five sessions using Context7 (npx @upstash/context7-mcp)</text>
+    <text x="40" y="422" font-size="12.5" fill="#6b6560">Linux x86_64, Node.js 24, 2026-11-26. Proportional memory (PSS) after tools/list and one tool call per session.</text>
     <text x="40" y="460" font-size="13" font-weight="600">Without a gateway</text>
     <text x="40" y="477" font-size="11.5" fill="#6b6560">5 sessions, 5 copies</text>
     <rect x="236" y="448" width="100" height="30" rx="5" fill="#fffefb" stroke="#1c1917"/>
-    <text x="286" y="468" font-size="12" text-anchor="middle">~400 MB</text>
+    <text x="286" y="468" font-size="12" text-anchor="middle">copy 1</text>
     <rect x="340" y="448" width="100" height="30" rx="5" fill="#fffefb" stroke="#1c1917"/>
-    <text x="390" y="468" font-size="12" text-anchor="middle">~400 MB</text>
+    <text x="390" y="468" font-size="12" text-anchor="middle">copy 2</text>
     <rect x="444" y="448" width="100" height="30" rx="5" fill="#fffefb" stroke="#1c1917"/>
-    <text x="494" y="468" font-size="12" text-anchor="middle">~400 MB</text>
+    <text x="494" y="468" font-size="12" text-anchor="middle">copy 3</text>
     <rect x="548" y="448" width="100" height="30" rx="5" fill="#fffefb" stroke="#1c1917"/>
-    <text x="598" y="468" font-size="12" text-anchor="middle">~400 MB</text>
+    <text x="598" y="468" font-size="12" text-anchor="middle">copy 4</text>
     <rect x="652" y="448" width="100" height="30" rx="5" fill="#fffefb" stroke="#1c1917"/>
-    <text x="702" y="468" font-size="12" text-anchor="middle">~400 MB</text>
-    <text x="766" y="461" font-size="14" font-weight="700">≈ 2 GB</text>
-    <text x="766" y="477" font-size="11" fill="#6b6560">5 × 400 MB, arithmetic</text>
+    <text x="702" y="468" font-size="12" text-anchor="middle">copy 5</text>
+    <text x="766" y="461" font-size="14" font-weight="700">≈ 610 MB</text>
+    <text x="766" y="477" font-size="11" fill="#6b6560">5 Node.js servers</text>
     <text x="40" y="516" font-size="13" font-weight="600">With mcp-gate</text>
     <text x="40" y="533" font-size="11.5" fill="#6b6560">1 shared backend + gateway</text>
-    <rect x="236" y="504" width="100" height="30" rx="5" fill="#fffefb" stroke="#1c1917"/>
-    <text x="286" y="524" font-size="12" text-anchor="middle">~400 MB</text>
-    <rect x="340" y="504" width="6" height="30" rx="2" fill="#1c1917"/>
-    <text x="358" y="524" font-size="14" font-weight="700">≈ 414 MB</text>
-    <text x="432" y="524" font-size="11.5" fill="#6b6560">the dark sliver is the ~14 MB gateway process</text>
-    <text x="40" y="564" font-size="11.5" fill="#6b6560">Each gateway process measured about 3–14 MB; eight gateways together used about 22 MB RSS.</text>
+    <rect x="236" y="504" width="134" height="30" rx="5" fill="#fffefb" stroke="#1c1917"/>
+    <text x="303" y="524" font-size="12" text-anchor="middle">1 shared copy</text>
+    <rect x="374" y="504" width="10" height="30" rx="2" fill="#1c1917"/>
+    <text x="396" y="524" font-size="14" font-weight="700">≈ 185 MB</text>
+    <text x="474" y="524" font-size="11.5" fill="#6b6560">the dark sliver is the ~14 MB gateway process</text>
+    <text x="40" y="564" font-size="11.5" fill="#6b6560">One machine, one run; Context7 4.7.3. Method and raw numbers: docs/benchmark.md.</text>
   </g>
 </svg>

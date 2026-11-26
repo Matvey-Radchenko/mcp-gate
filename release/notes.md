@@ -1,6 +1,6 @@
 This release adds shared/session ownership controls and new release targets.
 `mcp-gate share <name>` and `mcp-gate isolate <name>` set a gateway's ownership
-explicitly, with advice from the saved catalog. Shared backends can opt into
+explicitly, with advice based on the saved tool list. Shared backends can opt into
 parallel calls with `max_concurrent_calls`. `mcp-gate connect` lets stdio MCP
 clients, including Claude Desktop on macOS and Windows, use an existing local
 gateway. Windows ARM64 and static musl builds for Linux x64 and ARM64 are new;
@@ -9,10 +9,10 @@ Backends that declare MCP extensions, such as `@upstash/context7-mcp` 4.8.0
 with `io.modelcontextprotocol/skills`, now work through their core tools,
 resources and prompts instead of failing setup.
 
-Upgrading: run `mcp-gate setup` once after installing 0.2.0. It migrates
-selected adopted and legacy gateway services to the managed binary store and
-moves Codex and Claude Code headers helpers to a stable executable path. Then
-restart the clients it lists. `mcp-gate setup --dry-run` previews the change.
+Upgrading from 0.1.x: run `mcp-gate setup` once with 0.2.0, then restart the
+clients it lists. Setup moves everything to one fixed location so later upgrades
+no longer have to touch your client settings. `mcp-gate setup --dry-run` shows
+what will change first.
 
 Install with `npx @matvei-radchenko/mcp-gate@latest setup` or
 `npm i -g @matvei-radchenko/mcp-gate`. The command remains `mcp-gate`.
