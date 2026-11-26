@@ -34,7 +34,9 @@ impl ServerHandler for Mock {
             info.capabilities = serde_json::from_value(json!({
                 "tools":{"listChanged":true}, "resources":{"subscribe":false,"listChanged":true},
                 "prompts":{"listChanged":true}, "experimental":{},
-                "extensions":{"io.modelcontextprotocol/ui":{}}
+                "extensions":{"io.modelcontextprotocol/ui":{},
+                    "io.modelcontextprotocol/skills":{"directoryRead":true},
+                    "com.example/unknown":{"revision":"2"}}
             }))
             .unwrap();
         }

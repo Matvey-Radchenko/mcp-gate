@@ -1,4 +1,4 @@
-//! Pinned core capabilities; optional UI is deliberately not negotiated.
+//! Pinned core capabilities; backend extensions (UI, skills, unknown) are never negotiated.
 use rmcp::model::*;
 
 pub(crate) fn frontend_capabilities(upstream: &ServerCapabilities) -> ServerCapabilities {
@@ -29,7 +29,8 @@ mod tests {
         let upstream = serde_json::from_value(serde_json::json!({
             "tools":{"listChanged":true},"prompts":{"listChanged":true},
             "resources":{"listChanged":true,"subscribe":false},
-            "extensions":{"io.modelcontextprotocol/ui":{}},"experimental":{}
+            "extensions":{"io.modelcontextprotocol/ui":{},
+                "io.modelcontextprotocol/skills":{"directoryRead":true}},"experimental":{}
         }))
         .unwrap();
         let caps = frontend_capabilities(&upstream);

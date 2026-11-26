@@ -156,7 +156,7 @@ async fn dispatch(action: Action) -> Result<()> {
             if json {
                 println!(
                     "{}",
-                    serde_json::json!({"format_version":1,"phase":"ok","backend":config.backend.version,"tools":catalog.tools.len(),"max_workers":config.max_workers})
+                    serde_json::json!({"format_version":1,"phase":"ok","backend":config.backend.version,"tools":catalog.tools.len(),"max_workers":config.max_workers,"unforwarded_extensions":mcp_gate::catalog::unforwarded_extensions(&catalog.server_info)})
                 );
             } else {
                 println!(
@@ -165,6 +165,9 @@ async fn dispatch(action: Action) -> Result<()> {
                     catalog.tools.len(),
                     config.max_workers
                 );
+                if let Some(note) = mcp_gate::catalog::unforwarded_note(&catalog.server_info) {
+                    println!("{note}");
+                }
             }
         }
         Action::Catalog { config } => {
@@ -174,6 +177,9 @@ async fn dispatch(action: Action) -> Result<()> {
             // Generated artifact, not handwritten schemas. Install only after reviewing its diff.
             std::fs::write(&config.catalog_file, serde_json::to_vec_pretty(&catalog)?)?;
             println!("Catalog generated: {} tools", catalog.tools.len());
+            if let Some(note) = mcp_gate::catalog::unforwarded_note(&catalog.server_info) {
+                println!("{note}");
+            }
         }
         Action::Serve { config } => serve(config).await?,
     }
@@ -203,6 +209,7 @@ async fn serve(config: PathBuf) -> Result<()> {
             }
         });
     tracing::info!(listen = %config.listen, tools = catalog.tools.len(), "gateway ready; workers start on demand");
+    mcp_gate::catalog::log_unforwarded(&catalog.server_info);
     let gateway = Gateway::new(config, catalog);
     let server = Server::new(gateway.clone(), token);
     let cancellation = server.cancellation.clone();

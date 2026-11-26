@@ -239,6 +239,9 @@ async fn install(
                 super::checkpoint("registered")?;
                 runtime::ready(&record).await?;
                 super::checkpoint("ready")?;
+                if !json && let Some(note) = extension_note(&record) {
+                    println!("     {note}");
+                }
                 record
             };
             prepared.push(record.clone());
@@ -300,3 +303,11 @@ async fn install(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
+
+/// Informational only: a read failure here must not fail an otherwise ready setup.
+fn extension_note(record: &store::Record) -> Option<String> {
+    let config = crate::config::Config::load(&record.config()).ok()?;
+    let catalog: crate::catalog::Catalog =
+        serde_json::from_slice(&fs::read(&config.catalog_file).ok()?).ok()?;
+    crate::catalog::unforwarded_note(&catalog.server_info)
+}

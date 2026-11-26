@@ -161,6 +161,10 @@ async fn health(State(state): State<HttpState>) -> impl IntoResponse {
         "max_workers": state.gateway.config.max_workers, "tools": state.gateway.catalog.tools.len(),
         "runtime": state.gateway.runtime_status(),
         "backend_version": state.gateway.catalog.backend_version, "session_details":details });
+    let extensions = crate::catalog::unforwarded_extensions(&state.gateway.catalog.server_info);
+    if !extensions.is_empty() {
+        response["unforwarded_extensions"] = json!(extensions);
+    }
     if let Some(commit) = BUILD_COMMIT {
         response["commit"] = json!(commit);
     }
