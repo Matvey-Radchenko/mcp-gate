@@ -149,7 +149,11 @@ async fn two_threads_real_browsers_and_lifecycle() {
         "Refusing a gateway with pre-existing browsers"
     );
     let gateway_pid = initial["pid"].as_u64().unwrap() as u32;
-    assert!(descendants(gateway_pid).is_empty());
+    let leftover = descendants(gateway_pid);
+    assert!(
+        leftover.is_empty(),
+        "Unexpected gateway descendants: {leftover:?}"
+    );
     let mut c = NativeCodex::for_config(config_path).await;
     let a = c.thread.clone();
     assert_eq!(c.discover().await, 29);
@@ -240,7 +244,11 @@ async fn two_threads_real_browsers_and_lifecycle() {
         live_pids(&all_processes)
     );
     assert_eq!(probe.health().await["sessions"], 0);
-    assert!(descendants(gateway_pid).is_empty());
+    let leftover = descendants(gateway_pid);
+    assert!(
+        leftover.is_empty(),
+        "Unexpected gateway descendants: {leftover:?}"
+    );
     pages.abort();
     if let Some(h) = harness.as_mut() {
         h.stop();

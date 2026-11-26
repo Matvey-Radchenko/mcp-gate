@@ -84,7 +84,9 @@ pub fn descendants(root: u32) -> BTreeSet<u32> {
     loop {
         let next: Vec<_> = rows
             .iter()
-            .filter(|(pid, parent)| found.contains(parent) && !found.contains(pid))
+            .filter(|(pid, parent)| {
+                found.contains(parent) && !found.contains(pid) && started_after(*pid, *parent)
+            })
             .map(|(pid, _)| *pid)
             .collect();
         if next.is_empty() {
@@ -94,6 +96,51 @@ pub fn descendants(root: u32) -> BTreeSet<u32> {
     }
     found.remove(&root);
     found
+}
+
+/// Windows never rewrites a process's recorded parent PID. When the real
+/// parent exits and the gateway later receives the same PID, the older process
+/// still names it as parent. A real child cannot predate its parent.
+#[cfg(windows)]
+fn started_after(child: u32, parent: u32) -> bool {
+    match (creation_time(child), creation_time(parent)) {
+        (Some(child), Some(parent)) => child >= parent,
+        // The child exited after the snapshot, so it cannot be an orphan.
+        (None, _) => false,
+        // An exited intermediate parent cannot be checked; keep the child.
+        (Some(_), None) => true,
+    }
+}
+
+#[cfg(not(windows))]
+fn started_after(_child: u32, _parent: u32) -> bool {
+    // Unix reparents orphans to init, so the recorded parent is always current.
+    true
+}
+
+/// Unlike `process_state`, unrelated system processes may refuse the query.
+/// The gateway's own descendants run as the same user and always answer.
+#[cfg(windows)]
+fn creation_time(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, FILETIME},
+        System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+    };
+    // SAFETY: the handle is read-only and owned; all four FILETIME outputs are
+    // valid. Close it immediately so the probe does not retain job references.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut created: FILETIME = std::mem::zeroed();
+        let mut exited: FILETIME = std::mem::zeroed();
+        let mut kernel: FILETIME = std::mem::zeroed();
+        let mut user: FILETIME = std::mem::zeroed();
+        let ok = GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) != 0;
+        CloseHandle(handle);
+        ok.then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+    }
 }
 
 #[cfg(unix)]
