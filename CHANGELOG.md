@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.2.0 — 2026-11-25
+## 0.2.0 — 2026-11-26
 
 **Upgrading from 0.1.x:** run `mcp-gate setup` once with 0.2.0, then restart the clients it lists. Setup moves everything to one fixed location so later upgrades no longer have to touch your client settings: the Codex and Claude Code token helper command now points at `current/mcp-gate`, and gateway services registered with `mcp-gate adopt` or created by an older release move to mcp-gate's own binary folder. `mcp-gate setup --dry-run` shows what will change first.
 
