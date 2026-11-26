@@ -25,6 +25,15 @@ actual release update/downgrade and clean npm archive installation. See the
 [native acceptance procedures](docs/native-acceptance.md) for isolated checks;
 publication has a separate evidence gate.
 
+Pull requests run only the jobs their changed files can affect.
+`packaging/ci-changes.mjs` maps each path to a scope: documentation runs no
+build, `npm/README.md` and `LICENSE` run the npm launcher job, packaging, npm
+launcher code, lints and browser fixtures run the native matrix, and Rust
+sources, tests, recipes, Cargo files and workflows also run the Docker jobs. A
+path no rule names runs everything. Pushes to `main`, manual runs and the
+release workflow always run everything. The `CI result` check passes only when
+every job succeeded or was skipped as unaffected; use it as the required check.
+
 Build distributable binaries with `node packaging/compile.mjs`. It remaps home and
 workspace paths in compiled diagnostics before `packaging/build.mjs` stages the
 npm archives. A normal local Cargo build can retain the developer's absolute paths.

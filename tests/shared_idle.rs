@@ -9,10 +9,14 @@ use std::{sync::atomic::Ordering, time::Duration};
 use support::*;
 
 async fn idle_gateway() -> Harness {
+    idle_gateway_after(1).await
+}
+
+async fn idle_gateway_after(seconds: u64) -> Harness {
     let mut harness = Harness::generic("shared", 4, 15, 10).await;
     harness.stop();
     let mut config = mcp_gate::config::Config::load(&harness.config).unwrap();
-    config.idle_seconds = Some(1);
+    config.idle_seconds = Some(seconds);
     harness.restart_with_config(config).await;
     harness
 }
@@ -102,7 +106,11 @@ async fn idle_shutdown_does_not_clear_manual_failure() {
 
 #[tokio::test]
 async fn external_crash_between_calls_is_not_hidden_by_idle_shutdown() {
-    let mut harness = idle_gateway().await;
+    // With a 1 s idle limit, a slow runner can let idle shutdown stop the
+    // backend before the external kill lands; taskkill then finds no process.
+    // The kill must happen while the backend is still running, and an idle
+    // check must still run after the crash, so wait past the limit below.
+    let mut harness = idle_gateway_after(3).await;
     let a = harness.session().await;
     let pid = mock_value(&a.call("state", json!({})).await)["pid"]
         .as_u64()
@@ -117,8 +125,12 @@ async fn external_crash_between_calls_is_not_hidden_by_idle_shutdown() {
         .args(["-KILL", &pid.to_string()])
         .output()
         .unwrap();
-    assert!(killed.status.success());
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        killed.status.success(),
+        "External kill of backend {pid} failed: {}",
+        String::from_utf8_lossy(&killed.stderr)
+    );
+    tokio::time::sleep(Duration::from_secs(4)).await;
     let value = a.call("state", json!({"value":"must-not-run"})).await;
     assert!(content(&value).contains("Backend exited"));
     harness.workers(0).await;

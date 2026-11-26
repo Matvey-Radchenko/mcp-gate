@@ -10,7 +10,10 @@ for (const longPath of [false, true]) {
     skip: process.platform !== 'win32' || !['x64', 'arm64'].includes(process.arch),
   }, t => {
     const temporary = mkdtempSync(join(tmpdir(), 'mcp-gate-launcher-'));
-    t.after(() => rmSync(temporary, { recursive: true, force: true }));
+    // Windows can keep the copied executable locked briefly after the child
+    // exits (image unmapping, antivirus scans), so removal reports EPERM. rmSync
+    // retries EPERM/EBUSY with backoff when maxRetries is set.
+    t.after(() => rmSync(temporary, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }));
     const root = join(temporary, 'space and юникод', ...(longPath ? ['nested-'.repeat(10), 'cache-'.repeat(10)] : []));
     const launcher = join(root, 'bin', 'mcp-gate.cjs');
     const binary = join(root, 'node_modules', '@matvei-radchenko', `mcp-gate-bin-win32-${process.arch}`, 'bin', 'mcp-gate.exe');

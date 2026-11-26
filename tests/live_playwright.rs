@@ -159,7 +159,11 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
     );
     assert_eq!(health(&c).await["workers"], 0);
     let gateway_pid = health(&c).await["pid"].as_u64().unwrap() as u32;
-    assert!(descendants(gateway_pid).is_empty());
+    let leftover = descendants(gateway_pid);
+    assert!(
+        leftover.is_empty(),
+        "Unexpected gateway descendants: {leftover:?}"
+    );
     let mut a = NativeCodex::for_config(path).await;
     assert_eq!(a.discover().await, 24);
     let aid = discovery_sessions(path, 1).await.pop_first().unwrap();
@@ -265,7 +269,11 @@ async fn native_clients_isolate_browsers_artifacts_and_cleanup() {
         "Browser cleanup must not leave orphans; still running: {:?}",
         still_running(&all_processes)
     );
-    assert!(descendants(gateway_pid).is_empty());
+    let leftover = descendants(gateway_pid);
+    assert!(
+        leftover.is_empty(),
+        "Unexpected gateway descendants: {leftover:?}"
+    );
     assert!(
         images.iter().all(|p| p.exists()),
         "Artifacts must survive backend cleanup"

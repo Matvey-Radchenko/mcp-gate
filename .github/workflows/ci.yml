@@ -11,15 +11,65 @@ concurrency:
   group: native-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  changes:
+    # Pull requests run only the jobs their files can affect; see
+    # packaging/ci-changes.mjs for the mapping. Pushes to main, manual runs and
+    # the release workflow (workflow_call) always run everything.
+    name: Changed files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+      launcher: ${{ steps.scope.outputs.launcher }}
+      native: ${{ steps.scope.outputs.native }}
+      docker: ${{ steps.scope.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pull request merge commit and its first parent, the base tip.
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select jobs
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            git diff --no-renames --name-only HEAD^1 HEAD | node packaging/ci-changes.mjs
+          else
+            node packaging/ci-changes.mjs --all
+          fi
+  scripts:
+    # Cheap and always on: release scripts, release evidence and this selector.
+    name: Release scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Release script checks
+        run: |
+          for file in packaging/*.mjs npm/mcp-gate/bin/*.cjs npm/mcp-gate/scripts/*.cjs tests/support/*.cjs; do node --check "$file"; done
+          node --test packaging/*.test.mjs
   docker-intel:
     name: Docker on macOS Intel
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     uses: ./.github/workflows/docker-intel.yml
   docker-windows:
     name: Docker on Windows
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     # This separate acceptance job uses a checksum-pinned amd64 WSL image.
     uses: ./.github/workflows/docker-windows.yml
   launcher:
     name: Shared npm launcher
+    needs: changes
+    if: needs.changes.outputs.launcher == 'true'
     runs-on: macos-15
     timeout-minutes: 5
     steps:
@@ -46,7 +96,8 @@ jobs:
           path: dist/matvei-radchenko-mcp-gate-[0-9]*.tgz
           if-no-files-found: error
   native:
-    needs: launcher
+    needs: [changes, launcher]
+    if: needs.changes.outputs.native == 'true'
     name: ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -356,3 +407,27 @@ jobs:
           path: artifacts
       - name: Verify all npm and native archives and shared launcher identity
         run: node packaging/checksums.mjs artifacts
+  result:
+    # One stable check for branch protection: it passes when every job either
+    # succeeded or was skipped as not affected, and fails on any failure.
+    name: CI result
+    if: always()
+    needs: [changes, scripts, docker-intel, docker-windows, launcher, native, archives]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require success or an intended skip
+        env:
+          SCOPE: ${{ needs.changes.outputs.scope }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "CI scope: $SCOPE"
+          node -e '
+            const needs = JSON.parse(process.env.RESULTS);
+            let ok = needs.changes.result === "success" && needs.scripts.result === "success";
+            for (const [job, { result }] of Object.entries(needs)) {
+              console.log(`${job}: ${result}`);
+              if (!["success", "skipped"].includes(result)) ok = false;
+            }
+            if (!ok) process.exit(1);
+          '
