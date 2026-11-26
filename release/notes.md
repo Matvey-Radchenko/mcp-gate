@@ -9,7 +9,7 @@ Backends that declare MCP extensions, such as `@upstash/context7-mcp` 4.8.0
 with `io.modelcontextprotocol/skills`, now work through their core tools,
 resources and prompts instead of failing setup.
 
-Upgrading: run `mcp-gate setup` once after installing 0.2.0. It migrates
+Upgrading from 0.1.x: run `mcp-gate setup` once with 0.2.0. It migrates
 selected adopted and legacy gateway services to the managed binary store and
 moves Codex and Claude Code headers helpers to a stable executable path. Then
 restart the clients it lists. `mcp-gate setup --dry-run` previews the change.

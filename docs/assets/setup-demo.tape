@@ -3,8 +3,8 @@
 # Story: run setup, see the connections it found, select one,
 # read the preview of what would change, then cancel.
 #
-# A release binary on Linux exits before any prompt
-# ("Automatic setup supports macOS and Windows only").
+# Recorded on Linux. Claude Desktop discovery runs only on macOS and Windows,
+# so this recording shows Codex and Claude Code connections.
 # This tape uses a local `cargo build --features test-backend --bin mcp-gate`
 # and a throwaway home with three fixture connections. The fixture
 # executables are stubs that exit immediately. Nothing is registered.
