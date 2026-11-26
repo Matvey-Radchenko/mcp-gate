@@ -5,6 +5,9 @@ parallel calls with `max_concurrent_calls`. `mcp-gate connect` lets stdio MCP
 clients, including Claude Desktop on macOS and Windows, use an existing local
 gateway. Windows ARM64 and static musl builds for Linux x64 and ARM64 are new;
 the npm launcher selects the binary for the host architecture and Linux libc.
+Backends that declare MCP extensions, such as `@upstash/context7-mcp` 4.8.0
+with `io.modelcontextprotocol/skills`, now work through their core tools,
+resources and prompts instead of failing setup.
 
 Upgrading: run `mcp-gate setup` once after installing 0.2.0. It migrates
 selected adopted and legacy gateway services to the managed binary store and

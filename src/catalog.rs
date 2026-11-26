@@ -174,7 +174,7 @@ pub fn validate_capabilities(info: &ServerInfo) -> Result<()> {
     let caps = &info.capabilities;
     if info.protocol_version == rmcp::model::ProtocolVersion::V_2024_11_05 {
         ensure!(
-            caps.resources.is_none() && caps.prompts.is_none() && caps.extensions.is_none(),
+            caps.resources.is_none() && caps.prompts.is_none(),
             "Legacy stdio adapter currently supports tools only"
         );
     }
@@ -185,19 +185,47 @@ pub fn validate_capabilities(info: &ServerInfo) -> Result<()> {
             .is_none_or(|r| r.subscribe != Some(true)),
         "Resource subscriptions are not supported"
     );
+    // Extensions are negotiated: a server may use one only when the client also
+    // declares it, and must otherwise fall back to core behavior. mcp-gate
+    // declares no extensions to backends and advertises none to clients, so any
+    // extension, including ones it has never heard of, is inert here. The
+    // declaration stays in the catalog so a change is still detected as drift.
     ensure!(
-        caps.completions.is_none()
-            && caps.experimental.as_ref().is_none_or(|e| e.is_empty())
-            && caps
-                .extensions
-                .as_ref()
-                .is_none_or(|e| e
-                    .iter()
-                    .all(|(name, settings)| name == "io.modelcontextprotocol/ui"
-                        && settings.is_empty())),
-        "Backend declares unsupported completion/extension capabilities"
+        caps.completions.is_none() && caps.experimental.as_ref().is_none_or(|e| e.is_empty()),
+        "Backend declares unsupported completion/experimental capabilities"
     );
     Ok(())
+}
+
+/// Extension identifiers the backend declared. None are forwarded to clients;
+/// setup and checks report them so a missing optional feature is not a surprise.
+pub fn unforwarded_extensions(info: &ServerInfo) -> Vec<String> {
+    info.capabilities
+        .extensions
+        .as_ref()
+        .map(|e| e.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+pub fn log_unforwarded(info: &ServerInfo) {
+    let extensions = unforwarded_extensions(info);
+    if !extensions.is_empty() {
+        tracing::warn!(
+            ?extensions,
+            "backend MCP extensions are not forwarded to clients"
+        );
+    }
+}
+
+/// One human-readable line for [`unforwarded_extensions`], if any were declared.
+pub fn unforwarded_note(info: &ServerInfo) -> Option<String> {
+    let names = unforwarded_extensions(info);
+    (!names.is_empty()).then(|| {
+        format!(
+            "Note: backend MCP extensions are not forwarded to clients (core tools, resources and prompts work): {}",
+            names.join(", ")
+        )
+    })
 }
 
 /// A complete discovery snapshot, never resource contents or rendered prompts.

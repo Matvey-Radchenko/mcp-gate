@@ -396,10 +396,37 @@ fn core_capabilities_and_optional_ui_fallback_are_explicit() {
     info.capabilities.resources.as_mut().unwrap().subscribe = Some(true);
     assert!(validate_capabilities(&info).is_err());
     info.capabilities.resources.as_mut().unwrap().subscribe = Some(false);
-    info.capabilities.extensions =
-        Some(serde_json::from_value(serde_json::json!({"unknown/mandatory":{}})).unwrap());
-    assert!(validate_capabilities(&info).is_err());
+    // Extensions are negotiated and mcp-gate declares none, so unknown ones,
+    // with or without settings, are inert rather than a reason to fail.
+    info.capabilities.extensions = Some(
+        serde_json::from_value(serde_json::json!({
+            "io.modelcontextprotocol/skills":{"directoryRead":true},
+            "com.example/unknown":{"revision":"9"},
+            "io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}
+        }))
+        .unwrap(),
+    );
+    validate_capabilities(&info).unwrap();
+    assert_eq!(
+        mcp_gate::catalog::unforwarded_extensions(&info),
+        [
+            "com.example/unknown",
+            "io.modelcontextprotocol/skills",
+            "io.modelcontextprotocol/ui"
+        ]
+    );
+    assert!(
+        mcp_gate::catalog::unforwarded_note(&info)
+            .unwrap()
+            .contains("io.modelcontextprotocol/skills")
+    );
+    let mut legacy = info.clone();
+    legacy.protocol_version = ProtocolVersion::V_2024_11_05;
+    legacy.capabilities.resources = None;
+    legacy.capabilities.prompts = None;
+    validate_capabilities(&legacy).unwrap();
     info.capabilities.extensions = None;
+    assert!(mcp_gate::catalog::unforwarded_note(&info).is_none());
     info.capabilities.experimental =
         Some(serde_json::from_value(serde_json::json!({"unknown":{}})).unwrap());
     assert!(validate_capabilities(&info).is_err());

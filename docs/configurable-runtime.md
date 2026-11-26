@@ -174,7 +174,7 @@ on Windows). Restart discards sessions and volatile state without replay.
 | Client roots | Forwarded in session mode; shared defaults to rejecting roots-capable clients; explicit `ignore` keeps a fixed rootless backend context |
 | Logging | Session owner only; shared unsolicited logs are not broadcast or persisted |
 | Resource subscriptions / completions | Not supported; advertising backends rejected |
-| Optional UI extension | Empty `io.modelcontextprotocol/ui` advertisement accepted, never negotiated/advertised downstream; core text fallback only. Other extensions and nonempty experimental capabilities rejected |
+| MCP extensions (UI, skills, unknown) | Any `capabilities.extensions` entry is accepted and pinned in the catalog (a change is drift), but mcp-gate declares no extensions to the backend and advertises none downstream, so peers fall back to core behavior. `catalog`, `check`, setup and `/health` list them as not forwarded. Completions and nonempty experimental capabilities are still rejected |
 | Tool/resource/prompt-list change notifications | Re-query every catalog before next executable request; unchanged snapshot accepted, changed snapshot fails closed pending review |
 | Sampling / elicitation | Not advertised to backend; SDK rejects unsupported requests |
 | Remote HTTP / OAuth | Not implemented; backend transport is local stdio |

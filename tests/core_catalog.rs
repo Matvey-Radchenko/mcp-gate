@@ -17,6 +17,16 @@ async fn core(ownership: &str, timeout: u64) -> Harness {
 #[tokio::test]
 async fn lazy_full_catalog_and_shared_execution() {
     let mut h = core("shared", 10).await;
+    // Declared extensions, even unknown ones, do not block the catalog; they are
+    // reported and never forwarded.
+    assert_eq!(
+        h.health().await.unwrap()["unforwarded_extensions"],
+        json!([
+            "com.example/unknown",
+            "io.modelcontextprotocol/skills",
+            "io.modelcontextprotocol/ui"
+        ])
+    );
     let (a, b) = tokio::join!(h.session(), h.session());
     assert_eq!(
         a.request("resources/list", json!({})).await["result"]["resources"]
